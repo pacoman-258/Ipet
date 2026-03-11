@@ -1,0 +1,6 @@
+{
+    "python-envs.pythonProjects": [],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/third_party_mcp/jmmcp/.venv/Lib/site-packages"
+    ]
+}

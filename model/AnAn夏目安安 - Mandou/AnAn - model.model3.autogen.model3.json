@@ -1,0 +1,106 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "AnAn - model.moc3",
+    "Textures": [
+      "AnAn - model.4096/texture_00.png",
+      "AnAn - model.4096/texture_01.png",
+      "AnAn - model.4096/texture_02.png"
+    ],
+    "Physics": "AnAn - model.physics3.json",
+    "DisplayInfo": "AnAn - model.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "idle1.motion3.json"
+        }
+      ]
+    },
+    "Expressions": [
+      {
+        "Name": "abb",
+        "File": "abb.exp3.json"
+      },
+      {
+        "Name": "angry",
+        "File": "angry.exp3.json"
+      },
+      {
+        "Name": "armL06",
+        "File": "armL06.exp3.json"
+      },
+      {
+        "Name": "armLup",
+        "File": "armLup.exp3.json"
+      },
+      {
+        "Name": "down",
+        "File": "down.exp3.json"
+      },
+      {
+        "Name": "exp1",
+        "File": "exp1.exp3.json"
+      },
+      {
+        "Name": "namida",
+        "File": "namida.exp3.json"
+      },
+      {
+        "Name": "note",
+        "File": "note.exp3.json"
+      },
+      {
+        "Name": "notebig",
+        "File": "notebig.exp3.json"
+      },
+      {
+        "Name": "notelily",
+        "File": "notelily.exp3.json"
+      },
+      {
+        "Name": "pale01",
+        "File": "pale01.exp3.json"
+      },
+      {
+        "Name": "pale02",
+        "File": "pale02.exp3.json"
+      },
+      {
+        "Name": "shy",
+        "File": "shy.exp3.json"
+      },
+      {
+        "Name": "shy2",
+        "File": "shy2.exp3.json"
+      },
+      {
+        "Name": "sur1",
+        "File": "sur1.exp3.json"
+      },
+      {
+        "Name": "sweat",
+        "File": "sweat.exp3.json"
+      },
+      {
+        "Name": "think",
+        "File": "think.exp3.json"
+      },
+      {
+        "Name": "writenote",
+        "File": "writenote.exp3.json"
+      }
+    ]
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": []
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": []
+    }
+  ]
+}

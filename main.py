@@ -1,0 +1,1397 @@
+﻿import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QT_OPENGL", "software")
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    " ".join(
+        [
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
+            "--enable-webgl",
+            "--ignore-gpu-blocklist",
+            "--disable-gpu-compositing",
+            "--disable-gpu-rasterization",
+            "--disable-direct-composition",
+            "--disable-gpu-memory-buffer-compositor-resources",
+            "--disable-features=UseSkiaRenderer,VizDisplayCompositor,CanvasOopRasterization",
+            "--in-process-gpu",
+        ]
+    ),
+)
+
+try:
+    from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QUrl, Signal, Slot
+    from PySide6.QtGui import QAction, QColor, QGuiApplication
+    from PySide6.QtWebChannel import QWebChannel
+    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFormLayout,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QInputDialog,
+        QMainWindow,
+        QMenu,
+        QPlainTextEdit,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+except ImportError:
+    from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+    from PyQt6.QtGui import QAction, QColor, QGuiApplication
+    from PyQt6.QtWebChannel import QWebChannel
+    from PyQt6.QtWebEngineCore import QWebEngineSettings
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFormLayout,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QInputDialog,
+        QMainWindow,
+        QMenu,
+        QPlainTextEdit,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+
+ROOT_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = ROOT_DIR / "pet_config.json"
+FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
+DEFAULT_TOOL_TIMEOUT_SEC = 180
+LEGACY_TOOL_TIMEOUT_SEC = 10
+
+
+def _find_default_model() -> str:
+    preferred = ROOT_DIR / "model" / "hiyori_free_zh" / "runtime" / "hiyori_free_t08.model3.json"
+    if preferred.exists():
+        return preferred.relative_to(ROOT_DIR).as_posix()
+
+    for candidate in (ROOT_DIR / "model").rglob("*.model3.json"):
+        try:
+            return candidate.relative_to(ROOT_DIR).as_posix()
+        except ValueError:
+            return str(candidate)
+
+    return ""
+
+
+DEFAULT_CONFIG = {
+    "model_path": _find_default_model(),
+    "window": {
+        "x": 120,
+        "y": 80,
+        "width": 420,
+        "height": 640,
+        "locked": False,
+    },
+    "pet": {
+        "scale": 0.3,
+        "offset_x": 0,
+        "offset_y": 40,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "edit_mode": False,
+        "follow_mouse": True,
+    },
+    "chat": {
+        "backend_url": DEFAULT_BACKEND_URL,
+        "llm_provider": "ollama",
+        "api_base_url": "http://127.0.0.1:11434",
+        "api_key": "",
+        "model": "qwen3:8b",
+        "session_id": "default",
+        "memory_window": 10,
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "rate_pct": 0,
+        "tts_provider": "edge_tts",
+        "tts_provider_url": "",
+        "expression_mode": True,
+        "expression_output_format": "ndjson_v1",
+        "tooling": {
+            "enabled": True,
+            "mode": "mcp_local_phase2",
+            "file_allowlist": [str(ROOT_DIR)],
+            "network_allow_domains": [],
+            "max_tool_calls_per_turn": 6,
+            "tool_timeout_sec": DEFAULT_TOOL_TIMEOUT_SEC,
+            "third_party": {
+                "enabled": True,
+                "servers": [],
+            },
+        },
+        "system_prompt": "",
+    },
+}
+
+
+def deep_merge(base: dict, override: dict) -> dict:
+    merged = json.loads(json.dumps(base))
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _migrate_tool_timeout(tooling: dict | None) -> None:
+    if not isinstance(tooling, dict):
+        return
+    try:
+        timeout_sec = int(tooling.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC))
+    except Exception:
+        timeout_sec = DEFAULT_TOOL_TIMEOUT_SEC
+    if timeout_sec == LEGACY_TOOL_TIMEOUT_SEC:
+        tooling["tool_timeout_sec"] = DEFAULT_TOOL_TIMEOUT_SEC
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return json.loads(json.dumps(DEFAULT_CONFIG))
+
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return json.loads(json.dumps(DEFAULT_CONFIG))
+
+    config = deep_merge(DEFAULT_CONFIG, raw if isinstance(raw, dict) else {})
+    _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
+    return config
+
+
+def is_backend_healthy(backend_url: str) -> bool:
+    try:
+        resp = requests.get(f"{backend_url.rstrip('/')}/api/health", timeout=1.5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def resolve_model_path(path_text: str) -> Path:
+    model_path = Path(path_text)
+    if not model_path.is_absolute():
+        model_path = ROOT_DIR / model_path
+    return model_path.resolve()
+
+
+def normalize_model_path(path_text: str) -> str:
+    if not path_text:
+        return ""
+
+    resolved = resolve_model_path(path_text)
+    try:
+        return resolved.relative_to(ROOT_DIR).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def _extract_motion_groups(model_json: dict) -> dict:
+    groups = model_json.get("FileReferences", {}).get("Motions")
+    if isinstance(groups, dict):
+        return groups
+    groups = model_json.get("Motions", {})
+    return groups if isinstance(groups, dict) else {}
+
+
+def _infer_motion_group(file_name: str) -> str:
+    name = file_name
+    if name.lower().endswith(".motion3.json"):
+        name = name[: -len(".motion3.json")]
+    token = re.split(r"[\d_\-\s]+", name.strip())[0]
+    if not token:
+        return "Auto"
+    mapping = {
+        "idle": "Idle",
+        "tap": "Tap",
+        "flick": "Flick",
+    }
+    return mapping.get(token.lower(), token[:1].upper() + token[1:])
+
+
+def _scan_motion_groups(model_path: Path) -> dict:
+    model_dir = model_path.parent
+    motion_files = sorted(model_dir.rglob("*.motion3.json"))
+    groups: dict[str, list[dict]] = {}
+    for file_path in motion_files:
+        try:
+            rel = file_path.relative_to(model_dir).as_posix()
+        except ValueError:
+            rel = file_path.name
+        group = _infer_motion_group(file_path.name)
+        groups.setdefault(group, []).append({"File": rel})
+    return groups
+
+
+def _extract_expression_defs(model_json: dict) -> list[dict]:
+    exprs = model_json.get("FileReferences", {}).get("Expressions")
+    return exprs if isinstance(exprs, list) else []
+
+
+def _scan_expression_defs(model_path: Path) -> list[dict]:
+    model_dir = model_path.parent
+    expr_files = sorted(model_dir.rglob("*.exp3.json"))
+    defs: list[dict] = []
+    for file_path in expr_files:
+        try:
+            rel = file_path.relative_to(model_dir).as_posix()
+        except ValueError:
+            rel = file_path.name
+        name = file_path.name
+        if name.lower().endswith(".exp3.json"):
+            name = name[: -len(".exp3.json")]
+        defs.append({"Name": name, "File": rel})
+    return defs
+
+
+def ensure_runtime_model_from_json(model_path: Path, model_json: dict) -> tuple[Path, dict, list[dict]]:
+    groups = _extract_motion_groups(model_json)
+    exprs = _extract_expression_defs(model_json)
+    need_patch = False
+
+    if not groups:
+        groups = _scan_motion_groups(model_path)
+        if groups:
+            need_patch = True
+    if not exprs:
+        exprs = _scan_expression_defs(model_path)
+        if exprs:
+            need_patch = True
+
+    if not need_patch:
+        return model_path, groups, exprs
+
+    patched = json.loads(json.dumps(model_json))
+    patched.setdefault("FileReferences", {})
+    if groups:
+        patched["FileReferences"]["Motions"] = groups
+    if exprs:
+        patched["FileReferences"]["Expressions"] = exprs
+
+    runtime_path = model_path.with_name(f"{model_path.stem}.autogen.model3.json")
+    try:
+        with runtime_path.open("w", encoding="utf-8") as f:
+            json.dump(patched, f, ensure_ascii=False, indent=2)
+        return runtime_path, groups, exprs
+    except Exception:
+        return model_path, groups, exprs
+
+
+def ensure_runtime_model(model_path: Path) -> tuple[Path, dict, list[dict]]:
+    if not model_path.exists():
+        return model_path, {}, []
+    try:
+        with model_path.open("r", encoding="utf-8") as f:
+            model_json = json.load(f)
+    except Exception:
+        return model_path, {}, []
+    return ensure_runtime_model_from_json(model_path, model_json)
+
+
+def action_items_from_defs(groups: dict, exprs: list[dict]) -> list[dict]:
+    items: list[dict] = []
+    for group_name, entries in groups.items():
+        if not isinstance(entries, list):
+            continue
+        for idx, _ in enumerate(entries):
+            items.append(
+                {
+                    "type": "motion",
+                    "group": group_name,
+                    "index": idx,
+                    "label": f"{group_name}[{idx}]",
+                }
+            )
+    for expr in exprs:
+        if not isinstance(expr, dict):
+            continue
+        name = str(expr.get("Name") or "").strip()
+        if not name:
+            continue
+        items.append(
+            {
+                "type": "expression",
+                "name": name,
+                "label": f"Expr:{name}",
+            }
+        )
+    return items
+
+
+class PetBridge(QObject):
+    stateChanged = Signal(str)
+
+    @Slot(str)
+    def petStateChanged(self, payload: str) -> None:
+        self.stateChanged.emit(payload)
+
+    @Slot(str)
+    def log(self, text: str) -> None:
+        print(f"[WEB] {text}")
+
+
+class ControlPanel(QWidget):
+    def __init__(self, pet_window: "DesktopPet"):
+        super().__init__()
+        self.pet_window = pet_window
+        self.setWindowTitle("桌宠控制面板")
+        self.resize(520, 520)
+
+        self._build_ui()
+        self._wire_events()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        model_box = QGroupBox("模型")
+        model_layout = QGridLayout(model_box)
+
+        self.model_path_input = QLineEdit()
+        self.browse_button = QPushButton("浏览...")
+        self.reload_button = QPushButton("重载模型")
+
+        self.motion_combo = QComboBox()
+        self.play_motion_button = QPushButton("播放动作")
+
+        model_layout.addWidget(QLabel("model3.json 路径"), 0, 0)
+        model_layout.addWidget(self.model_path_input, 0, 1)
+        model_layout.addWidget(self.browse_button, 0, 2)
+        model_layout.addWidget(self.reload_button, 1, 2)
+        model_layout.addWidget(QLabel("动作"), 1, 0)
+        model_layout.addWidget(self.motion_combo, 1, 1)
+        model_layout.addWidget(self.play_motion_button, 2, 2)
+
+        chat_box = QGroupBox("对话")
+        chat_layout = QGridLayout(chat_box)
+        self.chat_model_input = QLineEdit()
+        self.chat_model_input.setPlaceholderText("qwen3:8b")
+        self.chat_llm_provider_combo = QComboBox()
+        self.chat_llm_provider_combo.addItem("ollama")
+        self.chat_llm_provider_combo.addItem("openai_compat")
+        self.chat_api_base_input = QLineEdit()
+        self.chat_api_base_input.setPlaceholderText("http://127.0.0.1:11434 或 https://api.openai.com")
+        self.chat_api_key_input = QLineEdit()
+        self.chat_api_key_input.setPlaceholderText("API Key（openai_compat 时需要）")
+        self.chat_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.chat_voice_input = QLineEdit()
+        self.chat_voice_input.setPlaceholderText("zh-CN-XiaoxiaoNeural")
+        self.chat_tts_provider_combo = QComboBox()
+        self.chat_tts_provider_combo.addItem("edge_tts")
+        self.chat_tts_provider_combo.addItem("custom_http")
+        self.chat_tts_provider_url_input = QLineEdit()
+        self.chat_tts_provider_url_input.setPlaceholderText("custom_http URL (例如 http://127.0.0.1:9880/tts)")
+        self.chat_rate_slider = QSlider(Qt.Orientation.Horizontal)
+        self.chat_rate_slider.setRange(-50, 100)
+        self.chat_rate_slider.setValue(0)
+        self.chat_rate_value_label = QLabel("+0%")
+        self.expression_mode_check = QCheckBox("表情联动")
+        self.expression_mode_check.setChecked(True)
+        self.expression_format_value_label = QLabel("ndjson_v1")
+        self.system_prompt_input = QPlainTextEdit()
+        self.system_prompt_input.setPlaceholderText("系统提示词：定义桌宠人设、语气、规则等")
+        self.system_prompt_input.setFixedHeight(88)
+        self.backend_test_button = QPushButton("测试后端")
+        self.backend_status_label = QLabel("unknown")
+        self.tooling_enabled_check = QCheckBox("启用工具调用（含第三方MCP）")
+        self.tooling_enabled_check.setChecked(True)
+        rate_row = QWidget()
+        rate_row_layout = QHBoxLayout(rate_row)
+        rate_row_layout.setContentsMargins(0, 0, 0, 0)
+        rate_row_layout.setSpacing(6)
+        rate_row_layout.addWidget(self.chat_rate_slider, 1)
+        rate_row_layout.addWidget(self.chat_rate_value_label, 0)
+        chat_layout.addWidget(QLabel("模型"), 0, 0)
+        chat_layout.addWidget(self.chat_model_input, 0, 1)
+        chat_layout.addWidget(self.backend_test_button, 0, 2)
+        chat_layout.addWidget(QLabel("模型源"), 1, 0)
+        chat_layout.addWidget(self.chat_llm_provider_combo, 1, 1, 1, 2)
+        chat_layout.addWidget(QLabel("API Base"), 2, 0)
+        chat_layout.addWidget(self.chat_api_base_input, 2, 1, 1, 2)
+        chat_layout.addWidget(QLabel("API Key"), 3, 0)
+        chat_layout.addWidget(self.chat_api_key_input, 3, 1, 1, 2)
+        chat_layout.addWidget(QLabel("语音"), 4, 0)
+        chat_layout.addWidget(self.chat_voice_input, 4, 1, 1, 2)
+        chat_layout.addWidget(QLabel("TTS方式"), 5, 0)
+        chat_layout.addWidget(self.chat_tts_provider_combo, 5, 1, 1, 2)
+        chat_layout.addWidget(QLabel("TTS接口"), 6, 0)
+        chat_layout.addWidget(self.chat_tts_provider_url_input, 6, 1, 1, 2)
+        chat_layout.addWidget(QLabel("语速"), 7, 0)
+        chat_layout.addWidget(rate_row, 7, 1, 1, 2)
+        chat_layout.addWidget(QLabel("表情驱动"), 8, 0)
+        chat_layout.addWidget(self.expression_mode_check, 8, 1, 1, 2)
+        chat_layout.addWidget(QLabel("协议版本"), 9, 0)
+        chat_layout.addWidget(self.expression_format_value_label, 9, 1, 1, 2)
+        chat_layout.addWidget(QLabel("系统提示词"), 10, 0)
+        chat_layout.addWidget(self.system_prompt_input, 10, 1, 1, 2)
+        chat_layout.addWidget(QLabel("状态"), 11, 0)
+        chat_layout.addWidget(self.backend_status_label, 11, 1, 1, 2)
+        chat_layout.addWidget(QLabel("工具"), 12, 0)
+        chat_layout.addWidget(self.tooling_enabled_check, 12, 1, 1, 2)
+
+        mcp_box = QGroupBox("第三方 MCP")
+        mcp_layout = QGridLayout(mcp_box)
+        self.third_party_enabled_check = QCheckBox("启用第三方MCP")
+        self.third_party_enabled_check.setChecked(True)
+        self.mcp_git_url_input = QLineEdit()
+        self.mcp_git_url_input.setPlaceholderText("Git 仓库地址")
+        self.mcp_install_git_button = QPushButton("从 Git 安装")
+        self.mcp_register_local_button = QPushButton("注册本地目录")
+        self.mcp_reload_button = QPushButton("重载 MCP")
+        self.mcp_server_combo = QComboBox()
+        self.mcp_toggle_button = QPushButton("启用/停用所选")
+        self.mcp_status_view = QPlainTextEdit()
+        self.mcp_status_view.setReadOnly(True)
+        self.mcp_status_view.setFixedHeight(120)
+        mcp_layout.addWidget(self.third_party_enabled_check, 0, 0, 1, 3)
+        mcp_layout.addWidget(QLabel("Git 地址"), 1, 0)
+        mcp_layout.addWidget(self.mcp_git_url_input, 1, 1)
+        mcp_layout.addWidget(self.mcp_install_git_button, 1, 2)
+        mcp_layout.addWidget(QLabel("已注册"), 2, 0)
+        mcp_layout.addWidget(self.mcp_server_combo, 2, 1)
+        mcp_layout.addWidget(self.mcp_toggle_button, 2, 2)
+        mcp_layout.addWidget(self.mcp_register_local_button, 3, 1)
+        mcp_layout.addWidget(self.mcp_reload_button, 3, 2)
+        mcp_layout.addWidget(self.mcp_status_view, 4, 0, 1, 3)
+
+        pet_box = QGroupBox("形象参数")
+        pet_form = QFormLayout(pet_box)
+
+        self.scale_spin = QDoubleSpinBox()
+        self.scale_spin.setRange(0.05, 5.0)
+        self.scale_spin.setSingleStep(0.05)
+        self.scale_spin.setDecimals(2)
+
+        self.offset_x_spin = QSpinBox()
+        self.offset_x_spin.setRange(-5000, 5000)
+
+        self.offset_y_spin = QSpinBox()
+        self.offset_y_spin.setRange(-5000, 5000)
+
+        self.rotation_spin = QDoubleSpinBox()
+        self.rotation_spin.setRange(-180.0, 180.0)
+        self.rotation_spin.setSingleStep(1.0)
+        self.rotation_spin.setDecimals(1)
+
+        self.opacity_spin = QDoubleSpinBox()
+        self.opacity_spin.setRange(0.1, 1.0)
+        self.opacity_spin.setSingleStep(0.05)
+        self.opacity_spin.setDecimals(2)
+
+        self.edit_mode_check = QCheckBox("编辑模式（模型可拖拽，滚轮缩放）")
+        self.follow_mouse_check = QCheckBox("视线跟随鼠标")
+
+        pet_form.addRow("缩放", self.scale_spin)
+        pet_form.addRow("偏移 X", self.offset_x_spin)
+        pet_form.addRow("偏移 Y", self.offset_y_spin)
+        pet_form.addRow("旋转", self.rotation_spin)
+        pet_form.addRow("透明度", self.opacity_spin)
+        pet_form.addRow(self.edit_mode_check)
+        pet_form.addRow(self.follow_mouse_check)
+
+        window_box = QGroupBox("窗口")
+        window_form = QFormLayout(window_box)
+
+        self.win_x_spin = QSpinBox()
+        self.win_x_spin.setRange(-10000, 10000)
+
+        self.win_y_spin = QSpinBox()
+        self.win_y_spin.setRange(-10000, 10000)
+
+        self.win_w_spin = QSpinBox()
+        self.win_w_spin.setRange(120, 2000)
+
+        self.win_h_spin = QSpinBox()
+        self.win_h_spin.setRange(120, 2000)
+
+        self.lock_window_check = QCheckBox("锁定窗口位置（仍可右键）")
+
+        window_form.addRow("窗口 X", self.win_x_spin)
+        window_form.addRow("窗口 Y", self.win_y_spin)
+        window_form.addRow("窗口宽", self.win_w_spin)
+        window_form.addRow("窗口高", self.win_h_spin)
+        window_form.addRow(self.lock_window_check)
+
+        button_row = QHBoxLayout()
+        self.apply_button = QPushButton("应用")
+        self.save_button = QPushButton("保存配置")
+        self.reset_button = QPushButton("恢复默认")
+        self.hide_button = QPushButton("关闭面板")
+        button_row.addWidget(self.apply_button)
+        button_row.addWidget(self.save_button)
+        button_row.addWidget(self.reset_button)
+        button_row.addWidget(self.hide_button)
+
+        hint = QLabel("提示：按住 Alt + 左键可拖动桌宠窗口。")
+
+        root.addWidget(model_box)
+        root.addWidget(chat_box)
+        root.addWidget(mcp_box)
+        root.addWidget(pet_box)
+        root.addWidget(window_box)
+        root.addWidget(hint)
+        root.addLayout(button_row)
+
+    def _wire_events(self) -> None:
+        self.browse_button.clicked.connect(self.on_browse_model)
+        self.reload_button.clicked.connect(self.on_reload_model)
+        self.play_motion_button.clicked.connect(self.on_play_motion)
+        self.apply_button.clicked.connect(self.pet_window.apply_from_panel)
+        self.save_button.clicked.connect(self.on_save)
+        self.reset_button.clicked.connect(self.on_reset)
+        self.hide_button.clicked.connect(self.hide)
+        self.backend_test_button.clicked.connect(self.on_test_backend)
+        self.chat_rate_slider.valueChanged.connect(self.on_chat_rate_changed)
+        self.mcp_install_git_button.clicked.connect(self.on_install_mcp_from_git)
+        self.mcp_register_local_button.clicked.connect(self.on_register_local_mcp)
+        self.mcp_reload_button.clicked.connect(self.on_reload_mcp)
+        self.mcp_toggle_button.clicked.connect(self.on_toggle_mcp)
+
+    def on_chat_rate_changed(self, value: int) -> None:
+        self.chat_rate_value_label.setText(f"{int(value):+d}%")
+
+    def on_browse_model(self) -> None:
+        dialog = QFileDialog(self, "选择 Live2D 模型配置", str(ROOT_DIR))
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilters(
+            [
+                "Live2D 模型 (*.model3.json *.model.json)",
+                "Cubism 4 (*.model3.json)",
+                "Legacy (*.model.json)",
+                "All Files (*)",
+            ]
+        )
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        if not dialog.exec():
+            return
+        selected = dialog.selectedFiles()
+        if not selected:
+            return
+        path = selected[0]
+        if not path:
+            return
+
+        normalized = normalize_model_path(path)
+        self.model_path_input.setText(normalized)
+        # Keep config in sync before refresh to avoid input being overwritten.
+        self.pet_window.config["model_path"] = normalized
+        self.pet_window.refresh_motion_list(prefer_reset=True)
+        self.pet_window.apply_config_to_web()
+
+    def on_reload_model(self) -> None:
+        self.pet_window.apply_from_panel()
+        self.pet_window.apply_config_to_web()
+
+    def on_test_backend(self) -> None:
+        self.pet_window.apply_from_panel()
+        chat_cfg = self.pet_window.config.get("chat", {})
+        backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL))
+        ok = is_backend_healthy(backend_url)
+        self.backend_status_label.setText("online" if ok else "offline")
+        if not ok:
+            return
+
+        try:
+            resp = requests.post(
+                f"{backend_url.rstrip('/')}/api/models",
+                json={
+                    "llm_provider": str(chat_cfg.get("llm_provider", "ollama")),
+                    "api_base_url": str(chat_cfg.get("api_base_url", "")),
+                    "api_key": str(chat_cfg.get("api_key", "")),
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+            if not isinstance(models, list) or not models:
+                return
+            text = [str(m).strip() for m in models if str(m).strip()]
+            if not text:
+                return
+            current = self.chat_model_input.text().strip()
+            idx = text.index(current) if current in text else 0
+            selected, accepted = QInputDialog.getItem(
+                self,
+                "选择模型",
+                "后端可用模型：",
+                text,
+                idx,
+                False,
+            )
+            if accepted and selected:
+                self.chat_model_input.setText(str(selected))
+                self.pet_window.apply_from_panel()
+        except Exception as exc:
+            print(f"获取模型列表失败: {exc}")
+        self.refresh_third_party_mcp(force_reload=False)
+
+    def refresh_third_party_mcp(self, force_reload: bool = False) -> None:
+        chat_cfg = self.pet_window.config.get("chat", {})
+        backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
+        if not is_backend_healthy(backend_url):
+            self.mcp_status_view.setPlainText("后端离线，无法刷新第三方 MCP 状态。")
+            return
+
+        endpoint = "/api/mcp/reload" if force_reload else "/api/mcp/servers"
+        method = requests.post if force_reload else requests.get
+        try:
+            resp = method(f"{backend_url}{endpoint}", timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            servers = data.get("servers", [])
+        except Exception as exc:
+            self.mcp_status_view.setPlainText(f"刷新第三方 MCP 失败：{exc}")
+            return
+
+        widgets = [self.mcp_server_combo]
+        blockers = [QSignalBlocker(w) for w in widgets]
+        _ = blockers
+        self.mcp_server_combo.clear()
+
+        lines: list[str] = []
+        for item in servers if isinstance(servers, list) else []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            runtime = str(item.get("runtime") or "")
+            install_status = str(item.get("install_status") or "")
+            health_status = str(item.get("health_status") or "")
+            source_type = str(item.get("source_type") or "")
+            tools = item.get("tools", [])
+            enabled_text = "enabled" if bool(item.get("enabled", True)) else "disabled"
+            label = f"{name} [{runtime}] {health_status}"
+            self.mcp_server_combo.addItem(label, item)
+            tool_names = []
+            if isinstance(tools, list):
+                for tool in tools:
+                    if isinstance(tool, dict):
+                        fn = tool.get("function", {})
+                        if isinstance(fn, dict):
+                            tname = str(fn.get("name") or "").strip()
+                            if tname:
+                                tool_names.append(tname)
+            lines.append(
+                f"{name}\n"
+                f"  runtime: {runtime}\n"
+                f"  source: {source_type}\n"
+                f"  install: {install_status}\n"
+                f"  health: {health_status}\n"
+                f"  state: {enabled_text}\n"
+                f"  tools: {', '.join(tool_names) if tool_names else '-'}"
+            )
+            error_text = str(item.get("error") or "").strip()
+            if error_text:
+                lines.append(f"  error: {error_text}")
+        self.mcp_status_view.setPlainText("\n\n".join(lines) if lines else "暂无第三方 MCP。")
+
+    def on_install_mcp_from_git(self) -> None:
+        self.pet_window.apply_from_panel()
+        repo_url = self.mcp_git_url_input.text().strip()
+        if not repo_url:
+            self.mcp_status_view.setPlainText("请先填写 Git 仓库地址。")
+            return
+        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
+        try:
+            resp = requests.post(f"{backend_url}/api/mcp/install", json={"repo_url": repo_url, "name": ""}, timeout=180)
+            resp.raise_for_status()
+        except Exception as exc:
+            self.mcp_status_view.setPlainText(f"Git 安装失败：{exc}")
+            return
+        self.pet_window.config = load_config()
+        self.pet_window.sync_panel()
+        self.refresh_third_party_mcp(force_reload=True)
+
+    def on_register_local_mcp(self) -> None:
+        self.pet_window.apply_from_panel()
+        directory = QFileDialog.getExistingDirectory(self, "选择第三方 MCP 目录", str(ROOT_DIR))
+        if not directory:
+            return
+        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
+        try:
+            resp = requests.post(
+                f"{backend_url}/api/mcp/register-local",
+                json={"path": directory, "name": ""},
+                timeout=180,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            self.mcp_status_view.setPlainText(f"注册本地目录失败：{exc}")
+            return
+        self.pet_window.config = load_config()
+        self.pet_window.sync_panel()
+        self.refresh_third_party_mcp(force_reload=True)
+
+    def on_reload_mcp(self) -> None:
+        self.pet_window.apply_from_panel()
+        self.refresh_third_party_mcp(force_reload=True)
+
+    def on_toggle_mcp(self) -> None:
+        self.pet_window.apply_from_panel()
+        item = self.mcp_server_combo.currentData()
+        if not isinstance(item, dict):
+            self.mcp_status_view.setPlainText("请先选择一个第三方 MCP。")
+            return
+        name = str(item.get("name") or "").strip()
+        current_enabled = bool(item.get("enabled", True))
+        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
+        try:
+            resp = requests.post(
+                f"{backend_url}/api/mcp/toggle",
+                json={"name": name, "enabled": not current_enabled},
+                timeout=60,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            self.mcp_status_view.setPlainText(f"切换 MCP 状态失败：{exc}")
+            return
+        self.pet_window.config = load_config()
+        self.pet_window.sync_panel()
+        self.refresh_third_party_mcp(force_reload=True)
+
+    def on_play_motion(self) -> None:
+        data = self.motion_combo.currentData()
+        if not isinstance(data, dict):
+            return
+        self.pet_window.play_action(data)
+
+    def on_save(self) -> None:
+        self.pet_window.apply_from_panel()
+        self.pet_window.save_config()
+
+    def on_reset(self) -> None:
+        self.pet_window.reset_to_default()
+
+    def set_from_config(self, config: dict, motions: list[dict]) -> None:
+        widgets = [
+            self.model_path_input,
+            self.scale_spin,
+            self.offset_x_spin,
+            self.offset_y_spin,
+            self.rotation_spin,
+            self.opacity_spin,
+            self.edit_mode_check,
+            self.follow_mouse_check,
+            self.win_x_spin,
+            self.win_y_spin,
+            self.win_w_spin,
+            self.win_h_spin,
+            self.lock_window_check,
+            self.motion_combo,
+            self.chat_llm_provider_combo,
+            self.chat_api_base_input,
+            self.chat_api_key_input,
+            self.chat_voice_input,
+            self.chat_tts_provider_combo,
+            self.chat_tts_provider_url_input,
+            self.chat_rate_slider,
+            self.expression_mode_check,
+            self.tooling_enabled_check,
+            self.third_party_enabled_check,
+            self.system_prompt_input,
+        ]
+
+        blockers = [QSignalBlocker(w) for w in widgets]
+        _ = blockers
+
+        self.model_path_input.setText(config.get("model_path", ""))
+        self.chat_model_input.setText(config.get("chat", {}).get("model", "qwen3:8b"))
+        llm_provider = str(config.get("chat", {}).get("llm_provider", "ollama")).strip() or "ollama"
+        if llm_provider not in ("ollama", "openai_compat"):
+            llm_provider = "ollama"
+        self.chat_llm_provider_combo.setCurrentText(llm_provider)
+        self.chat_api_base_input.setText(str(config.get("chat", {}).get("api_base_url", "http://127.0.0.1:11434")))
+        self.chat_api_key_input.setText(str(config.get("chat", {}).get("api_key", "")))
+        voice_text = str(config.get("chat", {}).get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
+        self.chat_voice_input.setText(voice_text)
+        provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
+        provider = provider if provider in ("edge_tts", "custom_http") else "edge_tts"
+        self.chat_tts_provider_combo.setCurrentText(provider)
+        self.chat_tts_provider_url_input.setText(str(config.get("chat", {}).get("tts_provider_url", "")).strip())
+        try:
+            rate_pct = int(config.get("chat", {}).get("rate_pct", 0))
+        except Exception:
+            rate_pct = 0
+        rate_pct = max(-50, min(100, rate_pct))
+        self.chat_rate_slider.setValue(rate_pct)
+        self.chat_rate_value_label.setText(f"{rate_pct:+d}%")
+        self.expression_mode_check.setChecked(bool(config.get("chat", {}).get("expression_mode", True)))
+        self.expression_format_value_label.setText(str(config.get("chat", {}).get("expression_output_format", "ndjson_v1")))
+        self.tooling_enabled_check.setChecked(bool(config.get("chat", {}).get("tooling", {}).get("enabled", True)))
+        self.third_party_enabled_check.setChecked(
+            bool(config.get("chat", {}).get("tooling", {}).get("third_party", {}).get("enabled", True))
+        )
+        self.system_prompt_input.setPlainText(config.get("chat", {}).get("system_prompt", ""))
+        self.scale_spin.setValue(float(config["pet"]["scale"]))
+        self.offset_x_spin.setValue(int(config["pet"]["offset_x"]))
+        self.offset_y_spin.setValue(int(config["pet"]["offset_y"]))
+        self.rotation_spin.setValue(float(config["pet"]["rotation"]))
+        self.opacity_spin.setValue(float(config["pet"]["opacity"]))
+        self.edit_mode_check.setChecked(bool(config["pet"]["edit_mode"]))
+        self.follow_mouse_check.setChecked(bool(config["pet"]["follow_mouse"]))
+
+        self.win_x_spin.setValue(int(config["window"]["x"]))
+        self.win_y_spin.setValue(int(config["window"]["y"]))
+        self.win_w_spin.setValue(int(config["window"]["width"]))
+        self.win_h_spin.setValue(int(config["window"]["height"]))
+        self.lock_window_check.setChecked(bool(config["window"]["locked"]))
+
+        self.motion_combo.clear()
+        for item in motions:
+            self.motion_combo.addItem(item["label"], item)
+
+    def update_pet_widgets_from_web_state(self, state: dict) -> None:
+        widgets = [
+            self.scale_spin,
+            self.offset_x_spin,
+            self.offset_y_spin,
+            self.rotation_spin,
+            self.opacity_spin,
+        ]
+        blockers = [QSignalBlocker(w) for w in widgets]
+        _ = blockers
+
+        if "scale" in state:
+            self.scale_spin.setValue(float(state["scale"]))
+        if "offset_x" in state:
+            self.offset_x_spin.setValue(int(state["offset_x"]))
+        if "offset_y" in state:
+            self.offset_y_spin.setValue(int(state["offset_y"]))
+        if "rotation" in state:
+            self.rotation_spin.setValue(float(state["rotation"]))
+        if "opacity" in state:
+            self.opacity_spin.setValue(float(state["opacity"]))
+
+
+class DesktopPet(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = load_config()
+        self.drag_offset = QPoint()
+        self.window_locked = bool(self.config["window"]["locked"])
+        self.motion_items: list[dict] = []
+        self.runtime_model_path: Path | None = None
+        self.backend_process: subprocess.Popen | None = None
+        self.backend_started_by_app = False
+        self.resize_margin = 8
+        self._window_dragging = False
+        self._window_resizing = False
+        self._resize_edges: tuple[bool, bool, bool, bool] = (False, False, False, False)  # left, top, right, bottom
+        self._drag_start_global = QPoint()
+        self._drag_start_geometry = self.geometry()
+
+        self.bridge = PetBridge()
+        self.bridge.stateChanged.connect(self.on_web_state_changed)
+
+        self.browser = QWebEngineView(self)
+        self.browser.setMouseTracking(True)
+        self.browser.page().setBackgroundColor(QColor(0, 0, 0, 0))
+
+        settings = self.browser.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
+
+        self.browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.browser.customContextMenuRequested.connect(self.show_context_menu)
+        self.browser.installEventFilter(self)
+        QApplication.instance().installEventFilter(self)
+
+        self.channel = QWebChannel(self.browser.page())
+        self.channel.registerObject("qtBridge", self.bridge)
+        self.browser.page().setWebChannel(self.channel)
+
+        self.setCentralWidget(self.browser)
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        if not FORCE_OPAQUE_WINDOW:
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self.apply_window_geometry_from_config()
+
+        self.control_panel = ControlPanel(self)
+        self.control_panel.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+
+        self.refresh_motion_list(prefer_reset=False)
+        self.sync_panel()
+        self.ensure_backend_service()
+        self.control_panel.refresh_third_party_mcp(force_reload=False)
+
+        self.browser.loadFinished.connect(self.on_web_loaded)
+        self.browser.setUrl(QUrl.fromLocalFile(str((ROOT_DIR / "index.html").resolve())))
+
+    def apply_window_geometry_from_config(self) -> None:
+        geom = self.config["window"]
+        self.setGeometry(
+            int(geom["x"]),
+            int(geom["y"]),
+            int(geom["width"]),
+            int(geom["height"]),
+        )
+
+    def sync_panel(self) -> None:
+        self.control_panel.set_from_config(self.config, self.motion_items)
+
+    def refresh_motion_list(self, prefer_reset: bool) -> None:
+        model_path_text = self.control_panel.model_path_input.text().strip() if hasattr(self, "control_panel") else self.config.get("model_path", "")
+        model_path = resolve_model_path(model_path_text or self.config.get("model_path", ""))
+        self.runtime_model_path, motion_groups, expr_defs = ensure_runtime_model(model_path)
+        self.motion_items = action_items_from_defs(motion_groups, expr_defs)
+        if not self.motion_items:
+            self.motion_items = [{"type": "motion", "group": "Idle", "index": 0, "label": "Idle[0]"}]
+
+        if hasattr(self, "control_panel"):
+            self.sync_panel()
+            if prefer_reset and self.control_panel.motion_combo.count() > 0:
+                self.control_panel.motion_combo.setCurrentIndex(0)
+
+    def show_context_menu(self, pos: QPoint) -> None:
+        menu = QMenu(self)
+        panel_action = QAction("打开控制面板", self)
+        lock_action = QAction("解锁窗口" if self.window_locked else "锁定窗口", self)
+        reload_action = QAction("重新加载模型", self)
+        quit_action = QAction("退出", self)
+
+        menu.addAction(panel_action)
+        menu.addAction(lock_action)
+        menu.addAction(reload_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+
+        selected = menu.exec(self.browser.mapToGlobal(pos))
+        if selected == panel_action:
+            self.control_panel.show()
+            self.control_panel.raise_()
+            self.control_panel.activateWindow()
+        elif selected == lock_action:
+            self.window_locked = not self.window_locked
+            self.config["window"]["locked"] = self.window_locked
+            self.sync_panel()
+        elif selected == reload_action:
+            self.apply_config_to_web()
+        elif selected == quit_action:
+            self.close()
+
+    def ensure_backend_service(self) -> None:
+        chat_cfg = self.config.get("chat", {})
+        backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)).strip() or DEFAULT_BACKEND_URL
+        self.config.setdefault("chat", {})["backend_url"] = backend_url
+        if is_backend_healthy(backend_url):
+            return
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8008",
+            "--log-level",
+            "warning",
+        ]
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NO_WINDOW
+
+        try:
+            self.backend_process = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+            self.backend_started_by_app = True
+        except Exception as exc:
+            print(f"启动后端失败: {exc}")
+            return
+
+        for _ in range(20):
+            if is_backend_healthy(backend_url):
+                return
+            time.sleep(0.2)
+        print("后端未在预期时间内就绪，聊天功能可能不可用。")
+
+    def stop_backend_service(self) -> None:
+        proc = self.backend_process
+        if not proc or not self.backend_started_by_app:
+            return
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def eventFilter(self, watched, event):
+        def _is_browser_related(obj: QObject) -> bool:
+            if obj is self.browser:
+                return True
+            if hasattr(obj, "parent"):
+                p = obj.parent()
+                while p is not None:
+                    if p is self.browser:
+                        return True
+                    p = p.parent() if hasattr(p, "parent") else None
+            return False
+
+        def _event_pos_in_browser(ev):
+            if not hasattr(ev, "position"):
+                return QPoint(0, 0)
+            local = ev.position().toPoint()
+            if watched is self.browser:
+                return local
+            if hasattr(watched, "mapTo"):
+                try:
+                    return watched.mapTo(self.browser, local)
+                except Exception:
+                    return local
+            return local
+
+        def _global_point(ev):
+            return ev.globalPosition().toPoint()
+
+        def _local_point(ev):
+            return _event_pos_in_browser(ev)
+
+        def _hit_edges(p: QPoint) -> tuple[bool, bool, bool, bool]:
+            rect = self.rect()
+            left = p.x() <= self.resize_margin
+            right = p.x() >= rect.width() - self.resize_margin
+            top = p.y() <= self.resize_margin
+            bottom = p.y() >= rect.height() - self.resize_margin
+            return (left, top, right, bottom)
+
+        def _cursor_from_edges(edges: tuple[bool, bool, bool, bool]):
+            left, top, right, bottom = edges
+            if (left and top) or (right and bottom):
+                return Qt.CursorShape.SizeFDiagCursor
+            if (right and top) or (left and bottom):
+                return Qt.CursorShape.SizeBDiagCursor
+            if left or right:
+                return Qt.CursorShape.SizeHorCursor
+            if top or bottom:
+                return Qt.CursorShape.SizeVerCursor
+            return Qt.CursorShape.ArrowCursor
+
+        def _apply_resize(edges: tuple[bool, bool, bool, bool], delta: QPoint) -> None:
+            left, top, right, bottom = edges
+            g = self._drag_start_geometry
+            min_w = max(self.minimumWidth(), 120)
+            min_h = max(self.minimumHeight(), 120)
+
+            new_left = g.left()
+            new_top = g.top()
+            new_right = g.right()
+            new_bottom = g.bottom()
+
+            if left:
+                new_left = g.left() + delta.x()
+                if new_right - new_left + 1 < min_w:
+                    new_left = new_right - min_w + 1
+            if right:
+                new_right = g.right() + delta.x()
+                if new_right - new_left + 1 < min_w:
+                    new_right = new_left + min_w - 1
+            if top:
+                new_top = g.top() + delta.y()
+                if new_bottom - new_top + 1 < min_h:
+                    new_top = new_bottom - min_h + 1
+            if bottom:
+                new_bottom = g.bottom() + delta.y()
+                if new_bottom - new_top + 1 < min_h:
+                    new_bottom = new_top + min_h - 1
+
+            self.setGeometry(new_left, new_top, new_right - new_left + 1, new_bottom - new_top + 1)
+
+        if _is_browser_related(watched):
+            edit_mode = bool(self.config.get("pet", {}).get("edit_mode", False))
+
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if edit_mode:
+                    local = _local_point(event)
+                    self._drag_start_global = _global_point(event)
+                    self._drag_start_geometry = self.geometry()
+                    self._resize_edges = _hit_edges(local)
+                    self._window_resizing = any(self._resize_edges)
+                    move_zone = local.y() <= 40
+                    self._window_dragging = (not self._window_resizing) and move_zone
+                    if self._window_resizing:
+                        self.browser.setCursor(_cursor_from_edges(self._resize_edges))
+                        return True
+                    if self._window_dragging:
+                        self.browser.setCursor(Qt.CursorShape.ClosedHandCursor)
+                        return True
+
+                alt_pressed = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.AltModifier)
+                if alt_pressed and not self.window_locked:
+                    self.drag_offset = _global_point(event) - self.frameGeometry().topLeft()
+                    return True
+
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if self._window_dragging or self._window_resizing:
+                    self._window_dragging = False
+                    self._window_resizing = False
+                    self._resize_edges = (False, False, False, False)
+                    self.browser.setCursor(Qt.CursorShape.ArrowCursor if not edit_mode else Qt.CursorShape.OpenHandCursor)
+                    self.config["window"]["x"] = self.x()
+                    self.config["window"]["y"] = self.y()
+                    self.config["window"]["width"] = self.width()
+                    self.config["window"]["height"] = self.height()
+                    self.sync_panel()
+                    return True
+
+            if event.type() == QEvent.Type.MouseMove and event.buttons() & Qt.MouseButton.LeftButton:
+                if edit_mode and (self._window_dragging or self._window_resizing):
+                    gp = _global_point(event)
+                    delta = gp - self._drag_start_global
+                    if self._window_resizing:
+                        _apply_resize(self._resize_edges, delta)
+                    else:
+                        self.move(self._drag_start_geometry.topLeft() + delta)
+
+                    self.config["window"]["x"] = self.x()
+                    self.config["window"]["y"] = self.y()
+                    self.config["window"]["width"] = self.width()
+                    self.config["window"]["height"] = self.height()
+                    self.sync_panel()
+                    return True
+
+                alt_pressed = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.AltModifier)
+                if alt_pressed and not self.window_locked:
+                    self.move(_global_point(event) - self.drag_offset)
+                    self.config["window"]["x"] = self.x()
+                    self.config["window"]["y"] = self.y()
+                    self.sync_panel()
+                    return True
+            if event.type() == QEvent.Type.MouseMove and edit_mode and not (event.buttons() & Qt.MouseButton.LeftButton):
+                local = _local_point(event)
+                edges = _hit_edges(local)
+                if any(edges):
+                    self.browser.setCursor(_cursor_from_edges(edges))
+                elif local.y() <= 40:
+                    self.browser.setCursor(Qt.CursorShape.OpenHandCursor)
+                else:
+                    self.browser.setCursor(Qt.CursorShape.ArrowCursor)
+                return False
+            if event.type() == QEvent.Type.Leave and edit_mode and not (self._window_dragging or self._window_resizing):
+                self.browser.setCursor(Qt.CursorShape.ArrowCursor)
+                return False
+
+        return super().eventFilter(watched, event)
+
+    def current_runtime_payload(self) -> dict:
+        model_path = resolve_model_path(self.config.get("model_path", ""))
+        if not model_path.exists() and DEFAULT_CONFIG["model_path"]:
+            model_path = resolve_model_path(DEFAULT_CONFIG["model_path"])
+        runtime_path, _, _ = ensure_runtime_model(model_path)
+        self.runtime_model_path = runtime_path
+
+        return {
+            "model_url": QUrl.fromLocalFile(str(runtime_path)).toString(),
+            "pet": self.config["pet"],
+            "chat": self.config.get("chat", {}),
+        }
+
+    def on_web_loaded(self, ok: bool) -> None:
+        if not ok:
+            return
+        self.apply_config_to_web()
+
+    def apply_config_to_web(self) -> None:
+        payload = json.dumps(self.current_runtime_payload(), ensure_ascii=False)
+        script = f"window.PET_APP && window.PET_APP.applyConfig({payload});"
+        self.browser.page().runJavaScript(script)
+
+    def play_motion(self, group: str, index: int = 0) -> None:
+        script = (
+            "window.PET_APP && window.PET_APP.playMotion("
+            f"{json.dumps(group, ensure_ascii=False)}, {int(index)});"
+        )
+        self.browser.page().runJavaScript(script)
+
+    def play_expression(self, name: str) -> None:
+        script = (
+            "window.PET_APP && window.PET_APP.playExpression("
+            f"{json.dumps(name, ensure_ascii=False)});"
+        )
+        self.browser.page().runJavaScript(script)
+
+    def play_action(self, action: dict) -> None:
+        action_type = str(action.get("type", "motion"))
+        if action_type == "expression":
+            name = str(action.get("name", "")).strip()
+            if name:
+                self.play_expression(name)
+            return
+        self.play_motion(str(action.get("group", "Idle")), int(action.get("index", 0)))
+
+    @Slot(str)
+    def on_web_state_changed(self, payload: str) -> None:
+        try:
+            state = json.loads(payload)
+        except Exception:
+            return
+
+        for key in ["scale", "offset_x", "offset_y", "rotation", "opacity"]:
+            if key in state:
+                self.config["pet"][key] = state[key]
+
+        self.control_panel.update_pet_widgets_from_web_state(state)
+
+    def apply_from_panel(self) -> None:
+        panel = self.control_panel
+
+        self.config["model_path"] = normalize_model_path(panel.model_path_input.text().strip())
+
+        self.config["pet"] = {
+            "scale": float(panel.scale_spin.value()),
+            "offset_x": int(panel.offset_x_spin.value()),
+            "offset_y": int(panel.offset_y_spin.value()),
+            "rotation": float(panel.rotation_spin.value()),
+            "opacity": float(panel.opacity_spin.value()),
+            "edit_mode": bool(panel.edit_mode_check.isChecked()),
+            "follow_mouse": bool(panel.follow_mouse_check.isChecked()),
+        }
+        chat_cfg = self.config.get("chat", {})
+        tooling_cfg = chat_cfg.get("tooling", {}) if isinstance(chat_cfg, dict) else {}
+        self.config["chat"] = {
+            "backend_url": str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)),
+            "llm_provider": panel.chat_llm_provider_combo.currentText().strip() or "ollama",
+            "api_base_url": panel.chat_api_base_input.text().strip() or "http://127.0.0.1:11434",
+            "api_key": panel.chat_api_key_input.text().strip(),
+            "model": panel.chat_model_input.text().strip() or "qwen3:8b",
+            "session_id": str(chat_cfg.get("session_id", "default")),
+            "memory_window": int(chat_cfg.get("memory_window", 10)),
+            "voice": panel.chat_voice_input.text().strip() or "zh-CN-XiaoxiaoNeural",
+            "rate_pct": max(-50, min(100, int(panel.chat_rate_slider.value()))),
+            "tts_provider": panel.chat_tts_provider_combo.currentText().strip() or "edge_tts",
+            "tts_provider_url": panel.chat_tts_provider_url_input.text().strip(),
+            "expression_mode": bool(panel.expression_mode_check.isChecked()),
+            "expression_output_format": str(chat_cfg.get("expression_output_format", "ndjson_v1")),
+            "tooling": {
+                "enabled": bool(panel.tooling_enabled_check.isChecked()),
+                "mode": "mcp_local_phase2",
+                "file_allowlist": list(tooling_cfg.get("file_allowlist", [str(ROOT_DIR)])),
+                "network_allow_domains": list(tooling_cfg.get("network_allow_domains", [])),
+                "max_tool_calls_per_turn": int(tooling_cfg.get("max_tool_calls_per_turn", 6)),
+                "tool_timeout_sec": int(tooling_cfg.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC)),
+                "third_party": {
+                    "enabled": bool(panel.third_party_enabled_check.isChecked()),
+                    "servers": list(tooling_cfg.get("third_party", {}).get("servers", [])),
+                },
+            },
+            "system_prompt": panel.system_prompt_input.toPlainText().strip(),
+        }
+
+        self.config["window"] = {
+            "x": int(panel.win_x_spin.value()),
+            "y": int(panel.win_y_spin.value()),
+            "width": int(panel.win_w_spin.value()),
+            "height": int(panel.win_h_spin.value()),
+            "locked": bool(panel.lock_window_check.isChecked()),
+        }
+        self.window_locked = self.config["window"]["locked"]
+
+        self.setGeometry(
+            self.config["window"]["x"],
+            self.config["window"]["y"],
+            self.config["window"]["width"],
+            self.config["window"]["height"],
+        )
+
+        self.refresh_motion_list(prefer_reset=False)
+        self.apply_config_to_web()
+
+    def save_config(self) -> None:
+        self.config["model_path"] = normalize_model_path(self.config.get("model_path", ""))
+        self.config["window"]["x"] = self.x()
+        self.config["window"]["y"] = self.y()
+        self.config["window"]["width"] = self.width()
+        self.config["window"]["height"] = self.height()
+
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=2)
+
+    def reset_to_default(self) -> None:
+        self.config = json.loads(json.dumps(DEFAULT_CONFIG))
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.config["window"]["x"] = available.right() - self.config["window"]["width"] - 40
+            self.config["window"]["y"] = available.bottom() - self.config["window"]["height"] - 60
+
+        self.window_locked = bool(self.config["window"]["locked"])
+        self.apply_window_geometry_from_config()
+        self.refresh_motion_list(prefer_reset=True)
+        self.sync_panel()
+        self.apply_config_to_web()
+
+    def closeEvent(self, event) -> None:
+        try:
+            self.save_config()
+        except Exception as exc:
+            print(f"保存配置失败: {exc}")
+        try:
+            if self.control_panel is not None:
+                self.control_panel.close()
+        except Exception:
+            pass
+        self.stop_backend_service()
+        super().closeEvent(event)
+        QApplication.quit()
+
+
+if __name__ == "__main__":
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+    pet = DesktopPet()
+    pet.show()
+
+    sys.exit(app.exec())

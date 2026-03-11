@@ -1,0 +1,85 @@
+{
+  "mcp_command": {
+    "type": "string",
+    "description": "Command used to start the MCP server process (stdio).",
+    "hint": "Example: C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\Scripts\\\\uvx.exe",
+    "default": "python"
+  },
+  "mcp_args": {
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "description": "Arguments for mcp_command.",
+    "hint": "For uvx example: [\"--directory\",\"D:\\\\...\\\\jmmcp\",\"--from\",\"mcp[cli]\",\"--with\",\"jmcomic>=2.6.15\",\"--with\",\"img2pdf>=0.5.1\",\"mcp\",\"run\",\"main.py\",\"--transport\",\"stdio\"]",
+    "default": [
+      "main.py"
+    ]
+  },
+  "mcp_cwd": {
+    "type": "string",
+    "description": "Working directory for MCP process.",
+    "hint": "Example: D:\\\\LYJ\\\\2. 02_学习提升\\\\third_round\\\\jmmcp",
+    "default": ""
+  },
+  "mcp_tool_name": {
+    "type": "string",
+    "description": "Tool name exposed by your MCP server.",
+    "default": "download_jm_album_pdf"
+  },
+  "save_dir": {
+    "type": "string",
+    "description": "Optional save_dir passed to MCP tool.",
+    "default": ""
+  },
+  "tool_timeout_sec": {
+    "type": "int",
+    "description": "Timeout for one MCP tool call.",
+    "default": 900
+  },
+  "max_concurrency": {
+    "type": "int",
+    "description": "Maximum concurrent /jm tasks.",
+    "default": 1
+  },
+  "max_file_mb": {
+    "type": "int",
+    "description": "Max PDF size to upload via QQ API.",
+    "default": 200
+  },
+  "report_local_path": {
+    "type": "bool",
+    "description": "Report local PDF path in bot reply.",
+    "default": true
+  },
+  "enable_nlp_trigger": {
+    "type": "bool",
+    "description": "Enable natural-language trigger (without /jm).",
+    "default": true
+  },
+  "prefer_chain_send": {
+    "type": "bool",
+    "description": "Try event.send(File) before upload_group_file/private_file API.",
+    "default": true
+  },
+  "group_file_folder": {
+    "type": "string",
+    "description": "Optional QQ group folder id for upload_group_file.",
+    "default": ""
+  },
+  "allow_group_ids": {
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "description": "Group whitelist. Empty means all groups.",
+    "default": []
+  },
+  "mcp_env": {
+    "type": "object",
+    "items": {},
+    "description": "Extra environment variables for MCP process.",
+    "hint": "Set UV_CACHE_DIR / UV_TOOL_DIR / JM_OPTION_PATH here if needed.",
+    "default": {}
+  }
+}

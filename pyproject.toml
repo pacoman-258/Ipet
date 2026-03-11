@@ -1,0 +1,17 @@
+[project]
+name = "ai-assistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "edge-tts>=7.2.3",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.1",
+    "pyqt6>=6.10.2",
+    "pyqt6-webengine>=6.10.0",
+    "pyside6>=6.10.2",
+    "requests>=2.32.5",
+    "sse-starlette>=2.3.6",
+    "uvicorn>=0.34.0",
+]

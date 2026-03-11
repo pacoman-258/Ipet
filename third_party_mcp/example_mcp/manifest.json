@@ -1,0 +1,16 @@
+{
+  "name": "example_mcp",
+  "version": "0.1.0",
+  "enabled": false,
+  "transport": "stdio",
+  "runtime": "python",
+  "entry": {
+    "command": "python",
+    "args": ["-m", "example_mcp.server"]
+  },
+  "install": {
+    "type": "python_uv",
+    "requirements": "requirements.txt"
+  },
+  "description": "Example third-party MCP manifest template."
+}

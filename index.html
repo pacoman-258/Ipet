@@ -1,0 +1,1301 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live2D Desktop Pet</title>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="./js/live2dcubismcore.min.js"></script>
+  <script src="./js/live2d.min.js"></script>
+  <script src="./js/pixi.min.js"></script>
+  <script src="./js/index.min.js"></script>
+
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      user-select: none;
+    }
+
+    #canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #window-frame {
+      position: fixed;
+      inset: 0;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      pointer-events: none;
+      display: none;
+      z-index: 9;
+    }
+
+    #status {
+      position: fixed;
+      left: 10px;
+      top: 10px;
+      z-index: 10;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-family: "Consolas", "Microsoft YaHei", sans-serif;
+      color: rgba(255, 255, 255, 0.85);
+      background: rgba(0, 0, 0, 0.22);
+      border-radius: 8px;
+      pointer-events: none;
+      white-space: pre;
+      min-width: 180px;
+      display: none;
+    }
+
+    #error {
+      position: fixed;
+      left: 10px;
+      bottom: 10px;
+      z-index: 11;
+      color: #ffd7d7;
+      background: rgba(120, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: monospace;
+      font-size: 12px;
+      max-width: calc(100vw - 20px);
+      display: none;
+      pointer-events: none;
+    }
+
+    #chat-toggle {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 30;
+      border: none;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #fff;
+      background: rgba(20, 20, 20, 0.78);
+      cursor: pointer;
+    }
+
+    #chat-panel {
+      position: fixed;
+      left: 20px;
+      top: 20px;
+      width: min(360px, calc(100vw - 28px));
+      height: min(520px, calc(100vh - 90px));
+      z-index: 29;
+      display: none;
+      border-radius: 12px;
+      background: rgba(8, 8, 12, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(8px);
+      overflow: hidden;
+      color: #f2f2f2;
+      font-family: "Consolas", "Microsoft YaHei", sans-serif;
+      min-width: 260px;
+      min-height: 220px;
+    }
+
+    #chat-panel.open {
+      display: grid;
+      grid-template-rows: 40px 1fr auto;
+    }
+
+    #chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      cursor: move;
+      user-select: none;
+    }
+
+    #chat-close {
+      border: none;
+      background: transparent;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    #chat-messages {
+      overflow: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .msg {
+      max-width: 88%;
+      font-size: 13px;
+      line-height: 1.45;
+      border-radius: 10px;
+      padding: 7px 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      background: rgba(65, 125, 255, 0.7);
+    }
+
+    .msg.bot {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .msg.error {
+      align-self: center;
+      background: rgba(180, 36, 36, 0.65);
+    }
+
+    #chat-input-wrap {
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+    }
+
+    #chat-input {
+      min-height: 56px;
+      max-height: 160px;
+      resize: vertical;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      outline: none;
+      background: rgba(0, 0, 0, 0.3);
+      color: #fff;
+      padding: 8px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    #chat-send {
+      align-self: end;
+      border: none;
+      border-radius: 8px;
+      background: rgba(65, 125, 255, 0.88);
+      color: #fff;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    #chat-stop {
+      align-self: end;
+      border: none;
+      border-radius: 8px;
+      background: rgba(165, 54, 54, 0.88);
+      color: #fff;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    #chat-resizer {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 16px;
+      height: 16px;
+      cursor: nwse-resize;
+      opacity: 0.55;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="window-frame"></div>
+  <div id="status">loading...</div>
+  <div id="error"></div>
+  <button id="chat-toggle">Chat</button>
+  <div id="chat-panel">
+    <div id="chat-header">
+      <span id="chat-title">桌宠对话</span>
+      <button id="chat-close">×</button>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-wrap">
+      <textarea id="chat-input" placeholder="输入消息，Enter发送，Shift+Enter换行"></textarea>
+      <button id="chat-send">发送</button>
+      <button id="chat-stop">停止语音</button>
+    </div>
+    <div id="chat-resizer"></div>
+  </div>
+
+  <script>
+    (() => {
+      const MIN_SCALE = 0.05;
+      const MAX_SCALE = 5.0;
+
+      const state = {
+        model_url: "",
+        scale: 0.3,
+        offset_x: 0,
+        offset_y: 40,
+        rotation: 0,
+        opacity: 1,
+        edit_mode: false,
+        follow_mouse: true,
+        chat: {
+          backend_url: "http://127.0.0.1:8008",
+          llm_provider: "ollama",
+          api_base_url: "http://127.0.0.1:11434",
+          api_key: "",
+          model: "qwen3:8b",
+          session_id: "default",
+          memory_window: 10,
+          voice: "zh-CN-XiaoxiaoNeural",
+          rate_pct: 0,
+          tts_provider: "edge_tts",
+          tts_provider_url: "",
+          expression_mode: true,
+          expression_output_format: "ndjson_v1",
+          tooling: {
+            enabled: true,
+            mode: "mcp_local_phase2",
+          },
+          system_prompt: "",
+        },
+      };
+
+      const statusEl = document.getElementById("status");
+      const errorEl = document.getElementById("error");
+      const canvas = document.getElementById("canvas");
+      const frameEl = document.getElementById("window-frame");
+      const chatToggleEl = document.getElementById("chat-toggle");
+      const chatPanelEl = document.getElementById("chat-panel");
+      const chatCloseEl = document.getElementById("chat-close");
+      const chatMessagesEl = document.getElementById("chat-messages");
+      const chatInputEl = document.getElementById("chat-input");
+      const chatSendEl = document.getElementById("chat-send");
+      const chatStopEl = document.getElementById("chat-stop");
+      const chatHeaderEl = document.getElementById("chat-header");
+      const chatResizerEl = document.getElementById("chat-resizer");
+
+      let app = null;
+      let model = null;
+      let qtBridge = null;
+      let pendingConfig = null;
+      let pendingModelUrl = "";
+      let chatState = "idle";
+      let activeAudio = null;
+      let audioCtx = null;
+      let analyser = null;
+      let mediaSource = null;
+      let lipsyncRAF = 0;
+      let ttsQueue = [];
+      let ttsPlaying = false;
+      let streamFinished = false;
+      let pendingSpeakBuffer = "";
+      let speakFlushTimer = 0;
+      let receivedStructuredSegment = false;
+      let chatPanelPositioned = false;
+      let chatDragging = false;
+      let chatResizing = false;
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let panelStartLeft = 0;
+      let panelStartTop = 0;
+      let panelStartW = 0;
+      let panelStartH = 0;
+
+      let dragging = false;
+      let dragDx = 0;
+      let dragDy = 0;
+      let notifyTimer = null;
+
+      function showError(msg) {
+        errorEl.textContent = String(msg || "unknown error");
+        errorEl.style.display = "block";
+      }
+
+      function clearError() {
+        errorEl.style.display = "none";
+        errorEl.textContent = "";
+      }
+
+      function logToQt(msg) {
+        if (qtBridge && typeof qtBridge.log === "function") {
+          qtBridge.log(String(msg));
+        } else {
+          console.log(msg);
+        }
+      }
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function toRateString(ratePct) {
+        let n = Number(ratePct);
+        if (!Number.isFinite(n)) {
+          n = 0;
+        }
+        n = Math.round(clamp(n, -50, 100));
+        return `${n >= 0 ? "+" : ""}${n}%`;
+      }
+
+      function roundInt(value) {
+        return Math.round(Number(value) || 0);
+      }
+
+      function refreshStatus() {
+        frameEl.style.display = state.edit_mode ? "block" : "none";
+        statusEl.style.display = state.edit_mode ? "block" : "none";
+        const modelName = state.model_url ? state.model_url.split("/").pop() : "(none)";
+        statusEl.textContent = [
+          `model: ${modelName}`,
+          `edit: ${state.edit_mode ? "on" : "off"}`,
+          `scale: ${state.scale.toFixed(2)}`,
+          `offset: (${roundInt(state.offset_x)}, ${roundInt(state.offset_y)})`,
+        ].join("\n");
+      }
+
+      function appendMessage(role, text) {
+        const el = document.createElement("div");
+        el.className = `msg ${role}`;
+        el.textContent = text;
+        chatMessagesEl.appendChild(el);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return el;
+      }
+
+      function setChatState(next) {
+        chatState = next;
+        chatSendEl.disabled = next !== "idle";
+      }
+
+      function stopSpeaking(manual = false) {
+        if (speakFlushTimer) {
+          clearTimeout(speakFlushTimer);
+          speakFlushTimer = 0;
+        }
+        ttsQueue = [];
+        pendingSpeakBuffer = "";
+        ttsPlaying = false;
+        streamFinished = true;
+        if (activeAudio) {
+          try {
+            activeAudio.pause();
+            activeAudio.currentTime = 0;
+          } catch (_) {}
+        }
+        try {
+          if (window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+          }
+        } catch (_) {}
+        stopLipSyncLoop();
+        setChatState("idle");
+        if (manual) {
+          appendMessage("error", "语音已停止");
+        }
+      }
+
+      function openChat() {
+        if (!chatPanelPositioned) {
+          const w = Math.min(360, Math.max(260, Math.floor(window.innerWidth * 0.42)));
+          const h = Math.min(520, Math.max(240, Math.floor(window.innerHeight * 0.55)));
+          const left = Math.max(8, window.innerWidth - w - 14);
+          const top = Math.max(8, window.innerHeight - h - 58);
+          chatPanelEl.style.width = `${w}px`;
+          chatPanelEl.style.height = `${h}px`;
+          chatPanelEl.style.left = `${left}px`;
+          chatPanelEl.style.top = `${top}px`;
+          chatPanelPositioned = true;
+        }
+        chatPanelEl.classList.add("open");
+        chatInputEl.focus();
+      }
+
+      function closeChat() {
+        chatPanelEl.classList.remove("open");
+      }
+
+      function scheduleNotifyState() {
+        if (notifyTimer) {
+          return;
+        }
+        notifyTimer = setTimeout(() => {
+          notifyTimer = null;
+          notifyStateNow();
+        }, 80);
+      }
+
+      function notifyStateNow() {
+        if (!qtBridge || typeof qtBridge.petStateChanged !== "function") {
+          return;
+        }
+
+        const payload = {
+          scale: state.scale,
+          offset_x: roundInt(state.offset_x),
+          offset_y: roundInt(state.offset_y),
+          rotation: state.rotation,
+          opacity: state.opacity,
+        };
+
+        qtBridge.petStateChanged(JSON.stringify(payload));
+      }
+
+      function setMouthOpen(value) {
+        if (!model || !model.internalModel || !model.internalModel.coreModel) {
+          return;
+        }
+        const core = model.internalModel.coreModel;
+        const v = clamp(Number(value) || 0, 0, 1);
+        try {
+          if (typeof core.setParameterValueById === "function") {
+            core.setParameterValueById("ParamMouthOpenY", v, 0.8);
+          } else if (typeof core.addParameterValueById === "function") {
+            core.addParameterValueById("ParamMouthOpenY", v * 0.65, 0.8);
+          }
+        } catch (_) {
+          // ignore lipsync write errors
+        }
+      }
+
+      function triggerExpressionSafe(name) {
+        const expr = String(name || "").trim();
+        if (!expr || !model || typeof model.expression !== "function") {
+          return;
+        }
+        try {
+          model.expression(expr);
+        } catch (_) {
+          // ignore missing/invalid expression
+        }
+      }
+
+      function stopLipSyncLoop() {
+        if (lipsyncRAF) {
+          cancelAnimationFrame(lipsyncRAF);
+          lipsyncRAF = 0;
+        }
+        setMouthOpen(0);
+      }
+
+      function startLipSync(audioEl) {
+        try {
+          if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          }
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume().catch(() => {});
+          }
+          if (mediaSource) {
+            try {
+              mediaSource.disconnect();
+            } catch (_) {}
+            mediaSource = null;
+          }
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 2048;
+          mediaSource = audioCtx.createMediaElementSource(audioEl);
+          mediaSource.connect(analyser);
+          analyser.connect(audioCtx.destination);
+        } catch (_) {
+          return;
+        }
+
+        const data = new Uint8Array(analyser.fftSize);
+        const tick = () => {
+          if (!analyser || audioEl.paused || audioEl.ended) {
+            stopLipSyncLoop();
+            return;
+          }
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) {
+            const n = (data[i] - 128) / 128;
+            sum += n * n;
+          }
+          const rms = Math.sqrt(sum / data.length);
+          const mouth = clamp(rms * 4.8, 0, 1);
+          setMouthOpen(mouth);
+          lipsyncRAF = requestAnimationFrame(tick);
+        };
+        tick();
+      }
+
+      function fallbackSpeakByBrowser(text) {
+        const synth = window.speechSynthesis;
+        if (!synth || !window.SpeechSynthesisUtterance) {
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          try {
+          synth.cancel();
+          const utt = new SpeechSynthesisUtterance(text);
+          utt.lang = "zh-CN";
+          utt.rate = 1.0;
+          utt.onstart = () => {
+            let v = 0;
+            const tick = () => {
+              if (synth.speaking) {
+                v = v > 0.4 ? 0.08 : 0.72;
+                setMouthOpen(v);
+                lipsyncRAF = requestAnimationFrame(tick);
+              } else {
+                stopLipSyncLoop();
+              }
+            };
+            tick();
+          };
+          utt.onend = () => {
+            stopLipSyncLoop();
+            resolve();
+          };
+          utt.onerror = () => {
+            stopLipSyncLoop();
+            resolve();
+          };
+          synth.speak(utt);
+          } catch (_) {
+            stopLipSyncLoop();
+            resolve();
+          }
+        });
+      }
+
+      function enqueueTTSChunk(text, expr = null) {
+        const chunk = (text || "").trim();
+        if (!chunk) {
+          return;
+        }
+        ttsQueue.push({ text: chunk, expr: expr ? String(expr).trim() : null });
+        if (!ttsPlaying) {
+          playNextTTSChunk().catch(() => {});
+        }
+      }
+
+      function feedSpeakBuffer(delta, force = false) {
+        pendingSpeakBuffer += delta || "";
+        const punct = /[。！？!?；;\n]/;
+
+        while (true) {
+          const m = pendingSpeakBuffer.match(punct);
+          if (!m || m.index === undefined) {
+            break;
+          }
+          const end = m.index + 1;
+          const chunk = pendingSpeakBuffer.slice(0, end);
+          pendingSpeakBuffer = pendingSpeakBuffer.slice(end);
+          enqueueTTSChunk(chunk, null);
+        }
+
+        if (!force && pendingSpeakBuffer.length >= 20 && ttsQueue.length <= 1 && !ttsPlaying) {
+          const chunk = pendingSpeakBuffer.slice(0, 20);
+          pendingSpeakBuffer = pendingSpeakBuffer.slice(20);
+          enqueueTTSChunk(chunk, null);
+        }
+
+        if (!force) {
+          if (speakFlushTimer) {
+            clearTimeout(speakFlushTimer);
+          }
+          speakFlushTimer = setTimeout(() => {
+            speakFlushTimer = 0;
+            if (pendingSpeakBuffer.trim()) {
+              const chunk = pendingSpeakBuffer;
+              pendingSpeakBuffer = "";
+              enqueueTTSChunk(chunk, null);
+            }
+          }, 120);
+        }
+
+        if (force && pendingSpeakBuffer.trim()) {
+          enqueueTTSChunk(pendingSpeakBuffer, null);
+          pendingSpeakBuffer = "";
+        }
+      }
+
+      async function playNextTTSChunk() {
+        if (ttsPlaying) {
+          return;
+        }
+        const nextItem = ttsQueue.shift();
+        if (!nextItem) {
+          if (streamFinished) {
+            setChatState("idle");
+          }
+          return;
+        }
+        const nextText = String(nextItem.text || "").trim();
+        const nextExpr = String(nextItem.expr || "").trim();
+        if (!nextText) {
+          if (streamFinished && ttsQueue.length === 0) {
+            setChatState("idle");
+          }
+          return;
+        }
+
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          if (streamFinished && ttsQueue.length === 0) {
+            setChatState("idle");
+          }
+          return;
+        }
+        ttsPlaying = true;
+        setChatState("tts");
+        if (state.chat.expression_mode && nextExpr) {
+          triggerExpressionSafe(nextExpr);
+        }
+
+        try {
+          const resp = await fetch(`${backend}/api/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: nextText,
+              voice: state.chat.voice || "zh-CN-XiaoxiaoNeural",
+              rate: toRateString(state.chat.rate_pct),
+              volume: "+0%",
+              provider: state.chat.tts_provider || "edge_tts",
+              provider_url: state.chat.tts_provider_url || "",
+            }),
+          });
+          if (!resp.ok) {
+            let detail = `HTTP ${resp.status}`;
+            try {
+              const errData = await resp.json();
+              detail = errData?.detail || detail;
+            } catch (_) {}
+            appendMessage("error", `TTS失败: ${detail}`);
+            showError(`TTS失败: ${detail}`);
+            await fallbackSpeakByBrowser(nextText);
+            ttsPlaying = false;
+            await playNextTTSChunk();
+            return;
+          }
+
+          const data = await resp.json();
+          if (!data || !data.audio_url) {
+            appendMessage("error", "TTS失败: 后端未返回 audio_url");
+            showError("TTS失败: 后端未返回 audio_url");
+            await fallbackSpeakByBrowser(nextText);
+            ttsPlaying = false;
+            await playNextTTSChunk();
+            return;
+          }
+
+          const audioResp = await fetch(`${backend}${data.audio_url}`);
+          if (!audioResp.ok) {
+            appendMessage("error", `音频下载失败: HTTP ${audioResp.status}`);
+            showError(`音频下载失败: HTTP ${audioResp.status}`);
+            await fallbackSpeakByBrowser(nextText);
+            ttsPlaying = false;
+            await playNextTTSChunk();
+            return;
+          }
+
+          const audioBlob = await audioResp.blob();
+          const blobUrl = URL.createObjectURL(audioBlob);
+
+          if (activeAudio) {
+            try {
+              activeAudio.pause();
+            } catch (_) {}
+          }
+          activeAudio = new Audio(blobUrl);
+          activeAudio.preload = "auto";
+
+          await new Promise((resolve, reject) => {
+            activeAudio.addEventListener(
+              "ended",
+              () => {
+                stopLipSyncLoop();
+                URL.revokeObjectURL(blobUrl);
+                resolve();
+              },
+              { once: true },
+            );
+            activeAudio.addEventListener(
+              "error",
+              () => {
+                stopLipSyncLoop();
+                URL.revokeObjectURL(blobUrl);
+                reject(new Error("audio playback error"));
+              },
+              { once: true },
+            );
+            setChatState("speaking");
+            activeAudio
+              .play()
+              .then(() => startLipSync(activeAudio))
+              .catch(reject);
+          });
+        } catch (err) {
+          appendMessage("error", `音频播放失败，已切换浏览器语音: ${err?.message || err}`);
+          showError(`音频播放失败: ${err?.message || err}`);
+          await fallbackSpeakByBrowser(nextText);
+          stopLipSyncLoop();
+        }
+
+        ttsPlaying = false;
+        await playNextTTSChunk();
+      }
+
+      async function streamChat(text) {
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          appendMessage("error", "后端地址未配置");
+          return;
+        }
+        const userText = text.trim();
+        if (!userText) {
+          return;
+        }
+        appendMessage("user", userText);
+        const botMsgEl = appendMessage("bot", "少女思考中...");
+        stopSpeaking(false);
+        setChatState("streaming");
+        streamFinished = false;
+        receivedStructuredSegment = false;
+        pendingSpeakBuffer = "";
+        ttsQueue = [];
+        ttsPlaying = false;
+
+        let full = "";
+        try {
+          const resp = await fetch(`${backend}/api/chat/stream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: state.chat.session_id || "default",
+              model: state.chat.model || "qwen3:8b",
+              memory_window: Number(state.chat.memory_window || 10),
+              system_prompt: state.chat.system_prompt || "",
+              expression_mode: !!state.chat.expression_mode,
+              expression_output_format: state.chat.expression_output_format || "ndjson_v1",
+              tools_enabled: !!(state.chat.tooling && state.chat.tooling.enabled),
+              tool_mode: (state.chat.tooling && state.chat.tooling.mode) || "mcp_local_phase2",
+              llm_provider: state.chat.llm_provider || "ollama",
+              api_base_url: state.chat.api_base_url || "",
+              api_key: state.chat.api_key || "",
+              text: userText,
+            }),
+          });
+          if (!resp.ok || !resp.body) {
+            throw new Error(`chat http ${resp.status}`);
+          }
+
+          const decoder = new TextDecoder();
+          const reader = resp.body.getReader();
+          let buffer = "";
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const chunks = buffer.split("\n\n");
+            buffer = chunks.pop() || "";
+
+            for (const raw of chunks) {
+              const lines = raw.split("\n");
+              let eventName = "";
+              let dataText = "";
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  eventName = line.slice(6).trim();
+                } else if (line.startsWith("data:")) {
+                  dataText += line.slice(5).trim();
+                }
+              }
+              if (!eventName || !dataText) {
+                continue;
+              }
+              const payload = JSON.parse(dataText);
+              if (eventName === "segment") {
+                receivedStructuredSegment = true;
+                const segText = String(payload.text || "");
+                const segExpr = payload.expr == null ? null : String(payload.expr || "");
+                if (segText) {
+                  full += segText;
+                  botMsgEl.textContent = full || "少女思考中...";
+                  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                  enqueueTTSChunk(segText, segExpr);
+                }
+              } else if (eventName === "token") {
+                if (receivedStructuredSegment) {
+                  continue;
+                }
+                full += payload.delta || "";
+                botMsgEl.textContent = full || "少女思考中...";
+                chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                feedSpeakBuffer(payload.delta || "");
+              } else if (eventName === "done") {
+                full = payload.text || full;
+                botMsgEl.textContent = full || "(空响应)";
+              } else if (eventName === "error") {
+                throw new Error(payload.message || "chat stream error");
+              }
+            }
+          }
+        } catch (err) {
+          botMsgEl.className = "msg error";
+          botMsgEl.textContent = `对话失败: ${err?.message || String(err)}`;
+          setChatState("idle");
+          return;
+        }
+
+        if (!full.trim()) {
+          setChatState("idle");
+          return;
+        }
+        streamFinished = true;
+        if (!receivedStructuredSegment) {
+          feedSpeakBuffer("", true);
+        }
+        if (!ttsPlaying && ttsQueue.length === 0) {
+          setChatState("idle");
+        }
+      }
+
+      function applyModelTransform() {
+        if (!app || !model) {
+          refreshStatus();
+          return;
+        }
+
+        state.scale = clamp(Number(state.scale) || 0.3, MIN_SCALE, MAX_SCALE);
+        state.opacity = clamp(Number(state.opacity) || 1, 0.1, 1);
+        state.rotation = Number(state.rotation) || 0;
+
+        model.scale.set(state.scale);
+        model.alpha = state.opacity;
+        model.rotation = (state.rotation * Math.PI) / 180;
+
+        // Keep the model inside the window by default: bottom-center layout.
+        const scaledWidth = model.width;
+        const scaledHeight = model.height;
+        const baseX = (app.renderer.width - scaledWidth) * 0.5;
+        const baseY = app.renderer.height - scaledHeight;
+
+        model.x = baseX + (Number(state.offset_x) || 0);
+        model.y = baseY + (Number(state.offset_y) || 0);
+
+        refreshStatus();
+      }
+
+      function bindModelInteraction() {
+        if (!app || !model) {
+          return;
+        }
+
+        model.interactive = true;
+        if ("eventMode" in model) {
+          model.eventMode = "static";
+        }
+        model.cursor = "pointer";
+
+        model.on("pointerdown", (event) => {
+          if (!state.edit_mode) {
+            return;
+          }
+          dragging = true;
+          const p = event?.data?.global;
+          if (p) {
+            dragDx = model.x - p.x;
+            dragDy = model.y - p.y;
+          }
+        });
+
+        model.on("pointertap", () => {
+          if (typeof model.motion === "function") {
+            try {
+              model.motion("Tap", 0);
+            } catch (_) {
+              // ignore motion errors
+            }
+          }
+        });
+
+        model.on("hit", (hitAreas) => {
+          if (!Array.isArray(hitAreas) || hitAreas.length === 0) {
+            return;
+          }
+          const hasBody = hitAreas.some((v) => String(v).toLowerCase().includes("body"));
+          const group = hasBody ? "Tap@Body" : "Tap";
+          try {
+            model.motion(group, 0);
+          } catch (_) {
+            // ignore motion errors
+          }
+        });
+      }
+
+      function setupStageInteraction() {
+        if (!app) {
+          return;
+        }
+
+        app.stage.interactive = true;
+        if ("eventMode" in app.stage) {
+          app.stage.eventMode = "static";
+        }
+        app.stage.hitArea = app.screen;
+
+        app.stage.on("pointerup", () => {
+          if (dragging) {
+            dragging = false;
+            notifyStateNow();
+          }
+        });
+
+        app.stage.on("pointerupoutside", () => {
+          if (dragging) {
+            dragging = false;
+            notifyStateNow();
+          }
+        });
+
+        app.stage.on("pointermove", (event) => {
+          if (!dragging || !state.edit_mode || !model) {
+            return;
+          }
+
+          const p = event?.data?.global;
+          if (!p) {
+            return;
+          }
+
+          model.x = p.x + dragDx;
+          model.y = p.y + dragDy;
+
+          const scaledWidth = model.width;
+          const scaledHeight = model.height;
+          const baseX = (app.renderer.width - scaledWidth) * 0.5;
+          const baseY = app.renderer.height - scaledHeight;
+          state.offset_x = roundInt(model.x - baseX);
+          state.offset_y = roundInt(model.y - baseY);
+
+          refreshStatus();
+          scheduleNotifyState();
+        });
+
+        window.addEventListener(
+          "wheel",
+          (event) => {
+            if (!state.edit_mode || !model) {
+              return;
+            }
+
+            event.preventDefault();
+            const zoomIn = event.deltaY < 0;
+            const factor = zoomIn ? 1.05 : 0.95;
+            state.scale = clamp(state.scale * factor, MIN_SCALE, MAX_SCALE);
+            applyModelTransform();
+            scheduleNotifyState();
+          },
+          { passive: false }
+        );
+      }
+
+      function isRendererReady() {
+        return !!(app && app.renderer && app.stage);
+      }
+
+      async function loadModel(url) {
+        if (!url) {
+          return;
+        }
+
+        if (!window.PIXI || !window.PIXI.live2d || !window.PIXI.live2d.Live2DModel) {
+          throw new Error("PIXI.live2d.Live2DModel is unavailable. Check JS library files.");
+        }
+
+        clearError();
+
+        if (!isRendererReady()) {
+          pendingModelUrl = url;
+          return;
+        }
+
+        if (model) {
+          try {
+            model.removeAllListeners();
+            app.stage.removeChild(model);
+            model.destroy();
+          } catch (_) {
+            // ignore cleanup errors
+          }
+          model = null;
+        }
+
+        model = await window.PIXI.live2d.Live2DModel.from(url);
+        app.stage.addChild(model);
+
+        bindModelInteraction();
+
+        if (!Number.isFinite(state.scale) || state.scale <= 0) {
+          const fitScaleX = (app.renderer.width * 0.65) / Math.max(1, model.width);
+          const fitScaleY = (app.renderer.height * 0.92) / Math.max(1, model.height);
+          state.scale = clamp(Math.min(fitScaleX, fitScaleY), MIN_SCALE, MAX_SCALE);
+        }
+        // Avoid invisible placement caused by oversized historic config values.
+        if (model.width > app.renderer.width * 2 || model.height > app.renderer.height * 2) {
+          const fitScaleX = (app.renderer.width * 0.65) / Math.max(1, model.width);
+          const fitScaleY = (app.renderer.height * 0.92) / Math.max(1, model.height);
+          state.scale = clamp(state.scale * Math.min(fitScaleX, fitScaleY), MIN_SCALE, MAX_SCALE);
+        }
+
+        applyModelTransform();
+        notifyStateNow();
+      }
+
+      async function applyConfig(config) {
+        const incoming = config || {};
+
+        if (incoming.pet && typeof incoming.pet === "object") {
+          Object.assign(state, incoming.pet);
+        } else {
+          Object.assign(state, incoming);
+        }
+        if (incoming.chat && typeof incoming.chat === "object") {
+          Object.assign(state.chat, incoming.chat);
+        }
+
+        const nextModelUrl = incoming.model_url || incoming.modelUrl || state.model_url;
+        if (typeof nextModelUrl === "string" && nextModelUrl.length > 0) {
+          const changed = nextModelUrl !== state.model_url;
+          state.model_url = nextModelUrl;
+          if (changed || !model) {
+            try {
+              await loadModel(state.model_url);
+            } catch (err) {
+              showError(`load model failed: ${err?.message || String(err)}`);
+            }
+          } else {
+            applyModelTransform();
+          }
+        } else {
+          applyModelTransform();
+        }
+
+        refreshStatus();
+      }
+
+      async function init() {
+        if (!window.PIXI) {
+          showError("PIXI failed to load.");
+          return;
+        }
+
+        app = new window.PIXI.Application({
+          view: canvas,
+          resizeTo: window,
+          autoStart: true,
+          backgroundAlpha: 0,
+          antialias: true,
+        });
+
+        setupStageInteraction();
+
+        app.ticker.add(() => {
+          if (!model || !state.follow_mouse) {
+            return;
+          }
+
+          const interaction = app.renderer?.plugins?.interaction;
+          const mouse = interaction?.mouse?.global;
+          if (!mouse || typeof model.focus !== "function") {
+            return;
+          }
+          model.focus(mouse.x, mouse.y);
+        });
+
+        if (window.qt && window.QWebChannel) {
+          new window.QWebChannel(window.qt.webChannelTransport, (channel) => {
+            qtBridge = channel.objects.qtBridge;
+            logToQt("QWebChannel ready");
+          });
+        }
+
+        chatToggleEl.addEventListener("click", () => {
+          if (chatPanelEl.classList.contains("open")) {
+            closeChat();
+          } else {
+            openChat();
+          }
+        });
+        chatCloseEl.addEventListener("click", () => closeChat());
+        chatSendEl.addEventListener("click", async () => {
+          if (chatState !== "idle") {
+            return;
+          }
+          const text = chatInputEl.value;
+          chatInputEl.value = "";
+          await streamChat(text);
+        });
+        chatInputEl.addEventListener("keydown", async (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            if (chatState !== "idle") {
+              return;
+            }
+            const text = chatInputEl.value;
+            chatInputEl.value = "";
+            await streamChat(text);
+          }
+        });
+        chatStopEl.addEventListener("click", () => stopSpeaking(true));
+
+        chatHeaderEl.addEventListener("pointerdown", (event) => {
+          if (event.target === chatCloseEl) {
+            return;
+          }
+          chatDragging = true;
+          dragStartX = event.clientX;
+          dragStartY = event.clientY;
+          panelStartLeft = chatPanelEl.offsetLeft;
+          panelStartTop = chatPanelEl.offsetTop;
+          chatHeaderEl.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        });
+
+        chatResizerEl.addEventListener("pointerdown", (event) => {
+          chatResizing = true;
+          dragStartX = event.clientX;
+          dragStartY = event.clientY;
+          panelStartW = chatPanelEl.offsetWidth;
+          panelStartH = chatPanelEl.offsetHeight;
+          chatResizerEl.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        });
+
+        window.addEventListener("pointermove", (event) => {
+          if (chatDragging) {
+            const dx = event.clientX - dragStartX;
+            const dy = event.clientY - dragStartY;
+            const left = Math.min(
+              Math.max(panelStartLeft + dx, 0),
+              Math.max(0, window.innerWidth - chatPanelEl.offsetWidth),
+            );
+            const top = Math.min(
+              Math.max(panelStartTop + dy, 0),
+              Math.max(0, window.innerHeight - chatPanelEl.offsetHeight),
+            );
+            chatPanelEl.style.left = `${left}px`;
+            chatPanelEl.style.top = `${top}px`;
+          } else if (chatResizing) {
+            const dx = event.clientX - dragStartX;
+            const dy = event.clientY - dragStartY;
+            const w = Math.min(
+              Math.max(panelStartW + dx, 260),
+              Math.max(260, window.innerWidth - chatPanelEl.offsetLeft),
+            );
+            const h = Math.min(
+              Math.max(panelStartH + dy, 220),
+              Math.max(220, window.innerHeight - chatPanelEl.offsetTop),
+            );
+            chatPanelEl.style.width = `${w}px`;
+            chatPanelEl.style.height = `${h}px`;
+          }
+        });
+
+        window.addEventListener("pointerup", () => {
+          chatDragging = false;
+          chatResizing = false;
+        });
+
+        if (pendingConfig) {
+          const cfg = pendingConfig;
+          pendingConfig = null;
+          await applyConfig(cfg);
+        } else if (pendingModelUrl) {
+          const url = pendingModelUrl;
+          pendingModelUrl = "";
+          await loadModel(url);
+        }
+
+        refreshStatus();
+      }
+
+      window.PET_APP = {
+        async applyConfig(config) {
+          if (!isRendererReady()) {
+            pendingConfig = config || {};
+            return;
+          }
+          await applyConfig(config);
+        },
+        async reloadModel() {
+          if (state.model_url) {
+            try {
+              await loadModel(state.model_url);
+            } catch (err) {
+              showError(`reload model failed: ${err?.message || String(err)}`);
+            }
+          }
+        },
+        playMotion(group, index = 0) {
+          if (!model || typeof model.motion !== "function") {
+            return;
+          }
+          try {
+            model.motion(group, index);
+          } catch (err) {
+            showError(`motion error: ${String(err)}`);
+          }
+        },
+        playExpression(name) {
+          if (!model || typeof model.expression !== "function") {
+            return;
+          }
+          try {
+            model.expression(name);
+          } catch (err) {
+            showError(`expression error: ${String(err)}`);
+          }
+        },
+        getState() {
+          return { ...state };
+        },
+        openChat,
+        closeChat,
+        async sendChat(text) {
+          await streamChat(text || "");
+        },
+        async speakText(text) {
+          const content = (text || "").trim();
+          if (!content) return;
+          stopSpeaking(false);
+          streamFinished = true;
+          pendingSpeakBuffer = "";
+          ttsQueue = [];
+          ttsPlaying = false;
+          enqueueTTSChunk(content, null);
+        },
+        stopSpeak() {
+          stopSpeaking(true);
+        },
+      };
+
+      init().catch((err) => {
+        showError(err?.message || String(err));
+      });
+    })();
+  </script>
+</body>
+</html>
