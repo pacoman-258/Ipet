@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 
 import requests
@@ -30,7 +31,7 @@ os.environ.setdefault(
 )
 
 try:
-    from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QUrl, Signal, Slot
+    from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
     from PySide6.QtGui import QAction, QColor, QGuiApplication
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineCore import QWebEngineSettings
@@ -58,7 +59,7 @@ try:
         QWidget,
     )
 except ImportError:
-    from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+    from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
     from PyQt6.QtGui import QAction, QColor, QGuiApplication
     from PyQt6.QtWebChannel import QWebChannel
     from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -92,6 +93,8 @@ FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
+RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
+AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
 
 
 def _find_default_model() -> str:
@@ -140,6 +143,9 @@ DEFAULT_CONFIG = {
         "tts_provider_url": "",
         "expression_mode": True,
         "expression_output_format": "ndjson_v1",
+        "react_enabled": True,
+        "react_visibility": "inline",
+        "max_reasoning_steps": 10,
         "tooling": {
             "enabled": True,
             "mode": "mcp_local_phase2",
@@ -155,6 +161,40 @@ DEFAULT_CONFIG = {
         "system_prompt": "",
     },
 }
+
+CUSTOM_HTTP_TTS_PRESETS = {
+    "basic": {
+        "label": "自定义 HTTP 模板",
+        "config": {
+            "url": "http://127.0.0.1:9880/",
+            "payload": {},
+            "headers": {},
+            "query": {},
+            "timeout_sec": 60,
+        },
+    },
+    "gpt_sovits": {
+        "label": "GPT-SoVITS 预设",
+        "config": {
+            "url": "http://127.0.0.1:9880/",
+            "payload": {
+                "text_language": "ja",
+                "refer_wav_path": "tts-voice-model/reference.wav",
+                "prompt_text": "请改成参考音频对应文本",
+                "prompt_language": "ja",
+            },
+            "inject_fields": ["text"],
+            "headers": {},
+            "query": {},
+            "timeout_sec": 300,
+        },
+    },
+}
+
+
+def build_custom_http_tts_preset(key: str) -> str:
+    preset = CUSTOM_HTTP_TTS_PRESETS.get(key) or CUSTOM_HTTP_TTS_PRESETS["basic"]
+    return json.dumps(preset["config"], ensure_ascii=False, indent=2)
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -189,8 +229,32 @@ def load_config() -> dict:
         return json.loads(json.dumps(DEFAULT_CONFIG))
 
     config = deep_merge(DEFAULT_CONFIG, raw if isinstance(raw, dict) else {})
+    config["model_path"] = normalize_model_path(config.get("model_path", ""))
     _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
     return config
+
+
+def extract_pet_display_name(system_prompt: str) -> str:
+    raw = str(system_prompt or "").strip()
+    if not raw:
+        return "桌宠"
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return "桌宠"
+    if not isinstance(data, dict):
+        return "桌宠"
+    character = data.get("character")
+    if isinstance(character, dict):
+        for key in ("name_cn", "name"):
+            value = str(character.get(key) or "").strip()
+            if value:
+                return value
+    for key in ("name", "title"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return "桌宠"
 
 
 def is_backend_healthy(backend_url: str) -> bool:
@@ -201,11 +265,28 @@ def is_backend_healthy(backend_url: str) -> bool:
         return False
 
 
+def canonicalize_model_source_path(model_path: Path) -> Path:
+    original = model_path
+    candidate = model_path
+    while candidate.name.endswith(AUTOGEN_MODEL_SUFFIX):
+        source_name = f"{candidate.name[: -len(AUTOGEN_MODEL_SUFFIX)]}.json"
+        source_path = candidate.with_name(source_name)
+        if source_path.exists():
+            candidate = source_path
+            continue
+        return original
+    return candidate
+
+
 def resolve_model_path(path_text: str) -> Path:
     model_path = Path(path_text)
     if not model_path.is_absolute():
         model_path = ROOT_DIR / model_path
-    return model_path.resolve()
+    try:
+        resolved = model_path.resolve()
+    except Exception:
+        resolved = model_path
+    return canonicalize_model_source_path(resolved)
 
 
 def normalize_model_path(path_text: str) -> str:
@@ -275,6 +356,46 @@ def _scan_expression_defs(model_path: Path) -> list[dict]:
             name = name[: -len(".exp3.json")]
         defs.append({"Name": name, "File": rel})
     return defs
+
+
+def extract_lipsync_meta(model_json: dict) -> dict:
+    controllers = model_json.get("Controllers", {})
+    if not isinstance(controllers, dict):
+        controllers = {}
+
+    gain = 1.0
+    lipsync_cfg = controllers.get("LipSync", {})
+    if isinstance(lipsync_cfg, dict):
+        try:
+            gain = max(0.25, float(lipsync_cfg.get("Gain", 1.0)))
+        except Exception:
+            gain = 1.0
+
+    mouth_open_ids: list[str] = ["ParamMouthOpenY", "PARAM_MOUTH_OPEN_Y", "ParamMouthOpenX", "LipSync"]
+    mouth_form_ids: list[str] = ["ParamMouthForm", "PARAM_MOUTH_FORM"]
+
+    face_tracking = controllers.get("FaceTracking", {})
+    if isinstance(face_tracking, dict):
+        open_items = face_tracking.get("MouthOpenY", [])
+        if isinstance(open_items, list):
+            for item in open_items:
+                if isinstance(item, dict):
+                    param_id = str(item.get("Id") or "").strip()
+                    if param_id and param_id not in mouth_open_ids:
+                        mouth_open_ids.append(param_id)
+        form_items = face_tracking.get("MouthForm", [])
+        if isinstance(form_items, list):
+            for item in form_items:
+                if isinstance(item, dict):
+                    param_id = str(item.get("Id") or "").strip()
+                    if param_id and param_id not in mouth_form_ids:
+                        mouth_form_ids.append(param_id)
+
+    return {
+        "gain": gain,
+        "mouth_open_ids": mouth_open_ids,
+        "mouth_form_ids": mouth_form_ids,
+    }
 
 
 def ensure_runtime_model_from_json(model_path: Path, model_json: dict) -> tuple[Path, dict, list[dict]]:
@@ -411,8 +532,16 @@ class ControlPanel(QWidget):
         self.chat_tts_provider_combo = QComboBox()
         self.chat_tts_provider_combo.addItem("edge_tts")
         self.chat_tts_provider_combo.addItem("custom_http")
+        self.chat_tts_preset_combo = QComboBox()
+        self.chat_tts_preset_combo.addItem("选择预设...", "")
+        for preset_key, preset in CUSTOM_HTTP_TTS_PRESETS.items():
+            self.chat_tts_preset_combo.addItem(str(preset.get("label") or preset_key), preset_key)
+        self.chat_tts_preset_apply_button = QPushButton("一键填入")
         self.chat_tts_provider_url_input = QLineEdit()
-        self.chat_tts_provider_url_input.setPlaceholderText("custom_http URL (例如 http://127.0.0.1:9880/tts)")
+        self.chat_tts_provider_url_input.setPlaceholderText("custom_http URL 或 JSON 配置")
+        self.chat_tts_provider_url_input.setToolTip(
+            '直接填 URL，或用“一键填入”生成 JSON 预设，再修改参考音频和提示文本'
+        )
         self.chat_rate_slider = QSlider(Qt.Orientation.Horizontal)
         self.chat_rate_slider.setRange(-50, 100)
         self.chat_rate_slider.setValue(0)
@@ -446,20 +575,23 @@ class ControlPanel(QWidget):
         chat_layout.addWidget(self.chat_voice_input, 4, 1, 1, 2)
         chat_layout.addWidget(QLabel("TTS方式"), 5, 0)
         chat_layout.addWidget(self.chat_tts_provider_combo, 5, 1, 1, 2)
-        chat_layout.addWidget(QLabel("TTS接口"), 6, 0)
-        chat_layout.addWidget(self.chat_tts_provider_url_input, 6, 1, 1, 2)
-        chat_layout.addWidget(QLabel("语速"), 7, 0)
-        chat_layout.addWidget(rate_row, 7, 1, 1, 2)
-        chat_layout.addWidget(QLabel("表情驱动"), 8, 0)
-        chat_layout.addWidget(self.expression_mode_check, 8, 1, 1, 2)
-        chat_layout.addWidget(QLabel("协议版本"), 9, 0)
-        chat_layout.addWidget(self.expression_format_value_label, 9, 1, 1, 2)
-        chat_layout.addWidget(QLabel("系统提示词"), 10, 0)
-        chat_layout.addWidget(self.system_prompt_input, 10, 1, 1, 2)
-        chat_layout.addWidget(QLabel("状态"), 11, 0)
-        chat_layout.addWidget(self.backend_status_label, 11, 1, 1, 2)
-        chat_layout.addWidget(QLabel("工具"), 12, 0)
-        chat_layout.addWidget(self.tooling_enabled_check, 12, 1, 1, 2)
+        chat_layout.addWidget(QLabel("TTS预设"), 6, 0)
+        chat_layout.addWidget(self.chat_tts_preset_combo, 6, 1)
+        chat_layout.addWidget(self.chat_tts_preset_apply_button, 6, 2)
+        chat_layout.addWidget(QLabel("TTS接口"), 7, 0)
+        chat_layout.addWidget(self.chat_tts_provider_url_input, 7, 1, 1, 2)
+        chat_layout.addWidget(QLabel("语速"), 8, 0)
+        chat_layout.addWidget(rate_row, 8, 1, 1, 2)
+        chat_layout.addWidget(QLabel("表情驱动"), 9, 0)
+        chat_layout.addWidget(self.expression_mode_check, 9, 1, 1, 2)
+        chat_layout.addWidget(QLabel("协议版本"), 10, 0)
+        chat_layout.addWidget(self.expression_format_value_label, 10, 1, 1, 2)
+        chat_layout.addWidget(QLabel("系统提示词"), 11, 0)
+        chat_layout.addWidget(self.system_prompt_input, 11, 1, 1, 2)
+        chat_layout.addWidget(QLabel("状态"), 12, 0)
+        chat_layout.addWidget(self.backend_status_label, 12, 1, 1, 2)
+        chat_layout.addWidget(QLabel("工具"), 13, 0)
+        chat_layout.addWidget(self.tooling_enabled_check, 13, 1, 1, 2)
 
         mcp_box = QGroupBox("第三方 MCP")
         mcp_layout = QGridLayout(mcp_box)
@@ -574,6 +706,7 @@ class ControlPanel(QWidget):
         self.hide_button.clicked.connect(self.hide)
         self.backend_test_button.clicked.connect(self.on_test_backend)
         self.chat_rate_slider.valueChanged.connect(self.on_chat_rate_changed)
+        self.chat_tts_preset_apply_button.clicked.connect(self.on_apply_tts_preset)
         self.mcp_install_git_button.clicked.connect(self.on_install_mcp_from_git)
         self.mcp_register_local_button.clicked.connect(self.on_register_local_mcp)
         self.mcp_reload_button.clicked.connect(self.on_reload_mcp)
@@ -581,6 +714,13 @@ class ControlPanel(QWidget):
 
     def on_chat_rate_changed(self, value: int) -> None:
         self.chat_rate_value_label.setText(f"{int(value):+d}%")
+
+    def on_apply_tts_preset(self) -> None:
+        preset_key = str(self.chat_tts_preset_combo.currentData() or "").strip()
+        if not preset_key:
+            return
+        self.chat_tts_provider_combo.setCurrentText("custom_http")
+        self.chat_tts_provider_url_input.setText(build_custom_http_tts_preset(preset_key))
 
     def on_browse_model(self) -> None:
         dialog = QFileDialog(self, "选择 Live2D 模型配置", str(ROOT_DIR))
@@ -814,6 +954,7 @@ class ControlPanel(QWidget):
             self.chat_api_key_input,
             self.chat_voice_input,
             self.chat_tts_provider_combo,
+            self.chat_tts_preset_combo,
             self.chat_tts_provider_url_input,
             self.chat_rate_slider,
             self.expression_mode_check,
@@ -838,6 +979,7 @@ class ControlPanel(QWidget):
         provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
         provider = provider if provider in ("edge_tts", "custom_http") else "edge_tts"
         self.chat_tts_provider_combo.setCurrentText(provider)
+        self.chat_tts_preset_combo.setCurrentIndex(0)
         self.chat_tts_provider_url_input.setText(str(config.get("chat", {}).get("tts_provider_url", "")).strip())
         try:
             rate_pct = int(config.get("chat", {}).get("rate_pct", 0))
@@ -898,12 +1040,18 @@ class DesktopPet(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.config = load_config()
+        self._config_mtime = self._config_mtime_token()
+        self._runtime_command_mtime = self._runtime_command_mtime_token()
+        self._last_runtime_command_nonce = ""
         self.drag_offset = QPoint()
         self.window_locked = bool(self.config["window"]["locked"])
         self.motion_items: list[dict] = []
+        self.expression_names: list[str] = []
+        self.lipsync_meta: dict = {"gain": 1.0, "mouth_open_ids": [], "mouth_form_ids": []}
         self.runtime_model_path: Path | None = None
         self.backend_process: subprocess.Popen | None = None
         self.backend_started_by_app = False
+        self.control_panel = None
         self.resize_margin = 8
         self._window_dragging = False
         self._window_resizing = False
@@ -945,16 +1093,15 @@ class DesktopPet(QMainWindow):
 
         self.apply_window_geometry_from_config()
 
-        self.control_panel = ControlPanel(self)
-        self.control_panel.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-
         self.refresh_motion_list(prefer_reset=False)
-        self.sync_panel()
         self.ensure_backend_service()
-        self.control_panel.refresh_third_party_mcp(force_reload=False)
 
         self.browser.loadFinished.connect(self.on_web_loaded)
         self.browser.setUrl(QUrl.fromLocalFile(str((ROOT_DIR / "index.html").resolve())))
+
+        self._config_poll_timer = QTimer(self)
+        self._config_poll_timer.timeout.connect(self.on_config_poll)
+        self._config_poll_timer.start(1000)
 
     def apply_window_geometry_from_config(self) -> None:
         geom = self.config["window"]
@@ -966,24 +1113,127 @@ class DesktopPet(QMainWindow):
         )
 
     def sync_panel(self) -> None:
-        self.control_panel.set_from_config(self.config, self.motion_items)
+        if self.control_panel is not None:
+            self.control_panel.set_from_config(self.config, self.motion_items)
 
     def refresh_motion_list(self, prefer_reset: bool) -> None:
-        model_path_text = self.control_panel.model_path_input.text().strip() if hasattr(self, "control_panel") else self.config.get("model_path", "")
+        model_path_text = (
+            self.control_panel.model_path_input.text().strip()
+            if self.control_panel is not None
+            else self.config.get("model_path", "")
+        )
         model_path = resolve_model_path(model_path_text or self.config.get("model_path", ""))
         self.runtime_model_path, motion_groups, expr_defs = ensure_runtime_model(model_path)
+        self.lipsync_meta = {"gain": 1.0, "mouth_open_ids": [], "mouth_form_ids": []}
+        if model_path.exists():
+            try:
+                with model_path.open("r", encoding="utf-8") as f:
+                    model_json = json.load(f)
+                self.lipsync_meta = extract_lipsync_meta(model_json)
+            except Exception:
+                pass
         self.motion_items = action_items_from_defs(motion_groups, expr_defs)
+        self.expression_names = [
+            str(item.get("Name") or "").strip()
+            for item in expr_defs
+            if isinstance(item, dict) and str(item.get("Name") or "").strip()
+        ]
         if not self.motion_items:
             self.motion_items = [{"type": "motion", "group": "Idle", "index": 0, "label": "Idle[0]"}]
 
-        if hasattr(self, "control_panel"):
+        if self.control_panel is not None:
             self.sync_panel()
             if prefer_reset and self.control_panel.motion_combo.count() > 0:
                 self.control_panel.motion_combo.setCurrentIndex(0)
 
+    def _config_mtime_token(self):
+        try:
+            stat = CONFIG_PATH.stat()
+        except Exception:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _runtime_command_mtime_token(self):
+        try:
+            stat = RUNTIME_COMMAND_PATH.stat()
+        except Exception:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def on_config_poll(self) -> None:
+        token = self._config_mtime_token()
+        if token is not None and token != self._config_mtime:
+            self._config_mtime = token
+            self.reload_config_from_disk()
+        self.on_runtime_command_poll()
+
+    def on_runtime_command_poll(self) -> None:
+        token = self._runtime_command_mtime_token()
+        if token is None or token == self._runtime_command_mtime:
+            return
+        self._runtime_command_mtime = token
+        try:
+            command = json.loads(RUNTIME_COMMAND_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(command, dict):
+            return
+        nonce = str(command.get("nonce") or "").strip()
+        if not nonce or nonce == self._last_runtime_command_nonce:
+            return
+        self._last_runtime_command_nonce = nonce
+        self.process_runtime_command(command)
+
+    def process_runtime_command(self, command: dict) -> None:
+        command_type = str(command.get("type") or "").strip()
+        payload = command.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        model_path = str(payload.get("model_path") or "").strip()
+        if model_path:
+            normalized = normalize_model_path(model_path)
+            if normalized:
+                self.config["model_path"] = normalized
+                self.refresh_motion_list(prefer_reset=False)
+
+        if command_type == "load_model":
+            self.apply_config_to_web()
+            return
+
+        if command_type == "play_motion":
+            group = str(payload.get("group") or "").strip()
+            try:
+                index = max(0, int(payload.get("index", 0)))
+            except Exception:
+                index = 0
+            if group:
+                self.play_motion(group, index, reload_model=bool(model_path))
+            return
+
+        if command_type == "play_expression":
+            name = str(payload.get("name") or "").strip()
+            if name:
+                self.play_expression(name, reload_model=bool(model_path))
+
+    def reload_config_from_disk(self) -> None:
+        self.config = load_config()
+        self.window_locked = bool(self.config["window"]["locked"])
+        self.apply_window_geometry_from_config()
+        self.refresh_motion_list(prefer_reset=False)
+        self.apply_config_to_web()
+
+    def open_settings_page(self) -> None:
+        self.ensure_backend_service()
+        url = f"{DEFAULT_BACKEND_URL.rstrip('/')}/settings"
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            print(f"打开设置页失败: {exc}")
+
     def show_context_menu(self, pos: QPoint) -> None:
         menu = QMenu(self)
-        panel_action = QAction("打开控制面板", self)
+        panel_action = QAction("打开设置页", self)
         lock_action = QAction("解锁窗口" if self.window_locked else "锁定窗口", self)
         reload_action = QAction("重新加载模型", self)
         quit_action = QAction("退出", self)
@@ -996,13 +1246,10 @@ class DesktopPet(QMainWindow):
 
         selected = menu.exec(self.browser.mapToGlobal(pos))
         if selected == panel_action:
-            self.control_panel.show()
-            self.control_panel.raise_()
-            self.control_panel.activateWindow()
+            self.open_settings_page()
         elif selected == lock_action:
             self.window_locked = not self.window_locked
             self.config["window"]["locked"] = self.window_locked
-            self.sync_panel()
         elif selected == reload_action:
             self.apply_config_to_web()
         elif selected == quit_action:
@@ -1232,7 +1479,14 @@ class DesktopPet(QMainWindow):
         return {
             "model_url": QUrl.fromLocalFile(str(runtime_path)).toString(),
             "pet": self.config["pet"],
-            "chat": self.config.get("chat", {}),
+            "chat": {
+                **self.config.get("chat", {}),
+                "pet_display_name": extract_pet_display_name(self.config.get("chat", {}).get("system_prompt", "")),
+                "available_expressions": list(self.expression_names),
+                "lip_sync_gain": float(self.lipsync_meta.get("gain", 1.0) or 1.0),
+                "mouth_parameter_ids": list(self.lipsync_meta.get("mouth_open_ids", [])),
+                "mouth_form_parameter_ids": list(self.lipsync_meta.get("mouth_form_ids", [])),
+            },
         }
 
     def on_web_loaded(self, ok: bool) -> None:
@@ -1240,24 +1494,36 @@ class DesktopPet(QMainWindow):
             return
         self.apply_config_to_web()
 
-    def apply_config_to_web(self) -> None:
+    def apply_config_to_web(self, after_script: str | None = None) -> None:
         payload = json.dumps(self.current_runtime_payload(), ensure_ascii=False)
-        script = f"window.PET_APP && window.PET_APP.applyConfig({payload});"
+        if after_script:
+            script = (
+                "window.PET_APP && window.PET_APP.applyConfig("
+                f"{payload}).then(() => {{ {after_script} }});"
+            )
+        else:
+            script = f"window.PET_APP && window.PET_APP.applyConfig({payload});"
         self.browser.page().runJavaScript(script)
 
-    def play_motion(self, group: str, index: int = 0) -> None:
-        script = (
+    def play_motion(self, group: str, index: int = 0, reload_model: bool = False) -> None:
+        action_script = (
             "window.PET_APP && window.PET_APP.playMotion("
             f"{json.dumps(group, ensure_ascii=False)}, {int(index)});"
         )
-        self.browser.page().runJavaScript(script)
+        if reload_model:
+            self.apply_config_to_web(after_script=action_script)
+            return
+        self.browser.page().runJavaScript(action_script)
 
-    def play_expression(self, name: str) -> None:
-        script = (
+    def play_expression(self, name: str, reload_model: bool = False) -> None:
+        action_script = (
             "window.PET_APP && window.PET_APP.playExpression("
             f"{json.dumps(name, ensure_ascii=False)});"
         )
-        self.browser.page().runJavaScript(script)
+        if reload_model:
+            self.apply_config_to_web(after_script=action_script)
+            return
+        self.browser.page().runJavaScript(action_script)
 
     def play_action(self, action: dict) -> None:
         action_type = str(action.get("type", "motion"))
@@ -1278,8 +1544,8 @@ class DesktopPet(QMainWindow):
         for key in ["scale", "offset_x", "offset_y", "rotation", "opacity"]:
             if key in state:
                 self.config["pet"][key] = state[key]
-
-        self.control_panel.update_pet_widgets_from_web_state(state)
+        if self.control_panel is not None:
+            self.control_panel.update_pet_widgets_from_web_state(state)
 
     def apply_from_panel(self) -> None:
         panel = self.control_panel
@@ -1354,6 +1620,7 @@ class DesktopPet(QMainWindow):
 
         with CONFIG_PATH.open("w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
+        self._config_mtime = self._config_mtime_token()
 
     def reset_to_default(self) -> None:
         self.config = json.loads(json.dumps(DEFAULT_CONFIG))
@@ -1367,7 +1634,6 @@ class DesktopPet(QMainWindow):
         self.window_locked = bool(self.config["window"]["locked"])
         self.apply_window_geometry_from_config()
         self.refresh_motion_list(prefer_reset=True)
-        self.sync_panel()
         self.apply_config_to_web()
 
     def closeEvent(self, event) -> None:

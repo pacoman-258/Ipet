@@ -8,3 +8,28 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local runtime state
+backend/agent_graph_state.pkl
+backend/audio_cache/
+
+# Local config and personal workspace files
+pet_config.json
+.pet_runtime_command.json
+Todo.txt
+.tmp_index_inline.js
+.tmp_test/
+tmp*/
+
+# Local models and downloaded assets
+model/
+
+# Third-party MCP local installs
+third_party_mcp/jmmcp/
+third_party_mcp/*/node_modules/
+third_party_mcp/*/.npm-cache/
+third_party_mcp/*/.npm-prefix/
+third_party_mcp/*/.tool_cache.json
+third_party_mcp/*/downloads/
+third_party_mcp/*/.uv-cache/
+third_party_mcp/*/.uv-tools/

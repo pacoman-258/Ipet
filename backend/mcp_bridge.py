@@ -8,6 +8,7 @@ from typing import Any
 from .mcp.local_server import LocalMCPServer
 from .mcp.stdio_client import StdioMCPClient
 from .mcp.third_party_manager import ThirdPartyMCPManager
+from .tool_runtime import Tool, ToolRegistry, ToolResult
 
 
 class MCPBridge:
@@ -21,7 +22,8 @@ class MCPBridge:
         self.manager = ThirdPartyMCPManager(root_dir)
         self.third_party_clients: dict[str, StdioMCPClient] = {}
         self.third_party_status: dict[str, dict[str, Any]] = {}
-        self.tool_routes: dict[str, str] = {}
+        self.registry = ToolRegistry()
+        self._registry_snapshot = ""
         self.reload()
 
     def stop(self) -> None:
@@ -35,7 +37,10 @@ class MCPBridge:
     def reload(self) -> None:
         self.stop()
         self.third_party_status = {}
-        self.tool_routes = {}
+        self.registry = ToolRegistry()
+        self._registry_snapshot = self._registered_server_snapshot()
+        for tool in self.local.get_tools():
+            self.registry.register(tool)
 
         third_cfg = self._third_party_config()
         for server_cfg in self._iter_registered_servers():
@@ -50,7 +55,7 @@ class MCPBridge:
                     status["health_status"] = "disabled"
                     self.third_party_status[name] = status
                     continue
-                self._start_server_client(name, status, manifest)
+                self._load_cached_server_tools(name, status, manifest)
             except Exception as exc:
                 status["install_status"] = status["install_status"] if status["install_status"] != "not_installed" else "failed"
                 status["health_status"] = "failed"
@@ -58,41 +63,26 @@ class MCPBridge:
             self.third_party_status[name] = status
 
     def list_tools(self) -> list[dict[str, Any]]:
-        tools: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for status in self.list_servers():
-            if status.get("health_status") != "online":
-                continue
-            for tool in status.get("tools", []):
-                name = str(tool.get("function", {}).get("name") or "")
-                if name and name not in seen:
-                    tools.append(tool)
-                    seen.add(name)
-        for tool in self.local.list_tools():
-            name = str(tool.get("function", {}).get("name") or "")
-            if name and name not in seen:
-                tools.append(tool)
-                seen.add(name)
-        return tools
+        self._refresh_if_registry_changed()
+        return self.registry.to_llm_schemas()
 
-    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        server_name = self.tool_routes.get(tool_name)
-        if server_name:
-            client = self._ensure_server_client(server_name)
-            try:
-                return client.call_tool(tool_name, arguments)
-            except Exception as exc:
-                self._mark_server_failed(server_name, str(exc))
-                raise
-        return self.local.call(tool_name, arguments)
+    def list_registered_tools(self) -> list[Tool]:
+        self._refresh_if_registry_changed()
+        return self.registry.list()
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        self._refresh_if_registry_changed()
+        return self.registry.invoke(tool_name, arguments)
 
     def list_servers(self) -> list[dict[str, Any]]:
+        self._refresh_if_registry_changed()
         ordered_names = [str(item.get("name") or "") for item in self._iter_registered_servers()]
         names = [name for name in ordered_names if name in self.third_party_status]
         names.extend([name for name in self.third_party_status if name not in names])
         return [dict(self.third_party_status[name]) for name in names]
 
     def health(self) -> dict[str, Any]:
+        self._refresh_if_registry_changed()
         servers = self.list_servers()
         online = sum(1 for item in servers if item.get("health_status") == "online")
         return {"enabled": bool(self._third_party_config().get("enabled", False)), "servers": servers, "online": online}
@@ -129,6 +119,9 @@ class MCPBridge:
     def discover_third_party_manifests(self) -> list[dict[str, Any]]:
         return self.manager.list_manifests()
 
+    def get_server_config(self, name: str) -> dict[str, Any] | None:
+        return self._find_server_config(name)
+
     def _base_server_status(self, server_cfg: dict[str, Any]) -> dict[str, Any]:
         name = str(server_cfg.get("name") or "").strip()
         return {
@@ -158,30 +151,38 @@ class MCPBridge:
     def _start_server_client(self, name: str, status: dict[str, Any], manifest: dict[str, Any]) -> StdioMCPClient:
         install_info = self.manager.ensure_installed(manifest["manifest_path"])
         status["install_status"] = str(install_info.get("install_status", "ready"))
-        env = manifest.get("env")
-        env_map = None
-        if isinstance(env, dict):
-            env_map = dict(os.environ)
-            for k, v in env.items():
-                if isinstance(k, str):
-                    env_map[k] = str(v)
         client = StdioMCPClient(
             command=self.manager.build_command(manifest),
-            cwd=Path(manifest["server_dir"]),
+            cwd=Path(str(manifest.get("workdir_path") or manifest["server_dir"])),
             timeout_sec=self.timeout_sec,
-            env=env_map,
+            env=self.manager._build_client_env(manifest),
+            protocol=str(manifest.get("protocol") or "content_length"),
         )
         client.start()
         tools = client.list_tools()
+        self.manager.save_tool_cache(manifest["manifest_path"], tools)
         self.third_party_clients[name] = client
         status["health_status"] = "online"
         status["error"] = ""
-        status["tools"] = [self._normalize_tool_spec(name, tool) for tool in tools]
-        for tool in status["tools"]:
-            tool_name = tool.get("function", {}).get("name")
-            if isinstance(tool_name, str) and tool_name:
-                self.tool_routes[tool_name] = name
+        normalized_specs: list[dict[str, Any]] = []
+        for tool in tools:
+            normalized_tool = self._normalize_tool(name, tool)
+            self.registry.register(normalized_tool, overwrite=True)
+            normalized_specs.append(normalized_tool.to_llm_schema())
+        status["tools"] = normalized_specs
         return client
+
+    def _load_cached_server_tools(self, name: str, status: dict[str, Any], manifest: dict[str, Any]) -> None:
+        cached_tools = self.manager.load_tool_cache(manifest["manifest_path"])
+        status["install_status"] = "ready"
+        status["health_status"] = "ready" if cached_tools else "not_loaded"
+        status["error"] = ""
+        normalized_specs: list[dict[str, Any]] = []
+        for tool in cached_tools:
+            normalized_tool = self._normalize_tool(name, tool)
+            self.registry.register(normalized_tool, overwrite=True)
+            normalized_specs.append(normalized_tool.to_llm_schema())
+        status["tools"] = normalized_specs
 
     def _ensure_server_client(self, server_name: str) -> StdioMCPClient:
         status = self.third_party_status.get(server_name)
@@ -227,42 +228,80 @@ class MCPBridge:
             status["health_status"] = "failed"
             status["error"] = str(error)
 
-    def _normalize_tool_spec(self, server_name: str, tool: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_tool(self, server_name: str, tool: dict[str, Any]) -> Tool:
         if not isinstance(tool, dict):
-            return {"type": "function", "function": {"name": "", "description": f"[{server_name}]", "parameters": {"type": "object"}}}
+            return Tool(
+                name=f"{server_name}.unknown_tool",
+                description=f"[{server_name}]",
+                input_schema={"type": "object", "properties": {}},
+                invoke=lambda _arguments, failed_server=server_name: ToolResult.from_error(
+                    f"invalid tool definition from server: {failed_server}"
+                ),
+                source=server_name,
+                metadata={"server_name": server_name, "remote_name": ""},
+            )
 
-        # Standard MCP tools/list shape: {name, description, inputSchema, ...}
+        remote_name = ""
+        description = ""
+        parameters: dict[str, Any] = {"type": "object", "properties": {}}
+
         if "name" in tool and "function" not in tool:
-            name = str(tool.get("name") or "").strip()
+            remote_name = str(tool.get("name") or "").strip()
             description = str(tool.get("description") or "").strip()
             input_schema = tool.get("inputSchema")
-            parameters = input_schema if isinstance(input_schema, dict) else {"type": "object", "properties": {}}
-            return {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": f"[{server_name}] {description}".strip(),
-                    "parameters": parameters,
-                },
-            }
+            if isinstance(input_schema, dict):
+                parameters = input_schema
+        else:
+            fn = tool.get("function", {}) if isinstance(tool, dict) else {}
+            remote_name = str(fn.get("name") or "").strip()
+            description = str(fn.get("description") or "").strip()
+            if isinstance(fn.get("parameters"), dict):
+                parameters = fn.get("parameters")
 
-        # Already OpenAI-style tool schema
-        fn = tool.get("function", {}) if isinstance(tool, dict) else {}
-        name = str(fn.get("name") or "").strip()
-        description = str(fn.get("description") or "").strip()
-        parameters = fn.get("parameters")
-        return {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": f"[{server_name}] {description}".strip(),
-                "parameters": parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}},
-            },
-        }
+        unique_name = f"{server_name}.{remote_name}" if remote_name else f"{server_name}.unknown_tool"
+        visible_description = f"[{server_name}] {description}".strip()
+        return Tool(
+            name=unique_name,
+            description=visible_description,
+            input_schema=parameters,
+            invoke=lambda arguments, bound_server=server_name, bound_remote=remote_name: self._call_remote_tool(
+                bound_server,
+                bound_remote,
+                arguments,
+            ),
+            source=server_name,
+            metadata={"server_name": server_name, "remote_name": remote_name},
+        )
+
+    def _call_remote_tool(self, server_name: str, remote_tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        client = self._ensure_server_client(server_name)
+        try:
+            result = client.call_tool(remote_tool_name, arguments)
+        except Exception as exc:
+            self._mark_server_failed(server_name, str(exc))
+            return ToolResult.from_error(str(exc), raw=exc)
+        return ToolResult.from_value(result)
 
     def _third_party_config(self) -> dict[str, Any]:
         data = self.tooling_config.get("third_party", {})
         return data if isinstance(data, dict) else {"enabled": False, "servers": []}
+
+    def _registered_server_snapshot(self) -> str:
+        items: list[dict[str, str | bool]] = []
+        for item in self._iter_registered_servers():
+            items.append(
+                {
+                    "name": str(item.get("name") or "").strip(),
+                    "manifest_path": str(item.get("manifest_path") or "").strip(),
+                    "enabled": bool(item.get("enabled", True)),
+                }
+            )
+        return json.dumps(items, ensure_ascii=False, sort_keys=True)
+
+    def _refresh_if_registry_changed(self) -> None:
+        snapshot = self._registered_server_snapshot()
+        if snapshot != self._registry_snapshot:
+            self.reload()
 
     def _iter_registered_servers(self) -> list[dict[str, Any]]:
         third_cfg = self._third_party_config()

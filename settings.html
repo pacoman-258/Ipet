@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>桌宠设置</title>
+  <link rel="stylesheet" href="/settings.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-card">
+        <div class="brand-ribbon">Cute Control</div>
+        <h1>桌宠设置页</h1>
+        <p>把模型、聊天、TTS、MCP 和外观参数收进同一页里，保存后桌宠会自动刷新。</p>
+      </div>
+
+      <nav class="section-nav">
+        <a href="#overview">总览</a>
+        <a href="#model">模型</a>
+        <a href="#chat">聊天与 TTS</a>
+        <a href="#mcp">第三方 MCP</a>
+        <a href="#pet">形象参数</a>
+        <a href="#window">窗口</a>
+      </nav>
+
+      <div class="side-actions">
+        <button id="reload-config-btn" class="ghost-button">重新读取磁盘配置</button>
+        <button id="reset-form-btn" class="ghost-button">恢复默认</button>
+        <button id="save-config-btn" class="primary-button">应用并保存</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="overview" class="hero">
+        <div class="hero-copy">
+          <span class="eyebrow">Desktop Pet WebUI</span>
+          <h2>可爱风设置中心</h2>
+          <p>模型切换、动作预览、TTS 预设和第三方 MCP 都能在浏览器里完成。</p>
+        </div>
+        <div class="hero-summary" id="summary-cards"></div>
+      </section>
+
+      <div id="toast" class="toast"></div>
+      <div id="status-banner" class="status-banner">准备加载配置...</div>
+
+      <section id="model" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>模型</h3>
+            <p>支持项目内模型快速切换，也支持手动输入路径。动作和表情可以直接试播。</p>
+          </div>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field wide">
+            <span>模型路径</span>
+            <input id="model-path" type="text" />
+          </label>
+          <label class="field">
+            <span>项目内模型</span>
+            <select id="local-model-select"></select>
+          </label>
+          <div class="field inline-actions">
+            <span>模型操作</span>
+            <div class="button-row wrap">
+              <button id="refresh-local-models-btn" class="ghost-button">刷新模型列表</button>
+              <button id="use-local-model-btn" class="ghost-button">填入路径</button>
+              <button id="preview-local-model-btn" class="pill-button">立即切换</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-grid">
+          <div class="preview-card">
+            <h4>动作预览</h4>
+            <p class="preview-note">点击按钮后会让当前桌宠直接播放对应动作。</p>
+            <div id="model-motion-list" class="chip-list empty-state">选择项目模型后显示动作</div>
+          </div>
+          <div class="preview-card">
+            <h4>表情预览</h4>
+            <p class="preview-note">点击按钮即可让桌宠切换表情，适合快速检查模型资源是否齐全。</p>
+            <div id="model-expression-list" class="chip-list empty-state">选择项目模型后显示表情</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="chat" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>聊天与 TTS</h3>
+            <p>模型源、远端模型、TTS 方式和 GPT-SoVITS 预设都放在这里。</p>
+          </div>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field">
+            <span>后端地址</span>
+            <input id="chat-backend-url" type="text" />
+          </label>
+          <label class="field">
+            <span>模型源</span>
+            <select id="chat-llm-provider">
+              <option value="ollama">ollama</option>
+              <option value="openai_compat">openai_compat</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>API Base</span>
+            <input id="chat-api-base-url" type="text" />
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <input id="chat-api-key" type="password" />
+          </label>
+          <label class="field">
+            <span>当前模型</span>
+            <input id="chat-model" type="text" />
+          </label>
+          <div class="field inline-actions">
+            <span>远端模型</span>
+            <div class="button-row stretch">
+              <select id="remote-model-select"></select>
+              <button id="fetch-remote-models-btn" class="ghost-button">拉取模型</button>
+              <button id="use-remote-model-btn" class="pill-button">使用</button>
+            </div>
+          </div>
+          <label class="field">
+            <span>语音</span>
+            <input id="chat-voice" type="text" />
+          </label>
+          <label class="field">
+            <span>会话 ID</span>
+            <input id="chat-session-id" type="text" />
+          </label>
+          <label class="field">
+            <span>上下文轮数</span>
+            <input id="chat-memory-window" type="number" min="1" max="50" />
+          </label>
+          <label class="field">
+            <span>TTS 方式</span>
+            <select id="chat-tts-provider">
+              <option value="edge_tts">edge_tts</option>
+              <option value="custom_http">custom_http</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>语速</span>
+            <div class="range-wrap">
+              <input id="chat-rate-pct" type="range" min="-50" max="100" />
+              <strong id="chat-rate-label">+0%</strong>
+            </div>
+          </label>
+          <label class="field">
+            <span>TTS 预设</span>
+            <div class="button-row stretch">
+              <select id="tts-preset-select"></select>
+              <button id="apply-tts-preset-btn" class="pill-button">一键填入</button>
+            </div>
+          </label>
+          <label class="field wide">
+            <span>TTS 接口 / JSON 配置</span>
+            <textarea id="chat-tts-provider-url" rows="9"></textarea>
+          </label>
+          <label class="field wide">
+            <span>系统提示词</span>
+            <div class="button-row wrap prompt-tools">
+              <button id="import-system-prompt-btn" type="button" class="ghost-button">导入 JSON</button>
+              <span class="field-hint">直接把整个 JSON 文件内容导入为系统提示词</span>
+            </div>
+            <input id="system-prompt-file-input" type="file" accept=".json,application/json" class="visually-hidden" />
+            <textarea id="chat-system-prompt" rows="6"></textarea>
+          </label>
+          <label class="field">
+            <span>Agent / ReAct</span>
+            <label class="inline-toggle">
+              <input id="chat-react-enabled" type="checkbox" />
+              <span>Enable inline ReAct</span>
+            </label>
+          </label>
+          <label class="field">
+            <span>ReAct steps</span>
+            <input id="chat-max-reasoning-steps" type="number" min="1" max="12" />
+          </label>
+          <label class="field">
+            <span>Trace visibility</span>
+            <select id="chat-react-visibility">
+              <option value="inline">inline</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="toggle-card">
+            <input id="chat-expression-mode" type="checkbox" />
+            <span>开启表情联动</span>
+          </label>
+          <label class="toggle-card">
+            <input id="tooling-enabled" type="checkbox" />
+            <span>启用工具调用</span>
+          </label>
+        </div>
+      </section>
+
+      <section id="mcp" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>第三方 MCP</h3>
+            <p>直接新建 MCP server JSON 配置来安装。前端可直接套用 `playwright-mcp` 范式，保存后会长期保留。</p>
+          </div>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="toggle-card">
+            <input id="third-party-enabled" type="checkbox" />
+            <span>启用第三方 MCP</span>
+          </label>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field">
+            <span>MCP 预设</span>
+            <div class="button-row stretch">
+              <select id="mcp-preset-select"></select>
+              <button id="mcp-apply-preset-btn" class="ghost-button">填入预设</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>服务名称</span>
+            <input id="mcp-server-name" type="text" placeholder="playwright_mcp" />
+          </label>
+          <label class="field wide">
+            <span>MCP server JSON 配置</span>
+            <textarea id="mcp-config-json" rows="10" placeholder='{"mcpServers":{"playwright_mcp":{"command":"npx","args":["@playwright/mcp@latest"]}}}'></textarea>
+          </label>
+          <div class="field inline-actions wide">
+            <span>配置安装</span>
+            <div class="button-row">
+              <button id="mcp-create-btn" class="pill-button">新建并保存 MCP</button>
+              <button id="mcp-reload-btn" class="ghost-button">重载 MCP</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="mcp-server-list" class="server-grid empty-state">正在加载第三方 MCP 状态...</div>
+      </section>
+
+      <section id="pet" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>形象参数</h3>
+            <p>控制桌宠缩放、透明度、视线跟随和编辑模式。</p>
+          </div>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field">
+            <span>缩放</span>
+            <input id="pet-scale" type="number" min="0.05" max="5" step="0.01" />
+          </label>
+          <label class="field">
+            <span>透明度</span>
+            <input id="pet-opacity" type="number" min="0.1" max="1" step="0.01" />
+          </label>
+          <label class="field">
+            <span>偏移 X</span>
+            <input id="pet-offset-x" type="number" />
+          </label>
+          <label class="field">
+            <span>偏移 Y</span>
+            <input id="pet-offset-y" type="number" />
+          </label>
+          <label class="field">
+            <span>旋转</span>
+            <input id="pet-rotation" type="number" min="-180" max="180" step="0.1" />
+          </label>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="toggle-card">
+            <input id="pet-edit-mode" type="checkbox" />
+            <span>编辑模式</span>
+          </label>
+          <label class="toggle-card">
+            <input id="pet-follow-mouse" type="checkbox" />
+            <span>视线跟随鼠标</span>
+          </label>
+        </div>
+      </section>
+
+      <section id="window" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>窗口</h3>
+            <p>这里的值会直接影响桌宠主窗口，保存后会自动同步。</p>
+          </div>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field">
+            <span>窗口 X</span>
+            <input id="window-x" type="number" />
+          </label>
+          <label class="field">
+            <span>窗口 Y</span>
+            <input id="window-y" type="number" />
+          </label>
+          <label class="field">
+            <span>窗口宽</span>
+            <input id="window-width" type="number" min="120" />
+          </label>
+          <label class="field">
+            <span>窗口高</span>
+            <input id="window-height" type="number" min="120" />
+          </label>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="toggle-card">
+            <input id="window-locked" type="checkbox" />
+            <span>锁定窗口位置</span>
+          </label>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/settings.js"></script>
+</body>
+</html>

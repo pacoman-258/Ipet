@@ -36,11 +36,12 @@
 职责：
 
 - 创建透明桌宠窗口
-- 创建控制面板
+- 通过默认浏览器打开独立 Web 设置页
 - 加载本地 `index.html`
 - 通过 `QWebChannel` 和前端通信
 - 自动拉起和关闭 FastAPI 后端
 - 保存/恢复 `pet_config.json`
+- 监听 `pet_config.json` 变化并自动重新应用配置
 
 ### 3.2 前端渲染层
 
@@ -54,6 +55,14 @@
 - 请求 `/api/chat/stream` 和 `/api/tts`
 - 使用 `AudioContext + AnalyserNode` 驱动 `ParamMouthOpenY`
 - 在结构化分段下先播表情，再播对应文本
+
+新增设置页：`settings.html`
+
+职责：
+
+- 作为独立 WebUI 设置中心运行在系统浏览器中
+- 通过 FastAPI 配置接口读写 `pet_config.json`
+- 管理模型、聊天/TTS、第三方 MCP、形象参数和窗口参数
 
 ### 3.3 后端服务层
 
@@ -111,6 +120,9 @@
 AI_assistant/
 ├─ main.py
 ├─ index.html
+├─ settings.html
+├─ settings.css
+├─ settings.js
 ├─ pet_config.json
 ├─ README.md
 ├─ DEVELOPMENT_REPORT.md
@@ -145,9 +157,11 @@ AI_assistant/
 - 自动补全部分缺失动作/表情引用
 - 动作播放
 - 表情播放
+- 独立 Web 设置页中展示模型动作/表情清单
 - 鼠标跟随
 - 编辑模式拖拽和缩放
 - 窗口位置和大小持久化
+- 外部配置保存后自动热刷新
 
 ### 5.2 聊天与模型接入
 
@@ -163,6 +177,11 @@ AI_assistant/
 
 - `edge-tts`
 - 自定义 HTTP TTS
+- 自定义 HTTP TTS 支持原始音频字节、`audio_base64` JSON 和 `audio_url` JSON 响应
+- 自定义 HTTP TTS 支持直接 URL 或 JSON 配置（可附带 `headers`、`query`、`payload`、`timeout_sec`）
+- 自定义 HTTP TTS 支持 `inject_fields`，可控制是否把 `text / voice / rate / volume` 注入请求
+- 控制面板提供 GPT-SoVITS 预设，可一键填入参考音频与提示文本模板
+- 自定义 HTTP TTS 会按真实音频格式保存并返回，不再强制当作 mp3
 - 自定义语音和语速
 - 停止语音按钮
 - LipSync 口型同步
@@ -181,10 +200,21 @@ AI_assistant/
 
 - 第三方 MCP 总开关
 - 从 Git 安装
-- 注册本地目录
+- 注册本地目录路径
 - 重载第三方 MCP
 - 启用/停用单个 MCP
-- 显示 runtime、安装状态、健康状态和工具列表
+- 在 WebUI 卡片中显示 runtime、安装状态、健康状态和工具列表
+
+### 5.6 Web 设置页
+
+- 独立浏览器设置页 `/settings`
+- 双栏高密度布局，移动端自动收缩为单栏
+- 总览状态卡片
+- 模型、本地模型列表与元数据预览
+- 聊天/TTS 配置与远端模型拉取
+- GPT-SoVITS 预设一键填入
+- 形象参数与窗口参数编辑
+- 应用并保存 / 重新读取磁盘配置 / 恢复默认
 
 ---
 
@@ -193,10 +223,14 @@ AI_assistant/
 ### 6.1 聊天与语音
 
 - `GET /api/health`
+- `GET /settings`
+- `GET /api/settings/config`
+- `PUT /api/settings/config`
+- `GET /api/settings/models-local`
 - `POST /api/chat/stream`
 - `POST /api/models`
 - `POST /api/tts`
-- `GET /api/audio/{id}.mp3`
+- `GET /api/audio/{file_name}`
 
 ### 6.2 第三方 MCP 管理
 
@@ -225,6 +259,8 @@ AI_assistant/
     "model": "qwen3:8b",
     "voice": "zh-CN-XiaoxiaoNeural",
     "rate_pct": 0,
+    "tts_provider": "edge_tts",
+    "tts_provider_url": "",
     "expression_mode": true,
     "tooling": {
       "enabled": true,
@@ -249,6 +285,41 @@ AI_assistant/
   }
 }
 ```
+
+`custom_http` 说明：
+
+- `tts_provider_url` 填普通 URL 时，后端会默认 POST `text / voice / rate / volume`
+- `tts_provider_url` 也可以填 JSON 字符串，例如：
+
+```json
+{
+  "url": "http://127.0.0.1:9880/",
+  "payload": {
+    "text_language": "ja",
+    "refer_wav_path": "reference.wav",
+    "prompt_text": "こんにちは",
+    "prompt_language": "ja"
+  },
+  "inject_fields": ["text"],
+  "headers": {
+    "X-Token": "demo"
+  },
+  "query": {
+    "stream": "false"
+  },
+  "timeout_sec": 300
+}
+```
+
+- JSON 配置模式仍会自动补入 `text / voice / rate / volume`
+- 若某个 HTTP TTS 只接受部分标准字段，可用 `inject_fields` 控制注入范围；例如 GPT-SoVITS 常用 `["text"]`
+- 对路径类字段（如 `refer_wav_path`），后端会兼容常见的 Windows 反斜杠写法
+- 支持三类响应：
+- 直接返回音频字节
+- JSON 返回 `audio_base64`
+- JSON 返回 `audio_url`
+- 音频缓存会保留提供方真实格式，并通过 `/api/audio/{file_name}` 返回
+- 控制面板内置 “GPT-SoVITS 预设” 一键填入模板，用户只需修改 `refer_wav_path` 和 `prompt_text`
 
 安全注意：
 
@@ -298,6 +369,11 @@ AI_assistant/
 ```powershell
 python main.py
 ```
+
+启动后：
+
+- 桌宠窗口继续使用内置 `index.html`
+- 右键菜单中的“打开设置页”会在系统默认浏览器打开 `http://127.0.0.1:8008/settings`
 
 ### 9.2 使用本地或远程模型
 
@@ -359,6 +435,7 @@ python main.py
 - 配置结构变化
 - 第三方 MCP 安装策略变化
 - TTS、模型接入或工具调用策略变化
+- Web 设置页、配置接口或配置热加载策略变化
 
 ---
 
@@ -375,3 +452,27 @@ python main.py
 - `JM_PHOTO_THREADS` default `1`
 - `JM_IMAGE_THREADS` default `4`
 - `JM_RETRY_TIMES` default `5`
+
+## 13. 2026-03 Custom HTTP TTS Compatibility
+
+- `custom_http` 支持直接 URL 和 JSON 配置两种模式。
+- JSON 配置支持 `payload`、`headers`、`query`、`timeout_sec`、`inject_fields`。
+- `custom_http` 支持原始音频字节、JSON `audio_base64`、JSON `audio_url` 三种常见返回形态。
+- `custom_http` 可按配置仅注入 `text` 等必要字段，便于兼容 GPT-SoVITS 一类接口。
+- `custom_http` 会容错处理路径字段中的常见 Windows 反斜杠写法，降低 JSON 手填出错概率。
+- 音频缓存文件按真实格式保存，不再强制写成 `.mp3`。
+- `/api/tts` 返回具体缓存文件名，`/api/audio/{file_name}` 会按真实 MIME 类型提供音频。
+
+## 14. 2026-03 Web Settings UI
+
+- 桌宠原 Qt `ControlPanel` 已由独立浏览器设置页替代为主要用户入口。
+- 新增 `/settings` 页面和 `/api/settings/config`、`/api/settings/models-local` 配置接口。
+- 设置页覆盖模型、聊天/TTS、第三方 MCP、形象参数、窗口参数的全量编辑。
+- 桌宠宿主会轮询监听 `pet_config.json` 变化，并自动重新应用模型、窗口和聊天相关配置。
+
+## 15. 2026-03 LangGraph Agent Runtime
+
+- The chat approval workflow now runs on a LangGraph-based state machine.
+- Agent state is persisted through a file-backed LangGraph checkpointer instead of relying on `PENDING_CHAT_TURNS` as the primary source of truth.
+- `POST /api/chat/stream` and `POST /api/chat/approval` keep the same SSE contract while using LangGraph interrupt/resume internally.
+- Existing `MCPBridge` and third-party MCP management stay in place; the refactor only changes agent orchestration.

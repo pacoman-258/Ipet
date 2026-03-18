@@ -1,0 +1,50 @@
+{
+  "model_path": "",
+  "window": {
+    "x": 120,
+    "y": 80,
+    "width": 420,
+    "height": 640,
+    "locked": false
+  },
+  "pet": {
+    "scale": 0.3,
+    "offset_x": 0,
+    "offset_y": 40,
+    "rotation": 0,
+    "opacity": 1,
+    "edit_mode": false,
+    "follow_mouse": true
+  },
+  "chat": {
+    "backend_url": "http://127.0.0.1:8008",
+    "llm_provider": "ollama",
+    "api_base_url": "http://127.0.0.1:11434",
+    "api_key": "",
+    "model": "qwen3:8b",
+    "session_id": "default",
+    "memory_window": 10,
+    "voice": "zh-CN-XiaoxiaoNeural",
+    "rate_pct": 0,
+    "tts_provider": "edge_tts",
+    "tts_provider_url": "",
+    "expression_mode": true,
+    "expression_output_format": "ndjson_v1",
+    "react_enabled": true,
+    "react_visibility": "inline",
+    "max_reasoning_steps": 10,
+    "tooling": {
+      "enabled": true,
+      "mode": "mcp_local_phase2",
+      "file_allowlist": [],
+      "network_allow_domains": [],
+      "max_tool_calls_per_turn": 6,
+      "tool_timeout_sec": 180,
+      "third_party": {
+        "enabled": true,
+        "servers": []
+      }
+    },
+    "system_prompt": ""
+  }
+}

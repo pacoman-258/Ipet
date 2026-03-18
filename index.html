@@ -75,15 +75,17 @@
 
     #chat-toggle {
       position: fixed;
-      right: 14px;
-      bottom: 14px;
+      right: 18px;
+      bottom: 18px;
       z-index: 30;
       border: none;
       border-radius: 999px;
-      padding: 10px 14px;
+      padding: 12px 18px;
       font-size: 13px;
-      color: #fff;
-      background: rgba(20, 20, 20, 0.78);
+      font-weight: 700;
+      color: #7f3d59;
+      background: linear-gradient(180deg, rgba(255, 247, 250, 0.95), rgba(255, 230, 240, 0.92));
+      box-shadow: 0 14px 32px rgba(84, 45, 66, 0.28);
       cursor: pointer;
     }
 
@@ -91,131 +93,292 @@
       position: fixed;
       left: 20px;
       top: 20px;
-      width: min(360px, calc(100vw - 28px));
-      height: min(520px, calc(100vh - 90px));
+      width: min(420px, calc(100vw - 28px));
+      height: min(620px, calc(100vh - 90px));
       z-index: 29;
       display: none;
-      border-radius: 12px;
-      background: rgba(8, 8, 12, 0.78);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      backdrop-filter: blur(8px);
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top right, rgba(255, 255, 255, 0.78), transparent 34%),
+        linear-gradient(180deg, rgba(255, 248, 252, 0.98), rgba(252, 245, 248, 0.95));
+      border: 1px solid rgba(255, 213, 229, 0.88);
+      box-shadow:
+        0 18px 42px rgba(126, 86, 106, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.82);
       overflow: hidden;
-      color: #f2f2f2;
-      font-family: "Consolas", "Microsoft YaHei", sans-serif;
-      min-width: 260px;
-      min-height: 220px;
+      color: #5c3f4a;
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      min-width: 300px;
+      min-height: 280px;
     }
 
     #chat-panel.open {
       display: grid;
-      grid-template-rows: 40px 1fr auto;
+      grid-template-rows: 56px 1fr auto;
     }
 
     #chat-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 10px;
-      font-size: 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 0 18px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #74475b;
+      background: linear-gradient(180deg, rgba(255, 232, 242, 0.92), rgba(255, 244, 248, 0.9));
+      border-bottom: 1px solid rgba(246, 203, 222, 0.9);
       cursor: move;
       user-select: none;
     }
 
     #chat-close {
       border: none;
-      background: transparent;
-      color: #fff;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #8b4b67;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 16px;
     }
 
     #chat-messages {
       overflow: auto;
-      padding: 10px;
+      padding: 16px 16px 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 12px;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(255, 237, 244, 0.78), transparent 22%),
+        linear-gradient(180deg, rgba(255, 251, 252, 0.96), rgba(247, 242, 244, 0.96));
     }
 
     .msg {
       max-width: 88%;
-      font-size: 13px;
-      line-height: 1.45;
-      border-radius: 10px;
-      padding: 7px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: 0 10px 24px rgba(131, 93, 109, 0.12);
       white-space: pre-wrap;
       word-break: break-word;
     }
 
     .msg.user {
       align-self: flex-end;
-      background: rgba(65, 125, 255, 0.7);
+      background: linear-gradient(180deg, rgba(255, 221, 236, 0.98), rgba(248, 195, 221, 0.94));
+      color: #763a5b;
     }
 
-    .msg.bot {
+    .msg.pet {
       align-self: flex-start;
-      background: rgba(255, 255, 255, 0.14);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 248, 0.96));
+      color: #5f4650;
+    }
+
+    .msg.pet.phase-thought {
+      background: linear-gradient(180deg, rgba(255, 248, 231, 0.98), rgba(255, 238, 201, 0.96));
+    }
+
+    .msg.pet.phase-action {
+      background: linear-gradient(180deg, rgba(233, 249, 255, 0.98), rgba(214, 240, 252, 0.96));
+    }
+
+    .msg.pet.phase-done {
+      background: linear-gradient(180deg, rgba(252, 255, 252, 0.98), rgba(239, 249, 242, 0.96));
+    }
+
+    .msg.pending {
+      opacity: 0.78;
+      border-style: dashed;
     }
 
     .msg.error {
       align-self: center;
-      background: rgba(180, 36, 36, 0.65);
+      background: linear-gradient(180deg, rgba(255, 234, 234, 0.98), rgba(255, 210, 210, 0.96));
+      color: #8c3644;
     }
 
-    #chat-input-wrap {
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
-      padding: 8px;
-      display: grid;
-      grid-template-columns: 1fr auto auto;
+    .msg-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+    }
+
+    .speaker-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #7a4a5f;
+      font-weight: 700;
+    }
+
+    .phase-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 62px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      background: rgba(255, 255, 255, 0.8);
+      color: #86586a;
+    }
+
+    .msg-body {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .tool-list {
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
     }
 
+    .tool-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.7);
+      color: #6f5260;
+      font-size: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.78);
+    }
+
+    .approval-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .approval-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #6a4654;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.12);
+    }
+
+    .approval-btn.approve {
+      background: linear-gradient(180deg, rgba(215, 255, 233, 0.98), rgba(190, 245, 216, 0.96));
+      color: #306f50;
+    }
+
+    .approval-btn.reject {
+      background: linear-gradient(180deg, rgba(255, 240, 245, 0.98), rgba(255, 220, 232, 0.96));
+      color: #8a4c68;
+    }
+
+    .approval-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .approval-status {
+      font-size: 12px;
+      color: #765260;
+    }
+
+    #chat-input-wrap {
+      border-top: 1px solid rgba(246, 203, 222, 0.9);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      background: linear-gradient(180deg, rgba(255, 247, 250, 0.96), rgba(255, 240, 246, 0.94));
+    }
+
     #chat-input {
-      min-height: 56px;
-      max-height: 160px;
+      min-height: 70px;
+      max-height: 200px;
       resize: vertical;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 18px;
+      border: 1px solid rgba(238, 203, 221, 0.98);
       outline: none;
-      background: rgba(0, 0, 0, 0.3);
-      color: #fff;
-      padding: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      color: #684a58;
+      padding: 12px 14px;
       font-size: 13px;
       font-family: inherit;
     }
 
-    #chat-send {
-      align-self: end;
-      border: none;
-      border-radius: 8px;
-      background: rgba(65, 125, 255, 0.88);
-      color: #fff;
-      padding: 8px 10px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-
+    #chat-send,
     #chat-stop {
       align-self: end;
       border: none;
-      border-radius: 8px;
-      background: rgba(165, 54, 54, 0.88);
-      color: #fff;
-      padding: 8px 10px;
+      border-radius: 999px;
+      color: #744b5e;
+      padding: 10px 14px;
       cursor: pointer;
       font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 10px 18px rgba(124, 95, 111, 0.15);
     }
 
-    #chat-resizer {
+    #chat-send {
+      background: linear-gradient(180deg, rgba(255, 226, 240, 0.98), rgba(250, 201, 223, 0.96));
+    }
+
+    #chat-stop {
+      background: linear-gradient(180deg, rgba(240, 252, 247, 0.98), rgba(217, 244, 232, 0.96));
+    }
+
+    .chat-resizer-handle {
       position: absolute;
+      z-index: 4;
+      user-select: none;
+    }
+
+    .chat-resizer-right {
+      top: 60px;
+      right: 0;
+      width: 10px;
+      height: calc(100% - 70px);
+      cursor: ew-resize;
+    }
+
+    .chat-resizer-bottom {
+      left: 18px;
+      bottom: 0;
+      width: calc(100% - 36px);
+      height: 10px;
+      cursor: ns-resize;
+    }
+
+    .chat-resizer-corner {
       right: 0;
       bottom: 0;
-      width: 16px;
-      height: 16px;
+      width: 22px;
+      height: 22px;
       cursor: nwse-resize;
-      opacity: 0.55;
-      user-select: none;
+    }
+
+    .chat-resizer-corner::before {
+      content: "";
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      width: 12px;
+      height: 12px;
+      border-right: 2px solid rgba(181, 129, 151, 0.62);
+      border-bottom: 2px solid rgba(181, 129, 151, 0.62);
+      border-radius: 0 0 10px 0;
     }
   </style>
 </head>
@@ -236,7 +399,9 @@
       <button id="chat-send">发送</button>
       <button id="chat-stop">停止语音</button>
     </div>
-    <div id="chat-resizer"></div>
+    <div id="chat-resizer-right" class="chat-resizer-handle chat-resizer-right"></div>
+    <div id="chat-resizer-bottom" class="chat-resizer-handle chat-resizer-bottom"></div>
+    <div id="chat-resizer-corner" class="chat-resizer-handle chat-resizer-corner"></div>
   </div>
 
   <script>
@@ -267,13 +432,23 @@
           tts_provider_url: "",
           expression_mode: true,
           expression_output_format: "ndjson_v1",
+          react_enabled: true,
+          react_visibility: "inline",
+          max_reasoning_steps: 10,
+          available_expressions: [],
+          lip_sync_gain: 1,
+          mouth_parameter_ids: [],
+          mouth_form_parameter_ids: [],
           tooling: {
             enabled: true,
             mode: "mcp_local_phase2",
           },
           system_prompt: "",
+          pet_display_name: "机魂",
         },
       };
+      const DEFAULT_MOUTH_OPEN_PARAMETER_IDS = ["ParamMouthOpenY", "PARAM_MOUTH_OPEN_Y", "ParamMouthOpenX", "LipSync"];
+      const DEFAULT_MOUTH_FORM_PARAMETER_IDS = ["ParamMouthForm", "PARAM_MOUTH_FORM"];
 
       const statusEl = document.getElementById("status");
       const errorEl = document.getElementById("error");
@@ -287,7 +462,10 @@
       const chatSendEl = document.getElementById("chat-send");
       const chatStopEl = document.getElementById("chat-stop");
       const chatHeaderEl = document.getElementById("chat-header");
-      const chatResizerEl = document.getElementById("chat-resizer");
+      const chatTitleEl = document.getElementById("chat-title");
+      const chatResizerRightEl = document.getElementById("chat-resizer-right");
+      const chatResizerBottomEl = document.getElementById("chat-resizer-bottom");
+      const chatResizerCornerEl = document.getElementById("chat-resizer-corner");
 
       let app = null;
       let model = null;
@@ -309,12 +487,14 @@
       let chatPanelPositioned = false;
       let chatDragging = false;
       let chatResizing = false;
+      let chatResizeMode = "";
       let dragStartX = 0;
       let dragStartY = 0;
       let panelStartLeft = 0;
       let panelStartTop = 0;
       let panelStartW = 0;
       let panelStartH = 0;
+      let activeApprovalId = "";
 
       let dragging = false;
       let dragDx = 0;
@@ -368,18 +548,142 @@
         ].join("\n");
       }
 
-      function appendMessage(role, text) {
-        const el = document.createElement("div");
-        el.className = `msg ${role}`;
-        el.textContent = text;
+      function loadChatPanelState() {
+        try {
+          const raw = window.localStorage.getItem("desktopPet.chatPanel");
+          if (!raw) {
+            return null;
+          }
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function saveChatPanelState() {
+        if (!chatPanelPositioned) {
+          return;
+        }
+        const payload = {
+          left: chatPanelEl.offsetLeft,
+          top: chatPanelEl.offsetTop,
+          width: chatPanelEl.offsetWidth,
+          height: chatPanelEl.offsetHeight,
+        };
+        try {
+          window.localStorage.setItem("desktopPet.chatPanel", JSON.stringify(payload));
+        } catch (_) {}
+      }
+
+      function parsePetNameFromPrompt(raw) {
+        const text = String(raw || "").trim();
+        if (!text) {
+          return "";
+        }
+        try {
+          const data = JSON.parse(text);
+          const character = data && typeof data === "object" ? data.character : null;
+          if (character && typeof character === "object") {
+            if (character.name_cn) {
+              return String(character.name_cn).trim();
+            }
+            if (character.name) {
+              return String(character.name).trim();
+            }
+          }
+          if (data && typeof data === "object" && data.name) {
+            return String(data.name).trim();
+          }
+        } catch (_) {}
+        return "";
+      }
+
+      function syncPetDisplayName() {
+        const parsed = parsePetNameFromPrompt(state.chat?.system_prompt || "");
+        const next = String(state.chat?.pet_display_name || parsed || "桌宠").trim() || "桌宠";
+        state.chat.pet_display_name = next;
+        chatTitleEl.textContent = `${next}对话`;
+      }
+
+      function speakerNameForRole(role) {
+        return role === "user" ? "你" : String(state.chat?.pet_display_name || "桌宠");
+      }
+
+      function phaseLabel(phase) {
+        const value = String(phase || "").trim().toLowerCase();
+        if (value === "thought") {
+          return "思考中";
+        }
+        if (value === "action") {
+          return "行动中";
+        }
+        if (value === "done") {
+          return "已完成";
+        }
+        return "";
+      }
+
+      function appendMessage(role, text, options = {}) {
+        const phase = String(options.phase || "").trim().toLowerCase();
+        const el = document.createElement("article");
+        const roleClass = role === "user" ? "user" : role === "error" ? "error" : "pet";
+        el.className = `msg ${roleClass}${phase ? ` phase-${phase}` : ""}${options.pending ? " pending" : ""}`;
+
+        const headEl = document.createElement("div");
+        headEl.className = "msg-head";
+
+        const speakerEl = document.createElement("div");
+        speakerEl.className = "speaker-pill";
+        speakerEl.textContent = String(options.speakerName || speakerNameForRole(role));
+
+        headEl.appendChild(speakerEl);
+        if (phase) {
+          const phaseEl = document.createElement("div");
+          phaseEl.className = "phase-pill";
+          phaseEl.textContent = phaseLabel(phase);
+          headEl.appendChild(phaseEl);
+        }
+
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "msg-body";
+        bodyEl.textContent = String(text || "");
+
+        el.appendChild(headEl);
+        el.appendChild(bodyEl);
         chatMessagesEl.appendChild(el);
         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-        return el;
+        return { el, bodyEl };
+      }
+
+      function updateMessageText(messageRef, text, pending = false) {
+        if (!messageRef || !messageRef.bodyEl) {
+          return;
+        }
+        messageRef.bodyEl.textContent = String(text || "");
+        messageRef.el.classList.toggle("pending", !!pending);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+      }
+
+      function appendToolList(targetEl, tools) {
+        if (!targetEl || !Array.isArray(tools) || !tools.length) {
+          return;
+        }
+        const listEl = document.createElement("div");
+        listEl.className = "tool-list";
+        for (const item of tools) {
+          const chipEl = document.createElement("div");
+          chipEl.className = "tool-chip";
+          chipEl.textContent = String(item.summary || item.name || "");
+          listEl.appendChild(chipEl);
+        }
+        targetEl.appendChild(listEl);
       }
 
       function setChatState(next) {
         chatState = next;
         chatSendEl.disabled = next !== "idle";
+        chatInputEl.disabled = next === "streaming";
       }
 
       function stopSpeaking(manual = false) {
@@ -411,10 +715,23 @@
 
       function openChat() {
         if (!chatPanelPositioned) {
-          const w = Math.min(360, Math.max(260, Math.floor(window.innerWidth * 0.42)));
-          const h = Math.min(520, Math.max(240, Math.floor(window.innerHeight * 0.55)));
-          const left = Math.max(8, window.innerWidth - w - 14);
-          const top = Math.max(8, window.innerHeight - h - 58);
+          const saved = loadChatPanelState();
+          const w = Math.min(
+            Math.max(saved?.width || Math.floor(window.innerWidth * 0.42), 300),
+            Math.max(300, window.innerWidth - 12),
+          );
+          const h = Math.min(
+            Math.max(saved?.height || Math.floor(window.innerHeight * 0.6), 280),
+            Math.max(280, window.innerHeight - 12),
+          );
+          const left = Math.min(
+            Math.max(saved?.left ?? window.innerWidth - w - 24, 8),
+            Math.max(8, window.innerWidth - w - 8),
+          );
+          const top = Math.min(
+            Math.max(saved?.top ?? window.innerHeight - h - 68, 8),
+            Math.max(8, window.innerHeight - h - 8),
+          );
           chatPanelEl.style.width = `${w}px`;
           chatPanelEl.style.height = `${h}px`;
           chatPanelEl.style.left = `${left}px`;
@@ -427,6 +744,7 @@
 
       function closeChat() {
         chatPanelEl.classList.remove("open");
+        saveChatPanelState();
       }
 
       function scheduleNotifyState() {
@@ -461,19 +779,55 @@
         }
         const core = model.internalModel.coreModel;
         const v = clamp(Number(value) || 0, 0, 1);
-        try {
-          if (typeof core.setParameterValueById === "function") {
-            core.setParameterValueById("ParamMouthOpenY", v, 0.8);
-          } else if (typeof core.addParameterValueById === "function") {
-            core.addParameterValueById("ParamMouthOpenY", v * 0.65, 0.8);
+        const openIds = Array.isArray(state.chat?.mouth_parameter_ids) && state.chat.mouth_parameter_ids.length
+          ? state.chat.mouth_parameter_ids
+          : DEFAULT_MOUTH_OPEN_PARAMETER_IDS;
+        const formIds = Array.isArray(state.chat?.mouth_form_parameter_ids) && state.chat.mouth_form_parameter_ids.length
+          ? state.chat.mouth_form_parameter_ids
+          : DEFAULT_MOUTH_FORM_PARAMETER_IDS;
+        for (const parameterId of openIds) {
+          try {
+            if (typeof core.setParameterValueById === "function") {
+              core.setParameterValueById(parameterId, v, 0.8);
+            } else if (typeof core.addParameterValueById === "function") {
+              core.addParameterValueById(parameterId, v * 0.65, 0.8);
+            }
+          } catch (_) {
+            // ignore missing mouth parameters
           }
-        } catch (_) {
-          // ignore lipsync write errors
+        }
+        for (const parameterId of formIds) {
+          try {
+            if (typeof core.setParameterValueById === "function") {
+              core.setParameterValueById(parameterId, (v - 0.5) * 0.35, 0.35);
+            } else if (typeof core.addParameterValueById === "function") {
+              core.addParameterValueById(parameterId, (v - 0.5) * 0.15, 0.35);
+            }
+          } catch (_) {
+            // ignore missing mouth form parameters
+          }
         }
       }
 
-      function triggerExpressionSafe(name) {
+      function resolveExpressionName(name) {
         const expr = String(name || "").trim();
+        if (!expr) {
+          return "";
+        }
+        const available = Array.isArray(state.chat?.available_expressions) ? state.chat.available_expressions : [];
+        if (!available.length) {
+          return expr;
+        }
+        if (available.includes(expr)) {
+          return expr;
+        }
+        const normalized = expr.toLowerCase().replace(/[\s_-]+/g, "");
+        const fallback = available.find((item) => String(item).toLowerCase().replace(/[\s_-]+/g, "") === normalized);
+        return fallback || "";
+      }
+
+      function triggerExpressionSafe(name) {
+        const expr = resolveExpressionName(name);
         if (!expr || !model || typeof model.expression !== "function") {
           return;
         }
@@ -528,7 +882,8 @@
             sum += n * n;
           }
           const rms = Math.sqrt(sum / data.length);
-          const mouth = clamp(rms * 4.8, 0, 1);
+          const lipSyncGain = Math.max(0.5, Number(state.chat?.lip_sync_gain || 1));
+          const mouth = clamp(rms * (4.8 + lipSyncGain * 1.8), 0, 1);
           setMouthOpen(mouth);
           lipsyncRAF = requestAnimationFrame(tick);
         };
@@ -754,18 +1109,204 @@
         await playNextTTSChunk();
       }
 
-      async function streamChat(text) {
+      function appendApprovalBubble(payload) {
+        const message = appendMessage("pet", String(payload.text || ""), {
+          phase: "action",
+          speakerName: speakerNameForRole("pet"),
+        });
+        appendToolList(message.el, Array.isArray(payload.tools) ? payload.tools : []);
+
+        const actionWrap = document.createElement("div");
+        actionWrap.className = "approval-actions";
+
+        const approveBtn = document.createElement("button");
+        approveBtn.className = "approval-btn approve";
+        approveBtn.textContent = "批准";
+
+        const rejectBtn = document.createElement("button");
+        rejectBtn.className = "approval-btn reject";
+        rejectBtn.textContent = "取消";
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "approval-status";
+
+        actionWrap.appendChild(approveBtn);
+        actionWrap.appendChild(rejectBtn);
+        message.el.appendChild(actionWrap);
+        message.el.appendChild(statusEl);
+
+        const setResolved = (text) => {
+          approveBtn.disabled = true;
+          rejectBtn.disabled = true;
+          statusEl.textContent = text;
+        };
+
+        approveBtn.addEventListener("click", async () => {
+          if (!payload.turn_id || activeApprovalId) {
+            return;
+          }
+          activeApprovalId = String(payload.turn_id);
+          appendMessage("user", "好，去做吧。", { speakerName: "你" });
+          setResolved("已批准，正在处理。");
+          await continueApproval(payload.turn_id, true);
+        });
+
+        rejectBtn.addEventListener("click", async () => {
+          if (!payload.turn_id || activeApprovalId) {
+            return;
+          }
+          activeApprovalId = String(payload.turn_id);
+          appendMessage("user", "这次先不要调用工具。", { speakerName: "你" });
+          setResolved("已取消工具调用，正在改为直接回答。");
+          await continueApproval(payload.turn_id, false);
+        });
+
+        return message;
+      }
+
+      async function consumeChatStream(resp) {
+        if (!resp.ok || !resp.body) {
+          throw new Error(`chat http ${resp.status}`);
+        }
+
+        const decoder = new TextDecoder();
+        const reader = resp.body.getReader();
+        let buffer = "";
+        let finalMsg = null;
+        let full = "";
+        let awaitingApproval = false;
+        let receivedDisplaySegment = false;
+        let pendingThought = appendMessage("pet", "少女整理思绪中...", {
+          phase: "thought",
+          speakerName: speakerNameForRole("pet"),
+          pending: true,
+        });
+        receivedStructuredSegment = false;
+
+        const ensureFinalMessage = () => {
+          if (!finalMsg) {
+            finalMsg = appendMessage("pet", "", {
+              phase: "done",
+              speakerName: speakerNameForRole("pet"),
+            });
+          }
+          return finalMsg;
+        };
+
+        const finishPendingThought = (text) => {
+          if (!pendingThought) {
+            return null;
+          }
+          updateMessageText(pendingThought, text, false);
+          const current = pendingThought;
+          pendingThought = null;
+          return current;
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() || "";
+
+          for (const raw of chunks) {
+            const lines = raw.split("\n");
+            let eventName = "";
+            let dataText = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventName = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                dataText += line.slice(5).trim();
+              }
+            }
+            if (!eventName || !dataText) {
+              continue;
+            }
+            const payload = JSON.parse(dataText);
+            if (eventName === "meta") {
+              if (payload.pet_display_name) {
+                state.chat.pet_display_name = String(payload.pet_display_name);
+                syncPetDisplayName();
+              }
+            } else if (eventName === "phase") {
+              const phase = String(payload.phase || "");
+              const text = String(payload.text || "");
+              if (phase === "thought" && pendingThought) {
+                finishPendingThought(text || "我先整理了一下思路。");
+              } else {
+                appendMessage("pet", text, {
+                  phase,
+                  speakerName: speakerNameForRole("pet"),
+                });
+              }
+            } else if (eventName === "approval_required") {
+              awaitingApproval = true;
+              if (pendingThought) {
+                finishPendingThought("我先整理好了接下来的计划。");
+              }
+              appendApprovalBubble(payload);
+            } else if (eventName === "segment") {
+              if (pendingThought) {
+                pendingThought.el.remove();
+                pendingThought = null;
+              }
+              receivedStructuredSegment = true;
+              const segText = String(payload.text || "");
+              const segExpr = payload.expr == null ? null : String(payload.expr || "");
+              if (segText) {
+                enqueueTTSChunk(segText, segExpr);
+              }
+            } else if (eventName === "display_segment") {
+              if (pendingThought) {
+                pendingThought.el.remove();
+                pendingThought = null;
+              }
+              receivedDisplaySegment = true;
+              full += String(payload.text || "");
+              updateMessageText(ensureFinalMessage(), full || "少女思考中...");
+            } else if (eventName === "token") {
+              if (receivedStructuredSegment) {
+                continue;
+              }
+              if (pendingThought) {
+                pendingThought.el.remove();
+                pendingThought = null;
+              }
+              full += payload.delta || "";
+              updateMessageText(ensureFinalMessage(), full || "少女思考中...");
+              feedSpeakBuffer(payload.delta || "");
+            } else if (eventName === "done") {
+              full = payload.text || full;
+              if (pendingThought) {
+                pendingThought.el.remove();
+                pendingThought = null;
+              }
+              if (receivedStructuredSegment && !receivedDisplaySegment && !full) {
+                full = "(语音输出已完成)";
+              }
+              updateMessageText(ensureFinalMessage(), full || "(空响应)");
+            } else if (eventName === "error") {
+              throw new Error(payload.message || "chat stream error");
+            }
+          }
+        }
+
+        if (pendingThought && !awaitingApproval) {
+          pendingThought.el.remove();
+        }
+        return { full, awaitingApproval };
+      }
+
+      async function continueApproval(turnId, approved) {
         const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
         if (!backend) {
           appendMessage("error", "后端地址未配置");
           return;
         }
-        const userText = text.trim();
-        if (!userText) {
-          return;
-        }
-        appendMessage("user", userText);
-        const botMsgEl = appendMessage("bot", "少女思考中...");
         stopSpeaking(false);
         setChatState("streaming");
         streamFinished = false;
@@ -773,8 +1314,59 @@
         pendingSpeakBuffer = "";
         ttsQueue = [];
         ttsPlaying = false;
+        try {
+          const resp = await fetch(`${backend}/api/chat/approval`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ turn_id: turnId, approved: !!approved }),
+          });
+          const result = await consumeChatStream(resp);
+          if (result.awaitingApproval) {
+            setChatState("awaiting_approval");
+            return;
+          }
+          if (!result.awaitingApproval) {
+            streamFinished = true;
+            if (!receivedStructuredSegment) {
+              feedSpeakBuffer("", true);
+            }
+            if (!ttsPlaying && ttsQueue.length === 0) {
+              setChatState("idle");
+            }
+          }
+        } catch (err) {
+          appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
+            speakerName: "系统",
+          });
+          setChatState("idle");
+        } finally {
+          activeApprovalId = "";
+          if (chatState !== "awaiting_approval" && chatState !== "idle" && !ttsPlaying) {
+            setChatState("idle");
+          }
+        }
+      }
 
-        let full = "";
+      async function streamChat(text) {
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          appendMessage("error", "后端地址未配置", { speakerName: "系统" });
+          return;
+        }
+        const userText = text.trim();
+        if (!userText) {
+          return;
+        }
+        appendMessage("user", userText, { speakerName: "你" });
+        stopSpeaking(false);
+        setChatState("streaming");
+        streamFinished = false;
+        receivedStructuredSegment = false;
+        pendingSpeakBuffer = "";
+        ttsQueue = [];
+        ttsPlaying = false;
+        activeApprovalId = "";
+
         try {
           const resp = await fetch(`${backend}/api/chat/stream`, {
             method: "POST",
@@ -786,83 +1378,34 @@
               system_prompt: state.chat.system_prompt || "",
               expression_mode: !!state.chat.expression_mode,
               expression_output_format: state.chat.expression_output_format || "ndjson_v1",
+              available_expressions: Array.isArray(state.chat.available_expressions)
+                ? state.chat.available_expressions
+                : [],
               tools_enabled: !!(state.chat.tooling && state.chat.tooling.enabled),
               tool_mode: (state.chat.tooling && state.chat.tooling.mode) || "mcp_local_phase2",
+              react_enabled: state.chat.react_enabled !== false,
+              react_visibility: state.chat.react_visibility || "inline",
+              max_reasoning_steps: Number(state.chat.max_reasoning_steps || 10),
               llm_provider: state.chat.llm_provider || "ollama",
               api_base_url: state.chat.api_base_url || "",
               api_key: state.chat.api_key || "",
               text: userText,
             }),
           });
-          if (!resp.ok || !resp.body) {
-            throw new Error(`chat http ${resp.status}`);
-          }
 
-          const decoder = new TextDecoder();
-          const reader = resp.body.getReader();
-          let buffer = "";
-
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) {
-              break;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const chunks = buffer.split("\n\n");
-            buffer = chunks.pop() || "";
-
-            for (const raw of chunks) {
-              const lines = raw.split("\n");
-              let eventName = "";
-              let dataText = "";
-              for (const line of lines) {
-                if (line.startsWith("event:")) {
-                  eventName = line.slice(6).trim();
-                } else if (line.startsWith("data:")) {
-                  dataText += line.slice(5).trim();
-                }
-              }
-              if (!eventName || !dataText) {
-                continue;
-              }
-              const payload = JSON.parse(dataText);
-              if (eventName === "segment") {
-                receivedStructuredSegment = true;
-                const segText = String(payload.text || "");
-                const segExpr = payload.expr == null ? null : String(payload.expr || "");
-                if (segText) {
-                  full += segText;
-                  botMsgEl.textContent = full || "少女思考中...";
-                  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-                  enqueueTTSChunk(segText, segExpr);
-                }
-              } else if (eventName === "token") {
-                if (receivedStructuredSegment) {
-                  continue;
-                }
-                full += payload.delta || "";
-                botMsgEl.textContent = full || "少女思考中...";
-                chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-                feedSpeakBuffer(payload.delta || "");
-              } else if (eventName === "done") {
-                full = payload.text || full;
-                botMsgEl.textContent = full || "(空响应)";
-              } else if (eventName === "error") {
-                throw new Error(payload.message || "chat stream error");
-              }
-            }
+          const result = await consumeChatStream(resp);
+          if (result.awaitingApproval) {
+            setChatState("awaiting_approval");
+            return;
           }
         } catch (err) {
-          botMsgEl.className = "msg error";
-          botMsgEl.textContent = `对话失败: ${err?.message || String(err)}`;
+          appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
+            speakerName: "系统",
+          });
           setChatState("idle");
           return;
         }
 
-        if (!full.trim()) {
-          setChatState("idle");
-          return;
-        }
         streamFinished = true;
         if (!receivedStructuredSegment) {
           feedSpeakBuffer("", true);
@@ -922,13 +1465,7 @@
         });
 
         model.on("pointertap", () => {
-          if (typeof model.motion === "function") {
-            try {
-              model.motion("Tap", 0);
-            } catch (_) {
-              // ignore motion errors
-            }
-          }
+          playMotionCompat("Tap", 0);
         });
 
         model.on("hit", (hitAreas) => {
@@ -937,11 +1474,7 @@
           }
           const hasBody = hitAreas.some((v) => String(v).toLowerCase().includes("body"));
           const group = hasBody ? "Tap@Body" : "Tap";
-          try {
-            model.motion(group, 0);
-          } catch (_) {
-            // ignore motion errors
-          }
+          playMotionCompat(group, 0);
         });
       }
 
@@ -1016,6 +1549,33 @@
         return !!(app && app.renderer && app.stage);
       }
 
+      function playMotionCompat(group, index = 0) {
+        if (!model) {
+          return false;
+        }
+
+        if (typeof model.motion === "function") {
+          try {
+            model.motion(group, index);
+            return true;
+          } catch (_) {
+            // fall through to internal manager
+          }
+        }
+
+        const manager = model.internalModel?.motionManager;
+        if (manager && typeof manager.startMotion === "function") {
+          try {
+            manager.startMotion(group, index);
+            return true;
+          } catch (_) {
+            // ignore manager errors
+          }
+        }
+
+        return false;
+      }
+
       async function loadModel(url) {
         if (!url) {
           return;
@@ -1075,6 +1635,7 @@
         if (incoming.chat && typeof incoming.chat === "object") {
           Object.assign(state.chat, incoming.chat);
         }
+        syncPetDisplayName();
 
         const nextModelUrl = incoming.model_url || incoming.modelUrl || state.model_url;
         if (typeof nextModelUrl === "string" && nextModelUrl.length > 0) {
@@ -1174,15 +1735,22 @@
           event.preventDefault();
         });
 
-        chatResizerEl.addEventListener("pointerdown", (event) => {
+        const beginResize = (event, mode) => {
           chatResizing = true;
+          chatResizeMode = mode;
           dragStartX = event.clientX;
           dragStartY = event.clientY;
           panelStartW = chatPanelEl.offsetWidth;
           panelStartH = chatPanelEl.offsetHeight;
-          chatResizerEl.setPointerCapture(event.pointerId);
+          panelStartLeft = chatPanelEl.offsetLeft;
+          panelStartTop = chatPanelEl.offsetTop;
+          event.target.setPointerCapture(event.pointerId);
           event.preventDefault();
-        });
+        };
+
+        chatResizerRightEl.addEventListener("pointerdown", (event) => beginResize(event, "right"));
+        chatResizerBottomEl.addEventListener("pointerdown", (event) => beginResize(event, "bottom"));
+        chatResizerCornerEl.addEventListener("pointerdown", (event) => beginResize(event, "corner"));
 
         window.addEventListener("pointermove", (event) => {
           if (chatDragging) {
@@ -1201,22 +1769,28 @@
           } else if (chatResizing) {
             const dx = event.clientX - dragStartX;
             const dy = event.clientY - dragStartY;
-            const w = Math.min(
-              Math.max(panelStartW + dx, 260),
-              Math.max(260, window.innerWidth - chatPanelEl.offsetLeft),
-            );
-            const h = Math.min(
-              Math.max(panelStartH + dy, 220),
-              Math.max(220, window.innerHeight - chatPanelEl.offsetTop),
-            );
+            const baseLeft = panelStartLeft;
+            const baseTop = panelStartTop;
+            let w = panelStartW;
+            let h = panelStartH;
+            if (chatResizeMode === "right" || chatResizeMode === "corner") {
+              w = Math.min(Math.max(panelStartW + dx, 300), Math.max(300, window.innerWidth - baseLeft));
+            }
+            if (chatResizeMode === "bottom" || chatResizeMode === "corner") {
+              h = Math.min(Math.max(panelStartH + dy, 280), Math.max(280, window.innerHeight - baseTop));
+            }
             chatPanelEl.style.width = `${w}px`;
             chatPanelEl.style.height = `${h}px`;
           }
         });
 
         window.addEventListener("pointerup", () => {
+          if (chatDragging || chatResizing) {
+            saveChatPanelState();
+          }
           chatDragging = false;
           chatResizing = false;
+          chatResizeMode = "";
         });
 
         if (pendingConfig) {
@@ -1229,6 +1803,7 @@
           await loadModel(url);
         }
 
+        syncPetDisplayName();
         refreshStatus();
       }
 
@@ -1250,13 +1825,8 @@
           }
         },
         playMotion(group, index = 0) {
-          if (!model || typeof model.motion !== "function") {
-            return;
-          }
-          try {
-            model.motion(group, index);
-          } catch (err) {
-            showError(`motion error: ${String(err)}`);
+          if (!playMotionCompat(group, index)) {
+            showError(`motion error: unable to play ${String(group)}[${Number(index) || 0}]`);
           }
         },
         playExpression(name) {

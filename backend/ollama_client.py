@@ -7,7 +7,7 @@ import httpx
 
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OPENAI_COMPAT_BASE_URL = "https://gcli.ggchan.dev"
+OPENAI_COMPAT_BASE_URL = "https://api.openai.com/v1"
 
 
 def _norm_provider(provider: str | None) -> str:

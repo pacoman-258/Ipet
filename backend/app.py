@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from .agent_orchestrator import stream_reply
+from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
+from .agent_orchestrator import (
+    execute_tool_calls,
+    decide_turn,
+    stream_final_reply,
+)
 from .mcp_bridge import MCPBridge
+from .mcp.third_party_manager import ThirdPartyMCPManager
 from .models import (
+    ChatApprovalRequest,
     ChatStreamRequest,
-    MCPInstallRequest,
-    MCPRegisterLocalRequest,
+    MCPDeleteRequest,
+    MCPServerCreateRequest,
     MCPToggleRequest,
     ModelListRequest,
     TTSRequest,
@@ -23,7 +33,7 @@ from .tts import (
     DEFAULT_PROVIDER,
     cleanup_old_audio,
     list_supported_providers,
-    synthesize_to_mp3,
+    synthesize_to_audio,
     tts_available,
 )
 
@@ -39,10 +49,19 @@ app.add_middleware(
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
 AUDIO_CACHE_DIR = ROOT_DIR / "backend" / "audio_cache"
+SETTINGS_HTML_PATH = ROOT_DIR / "settings.html"
+SETTINGS_CSS_PATH = ROOT_DIR / "settings.css"
+SETTINGS_JS_PATH = ROOT_DIR / "settings.js"
+RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
+AGENT_GRAPH_CHECKPOINT_PATH = ROOT_DIR / "backend" / "agent_graph_state.pkl"
 SESSION_STORE: dict[str, list[dict[str, str]]] = {}
+PENDING_CHAT_TURNS: dict[str, dict[str, Any]] = {}
 EXPR_OUTPUT_FORMAT = "ndjson_v1"
+DISPLAY_TEXT_DELIMITER = "**"
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
+AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
 EXPR_PROTOCOL_PROMPT = (
     "Output must be strict NDJSON. One JSON object per line with no extra commentary. "
     "Only fields expr and text are allowed. expr is an expression name string (or empty), "
@@ -60,9 +79,53 @@ DEFAULT_TOOLING = {
         "servers": [],
     },
 }
+TTS_PRESETS = {
+    "basic": {
+        "label": "自定义 HTTP 模板",
+        "config": {
+            "url": "http://127.0.0.1:9880/",
+            "payload": {},
+            "headers": {},
+            "query": {},
+            "timeout_sec": 60,
+        },
+    },
+    "gpt_sovits": {
+        "label": "GPT-SoVITS 预设",
+        "config": {
+            "url": "http://127.0.0.1:9880/",
+            "payload": {
+                "text_language": "ja",
+                "refer_wav_path": "tts-voice-model/reference.wav",
+                "prompt_text": "请改成参考音频对应文本",
+                "prompt_language": "ja",
+            },
+            "inject_fields": ["text"],
+            "headers": {},
+            "query": {},
+            "timeout_sec": 300,
+        },
+    },
+}
+MCP_SERVER_PRESETS = {
+    "playwright_mcp": {
+        "label": "Playwright MCP",
+        "name": "playwright_mcp",
+        "config": {
+            "mcpServers": {
+                "playwright_mcp": {
+                    "command": "npx",
+                    "args": ["@playwright/mcp@latest"],
+                }
+            }
+        },
+        "notes": "Uses the official Playwright MCP pattern from the repository README.",
+    }
+}
 
 _MCP_BRIDGE: MCPBridge | None = None
 _MCP_CONFIG_SNAPSHOT = ""
+_AGENT_GRAPH_RUNTIME: AgentGraphRuntime | None = None
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +150,323 @@ def _load_full_config() -> dict[str, Any]:
 
 def _save_full_config(config: dict[str, Any]) -> None:
     CONFIG_PATH.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _canonicalize_model_source_path(model_path: Path) -> Path:
+    original = model_path
+    candidate = model_path
+    while candidate.name.endswith(AUTOGEN_MODEL_SUFFIX):
+        source_name = f"{candidate.name[: -len(AUTOGEN_MODEL_SUFFIX)]}.json"
+        source_path = candidate.with_name(source_name)
+        if source_path.exists():
+            candidate = source_path
+            continue
+        return original
+    return candidate
+
+
+def _resolve_model_path(path_text: str) -> Path:
+    text = str(path_text or "").strip()
+    if not text:
+        return ROOT_DIR
+    model_path = Path(text)
+    if not model_path.is_absolute():
+        model_path = ROOT_DIR / model_path
+    try:
+        resolved = model_path.resolve()
+    except Exception:
+        resolved = model_path
+    return _canonicalize_model_source_path(resolved)
+
+
+def _find_default_model() -> str:
+    preferred = ROOT_DIR / "model" / "hiyori_free_zh" / "runtime" / "hiyori_free_t08.model3.json"
+    if preferred.exists():
+        return preferred.relative_to(ROOT_DIR).as_posix()
+    for candidate in (ROOT_DIR / "model").rglob("*.model3.json"):
+        try:
+            return candidate.relative_to(ROOT_DIR).as_posix()
+        except ValueError:
+            return str(candidate)
+    return ""
+
+
+def _default_settings_config() -> dict[str, Any]:
+    return {
+        "model_path": _find_default_model(),
+        "window": {
+            "x": 120,
+            "y": 80,
+            "width": 420,
+            "height": 640,
+            "locked": False,
+        },
+        "pet": {
+            "scale": 0.3,
+            "offset_x": 0,
+            "offset_y": 40,
+            "rotation": 0.0,
+            "opacity": 1.0,
+            "edit_mode": False,
+            "follow_mouse": True,
+        },
+        "chat": {
+            "backend_url": DEFAULT_BACKEND_URL,
+            "llm_provider": "ollama",
+            "api_base_url": "http://127.0.0.1:11434",
+            "api_key": "",
+            "model": "qwen3:8b",
+            "session_id": "default",
+            "memory_window": 10,
+            "voice": "zh-CN-XiaoxiaoNeural",
+            "rate_pct": 0,
+            "tts_provider": DEFAULT_PROVIDER,
+            "tts_provider_url": "",
+            "expression_mode": True,
+            "expression_output_format": EXPR_OUTPUT_FORMAT,
+            "react_enabled": True,
+            "react_visibility": "inline",
+            "max_reasoning_steps": 10,
+            "tooling": json.loads(json.dumps(DEFAULT_TOOLING)),
+            "system_prompt": "",
+        },
+    }
+
+
+def _normalize_model_path(path_text: str) -> str:
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    resolved = _resolve_model_path(text)
+    try:
+        return resolved.relative_to(ROOT_DIR).as_posix()
+    except Exception:
+        try:
+            return str(resolved)
+        except Exception:
+            return text
+
+
+def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
+    merged = _deep_merge(_default_settings_config(), config if isinstance(config, dict) else {})
+    merged["model_path"] = _normalize_model_path(merged.get("model_path", ""))
+
+    chat = merged.get("chat", {})
+    if not isinstance(chat, dict):
+        chat = _default_settings_config()["chat"]
+        merged["chat"] = chat
+    chat["backend_url"] = str(chat.get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
+    chat["llm_provider"] = str(chat.get("llm_provider") or "ollama").strip() or "ollama"
+    chat["api_base_url"] = str(chat.get("api_base_url") or "").strip()
+    chat["api_key"] = str(chat.get("api_key") or "")
+    chat["model"] = str(chat.get("model") or "qwen3:8b").strip() or "qwen3:8b"
+    chat["session_id"] = str(chat.get("session_id") or "default").strip() or "default"
+    try:
+        chat["memory_window"] = max(1, min(50, int(chat.get("memory_window", 10))))
+    except Exception:
+        chat["memory_window"] = 10
+    chat["voice"] = str(chat.get("voice") or "zh-CN-XiaoxiaoNeural").strip() or "zh-CN-XiaoxiaoNeural"
+    try:
+        chat["rate_pct"] = max(-50, min(100, int(chat.get("rate_pct", 0))))
+    except Exception:
+        chat["rate_pct"] = 0
+    provider = str(chat.get("tts_provider") or DEFAULT_PROVIDER).strip() or DEFAULT_PROVIDER
+    chat["tts_provider"] = provider if provider in list_supported_providers() else DEFAULT_PROVIDER
+    chat["tts_provider_url"] = str(chat.get("tts_provider_url") or "").strip()
+    chat["expression_mode"] = bool(chat.get("expression_mode", True))
+    chat["expression_output_format"] = str(chat.get("expression_output_format") or EXPR_OUTPUT_FORMAT).strip() or EXPR_OUTPUT_FORMAT
+    chat["react_enabled"] = bool(chat.get("react_enabled", True))
+    chat["react_visibility"] = "inline"
+    try:
+        chat["max_reasoning_steps"] = max(1, min(12, int(chat.get("max_reasoning_steps", 10))))
+    except Exception:
+        chat["max_reasoning_steps"] = 10
+    chat["system_prompt"] = str(chat.get("system_prompt") or "")
+
+    window = merged.get("window", {})
+    if not isinstance(window, dict):
+        window = _default_settings_config()["window"]
+        merged["window"] = window
+    for key, fallback in {"x": 120, "y": 80, "width": 420, "height": 640}.items():
+        try:
+            window[key] = int(window.get(key, fallback))
+        except Exception:
+            window[key] = fallback
+    window["width"] = max(120, window["width"])
+    window["height"] = max(120, window["height"])
+    window["locked"] = bool(window.get("locked", False))
+
+    pet = merged.get("pet", {})
+    if not isinstance(pet, dict):
+        pet = _default_settings_config()["pet"]
+        merged["pet"] = pet
+    for key, fallback in {"scale": 0.3, "rotation": 0.0, "opacity": 1.0}.items():
+        try:
+            pet[key] = float(pet.get(key, fallback))
+        except Exception:
+            pet[key] = fallback
+    pet["scale"] = max(0.05, min(5.0, pet["scale"]))
+    pet["opacity"] = max(0.1, min(1.0, pet["opacity"]))
+    for key, fallback in {"offset_x": 0, "offset_y": 40}.items():
+        try:
+            pet[key] = int(pet.get(key, fallback))
+        except Exception:
+            pet[key] = fallback
+    pet["edit_mode"] = bool(pet.get("edit_mode", False))
+    pet["follow_mouse"] = bool(pet.get("follow_mouse", True))
+
+    tooling = chat.get("tooling", {})
+    if not isinstance(tooling, dict):
+        tooling = json.loads(json.dumps(DEFAULT_TOOLING))
+        chat["tooling"] = tooling
+    tooling = _deep_merge(DEFAULT_TOOLING, tooling)
+    tooling["enabled"] = bool(tooling.get("enabled", True))
+    tooling["mode"] = "mcp_local_phase2"
+    allowlist = tooling.get("file_allowlist") or [str(ROOT_DIR)]
+    tooling["file_allowlist"] = [str(item) for item in allowlist if str(item).strip()] or [str(ROOT_DIR)]
+    domains = tooling.get("network_allow_domains") or []
+    tooling["network_allow_domains"] = [str(item).strip() for item in domains if str(item).strip()]
+    try:
+        tooling["max_tool_calls_per_turn"] = max(1, int(tooling.get("max_tool_calls_per_turn", 6)))
+    except Exception:
+        tooling["max_tool_calls_per_turn"] = 6
+    try:
+        tooling["tool_timeout_sec"] = int(tooling.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC))
+    except Exception:
+        tooling["tool_timeout_sec"] = DEFAULT_TOOL_TIMEOUT_SEC
+    _migrate_tool_timeout(tooling)
+    third_party = tooling.get("third_party", {})
+    if not isinstance(third_party, dict):
+        third_party = {"enabled": True, "servers": []}
+    third_party["enabled"] = bool(third_party.get("enabled", True))
+    servers = third_party.get("servers", [])
+    third_party["servers"] = servers if isinstance(servers, list) else []
+    tooling["third_party"] = third_party
+    chat["tooling"] = tooling
+    return merged
+
+
+def _load_settings_config() -> dict[str, Any]:
+    return _normalize_settings_config(_load_full_config())
+
+
+def _extract_motion_groups(model_json: dict[str, Any]) -> dict[str, Any]:
+    groups = model_json.get("FileReferences", {}).get("Motions")
+    if isinstance(groups, dict):
+        return groups
+    groups = model_json.get("Motions", {})
+    return groups if isinstance(groups, dict) else {}
+
+
+def _infer_motion_group(file_name: str) -> str:
+    name = file_name[:-13] if file_name.lower().endswith(".motion3.json") else file_name
+    token = next((part for part in name.replace("-", "_").split("_") if part), "")
+    if not token:
+        return "Auto"
+    mapping = {"idle": "Idle", "tap": "Tap", "flick": "Flick"}
+    return mapping.get(token.lower(), token[:1].upper() + token[1:])
+
+
+def _scan_motion_groups(model_path: Path) -> dict[str, list[dict[str, str]]]:
+    model_dir = model_path.parent
+    groups: dict[str, list[dict[str, str]]] = {}
+    for file_path in sorted(model_dir.rglob("*.motion3.json")):
+        try:
+            rel = file_path.relative_to(model_dir).as_posix()
+        except ValueError:
+            rel = file_path.name
+        group = _infer_motion_group(file_path.name)
+        groups.setdefault(group, []).append({"File": rel})
+    return groups
+
+
+def _extract_expression_defs(model_json: dict[str, Any]) -> list[dict[str, Any]]:
+    exprs = model_json.get("FileReferences", {}).get("Expressions")
+    return exprs if isinstance(exprs, list) else []
+
+
+def _scan_expression_defs(model_path: Path) -> list[dict[str, str]]:
+    model_dir = model_path.parent
+    defs: list[dict[str, str]] = []
+    for file_path in sorted(model_dir.rglob("*.exp3.json")):
+        try:
+            rel = file_path.relative_to(model_dir).as_posix()
+        except ValueError:
+            rel = file_path.name
+        name = file_path.name[:-10] if file_path.name.lower().endswith(".exp3.json") else file_path.stem
+        defs.append({"Name": name, "File": rel})
+    return defs
+
+
+def _model_metadata(path_text: str) -> dict[str, Any]:
+    model_path = _resolve_model_path(path_text)
+    metadata = {
+        "motions": [],
+        "expressions": [],
+        "motion_actions": [],
+        "expression_actions": [],
+    }
+    if not model_path.exists():
+        return metadata
+    try:
+        model_json = json.loads(model_path.read_text(encoding="utf-8"))
+    except Exception:
+        model_json = {}
+    motion_groups = _extract_motion_groups(model_json) or _scan_motion_groups(model_path)
+    expr_defs = _extract_expression_defs(model_json) or _scan_expression_defs(model_path)
+    motion_labels: list[str] = []
+    motion_actions: list[dict[str, Any]] = []
+    for group_name, entries in motion_groups.items():
+        if isinstance(entries, list):
+            for idx, _ in enumerate(entries):
+                label = f"{group_name}[{idx}]"
+                motion_labels.append(label)
+                motion_actions.append({"group": str(group_name), "index": idx, "label": label})
+    expr_labels = [str(item.get("Name") or "").strip() for item in expr_defs if isinstance(item, dict)]
+    metadata["motions"] = [item for item in motion_labels if item]
+    metadata["expressions"] = [item for item in expr_labels if item]
+    metadata["motion_actions"] = motion_actions
+    metadata["expression_actions"] = [{"name": item, "label": item} for item in metadata["expressions"]]
+    return metadata
+
+
+def _list_local_models() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    model_root = ROOT_DIR / "model"
+    if not model_root.exists():
+        return items
+    seen: set[str] = set()
+    for path in sorted(model_root.rglob("*.model3.json")):
+        if path.name.endswith(".autogen.model3.json"):
+            continue
+        try:
+            rel = path.relative_to(ROOT_DIR).as_posix()
+        except ValueError:
+            rel = str(path)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        meta = _model_metadata(rel)
+        items.append(
+            {
+                "path": rel,
+                "label": f"{path.parent.name} / {path.name}",
+                "motions": meta["motions"],
+                "expressions": meta["expressions"],
+                "motion_actions": meta["motion_actions"],
+                "expression_actions": meta["expression_actions"],
+            }
+        )
+    return items
+
+
+def _write_runtime_command(command_type: str, payload: dict[str, Any]) -> None:
+    command = {
+        "nonce": str(time.time_ns()),
+        "type": command_type,
+        "payload": payload,
+    }
+    RUNTIME_COMMAND_PATH.write_text(json.dumps(command, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_runtime_tooling_config() -> dict[str, Any]:
@@ -135,6 +515,128 @@ def _get_mcp_bridge(force_reload: bool = False) -> MCPBridge:
     return _MCP_BRIDGE
 
 
+def _agent_graph_dependencies() -> GraphDependencies:
+    return GraphDependencies(
+        decide_turn=decide_turn,
+        execute_tool_calls=execute_tool_calls,
+        get_mcp_bridge=_get_mcp_bridge,
+        load_tooling_config=_load_runtime_tooling_config,
+    )
+
+
+def _get_agent_graph_runtime(force_reload: bool = False) -> AgentGraphRuntime:
+    global _AGENT_GRAPH_RUNTIME
+    if force_reload or _AGENT_GRAPH_RUNTIME is None:
+        _AGENT_GRAPH_RUNTIME = AgentGraphRuntime(
+            dependency_provider=_agent_graph_dependencies,
+            checkpoint_path=AGENT_GRAPH_CHECKPOINT_PATH,
+        )
+    return _AGENT_GRAPH_RUNTIME
+
+
+def _reset_agent_graph_runtime() -> None:
+    global _AGENT_GRAPH_RUNTIME
+    _AGENT_GRAPH_RUNTIME = None
+    PENDING_CHAT_TURNS.clear()
+    try:
+        AGENT_GRAPH_CHECKPOINT_PATH.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _iter_registered_mcp_server_configs() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    tooling_cfg = _load_runtime_tooling_config()
+    third_cfg = tooling_cfg.get("third_party", {})
+    if not isinstance(third_cfg, dict):
+        third_cfg = {"enabled": False, "servers": []}
+    configured = third_cfg.get("servers", [])
+    manager = ThirdPartyMCPManager(ROOT_DIR)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if isinstance(configured, list):
+        for item in configured:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            manifest_path = str(item.get("manifest_path") or "").strip()
+            if not name or not manifest_path:
+                continue
+            out.append(dict(item))
+            seen.add(name)
+    for manifest in manager.list_manifests():
+        name = str(manifest.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        out.append(
+            {
+                "name": name,
+                "enabled": bool(manifest.get("enabled", False)),
+                "source_type": "local",
+                "source": str(manifest.get("server_dir", "")),
+                "manifest_path": str(manifest.get("manifest_path", "")),
+                "runtime": str(manifest.get("runtime", "")),
+            }
+        )
+    return third_cfg, out
+
+
+def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
+    third_cfg, server_cfgs = _iter_registered_mcp_server_configs()
+    third_enabled = bool(third_cfg.get("enabled", False))
+    cached_status = {}
+    global _MCP_BRIDGE
+    if _MCP_BRIDGE is not None:
+        cached_status = {
+            str(name): dict(status)
+            for name, status in getattr(_MCP_BRIDGE, "third_party_status", {}).items()
+            if isinstance(status, dict)
+        }
+
+    manager = ThirdPartyMCPManager(ROOT_DIR)
+    servers: list[dict[str, Any]] = []
+    for server_cfg in server_cfgs:
+        name = str(server_cfg.get("name") or "").strip()
+        if not name:
+            continue
+        if name in cached_status:
+            cached = dict(cached_status[name])
+            cached.setdefault("name", name)
+            servers.append(cached)
+            continue
+
+        status = {
+            "name": name,
+            "enabled": bool(server_cfg.get("enabled", True)),
+            "version": "",
+            "runtime": str(server_cfg.get("runtime", "")),
+            "source_type": str(server_cfg.get("source_type", "local")),
+            "source": str(server_cfg.get("source", "")),
+            "manifest_path": str(server_cfg.get("manifest_path", "")),
+            "install_status": "ready" if str(server_cfg.get("runtime", "")).strip() else "unknown",
+            "health_status": "disabled" if (not third_enabled or not bool(server_cfg.get("enabled", True))) else "not_loaded",
+            "tools": [],
+            "error": "",
+        }
+        try:
+            manifest = manager.load_manifest(status["manifest_path"])
+            status["version"] = str(manifest.get("version", ""))
+            status["runtime"] = str(manifest.get("runtime", status["runtime"]))
+            status["enabled"] = bool(manifest.get("enabled", status["enabled"]))
+            status["manifest_path"] = str(manifest.get("manifest_path", status["manifest_path"]))
+            if not third_enabled or not status["enabled"]:
+                status["health_status"] = "disabled"
+            else:
+                install_type = str(manifest.get("install", {}).get("type") or "").strip()
+                status["install_status"] = "ready" if install_type else status["install_status"]
+                status["health_status"] = "not_loaded"
+        except Exception as exc:
+            status["install_status"] = "failed"
+            status["health_status"] = "failed"
+            status["error"] = str(exc)
+        servers.append(status)
+    return servers
+
+
 def _update_third_party_config(entry: dict[str, Any]) -> None:
     config = _load_full_config()
     chat = config.setdefault("chat", {})
@@ -175,11 +677,189 @@ def _set_third_party_enabled(name: str, enabled: bool) -> None:
     _save_full_config(config)
 
 
+def _remove_third_party_config(name: str) -> None:
+    config = _load_full_config()
+    chat = config.setdefault("chat", {})
+    tooling = chat.setdefault("tooling", json.loads(json.dumps(DEFAULT_TOOLING)))
+    third = tooling.setdefault("third_party", {"enabled": True, "servers": []})
+    servers = third.setdefault("servers", [])
+    target_name = str(name or "").strip()
+    third["servers"] = [
+        item
+        for item in servers
+        if not (isinstance(item, dict) and str(item.get("name") or "").strip() == target_name)
+    ]
+    _save_full_config(config)
+
+
+def _parse_mcp_server_config_json(raw_text: str) -> dict[str, Any]:
+    text = str(raw_text or "").strip()
+    if not text:
+        raise ValueError("mcp server config cannot be empty")
+    try:
+        data = json.loads(text)
+    except Exception as exc:
+        raise ValueError(f"invalid mcp server json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("mcp server json must be an object")
+    return data
+
+
+def _infer_mcp_server_name(config_payload: dict[str, Any], preferred_name: str = "") -> str:
+    explicit = str(preferred_name or "").strip()
+    if explicit:
+        return explicit
+    if isinstance(config_payload, dict) and isinstance(config_payload.get("mcpServers"), dict):
+        servers = config_payload.get("mcpServers") or {}
+        if len(servers) == 1:
+            return str(next(iter(servers.keys())) or "").strip()
+    if isinstance(config_payload, dict):
+        command = str(config_payload.get("command") or "").strip()
+        if command:
+            return Path(command).name
+    return ""
+
+
+def _ensure_mcp_server_from_draft(name: str, config_json: str) -> dict[str, Any] | None:
+    raw_json = str(config_json or "").strip()
+    if not raw_json:
+        return None
+    config_payload = _parse_mcp_server_config_json(raw_json)
+    inferred_name = _infer_mcp_server_name(config_payload, name)
+    _third_cfg, registered_servers = _iter_registered_mcp_server_configs()
+    existing = next(
+        (
+            dict(item)
+            for item in registered_servers
+            if isinstance(item, dict) and str(item.get("name") or "").strip() == inferred_name
+        ),
+        None,
+    )
+    if existing:
+        return existing
+    manager = ThirdPartyMCPManager(ROOT_DIR)
+    manifest_path = manager.register_server_config(config_payload, inferred_name)
+    try:
+        tooling_cfg = _load_runtime_tooling_config()
+        timeout_sec = int(tooling_cfg.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC))
+        manager.prepare_server(manifest_path, timeout_sec=timeout_sec)
+        manifest = manager.load_manifest(manifest_path)
+    except Exception as exc:
+        try:
+            manager.delete_server(manifest_path)
+        except Exception:
+            pass
+        raise RuntimeError(f"mcp registration failed during initial package download or initialization: {exc}") from exc
+    entry = {
+        "name": manifest["name"],
+        "enabled": True,
+        "source_type": "config",
+        "source": "frontend_config",
+        "manifest_path": manifest["manifest_path"],
+        "runtime": manifest["runtime"],
+    }
+    _update_third_party_config(entry)
+    return entry
+
+
 def _trim_messages(messages: list[dict[str, str]], memory_window: int) -> list[dict[str, str]]:
     limit = max(1, memory_window) * 2
     if len(messages) <= limit:
         return messages
     return messages[-limit:]
+
+
+def _extract_pet_display_name(system_prompt: str) -> str:
+    raw = str(system_prompt or "").strip()
+    if not raw:
+        return "桌宠"
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return "桌宠"
+    if not isinstance(data, dict):
+        return "桌宠"
+    character = data.get("character")
+    if isinstance(character, dict):
+        for key in ("name_cn", "name"):
+            value = str(character.get(key) or "").strip()
+            if value:
+                return value
+    for key in ("name", "title"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return "桌宠"
+
+
+def _phase_payload(phase: str, text: str, speaker: str = "pet") -> dict[str, Any]:
+    return {
+        "phase": str(phase or "").strip(),
+        "text": _sanitize_ai_text(str(text or "")).strip(),
+        "speaker": str(speaker or "pet"),
+    }
+
+
+def _store_pending_turn(turn_id: str, payload: dict[str, Any]) -> None:
+    entry = dict(payload)
+    entry["created_at"] = time.time()
+    PENDING_CHAT_TURNS[turn_id] = entry
+
+
+def _pop_pending_turn(turn_id: str) -> dict[str, Any] | None:
+    return PENDING_CHAT_TURNS.pop(str(turn_id or "").strip(), None)
+
+
+def _purge_stale_pending_turns(max_age_sec: int = 1800) -> None:
+    now = time.time()
+    stale = [
+        key
+        for key, value in PENDING_CHAT_TURNS.items()
+        if now - float(value.get("created_at", now)) > max_age_sec
+    ]
+    for key in stale:
+        PENDING_CHAT_TURNS.pop(key, None)
+
+
+def _tool_call_signature(name: str, arguments: dict[str, Any] | None) -> str:
+    try:
+        args_text = json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        args_text = json.dumps(str(arguments or {}), ensure_ascii=False)
+    return f"{str(name or '').strip()}:{args_text}"
+
+
+def _filter_repeated_tool_calls(
+    tool_calls: list[Any],
+    seen_signatures: set[str],
+) -> list[Any]:
+    filtered: list[Any] = []
+    local_seen: set[str] = set()
+    for item in tool_calls:
+        name = str(getattr(item, "name", "") or "").strip()
+        arguments = getattr(item, "arguments", {}) or {}
+        if not name:
+            continue
+        signature = _tool_call_signature(name, arguments)
+        if signature in seen_signatures or signature in local_seen:
+            continue
+        local_seen.add(signature)
+        filtered.append(item)
+    return filtered
+
+
+def _continuation_recheck_prompt(user_text: str, remaining_steps: int) -> str:
+    clean_text = _sanitize_ai_text(str(user_text or "")).strip()
+    lines = [
+        "Re-check whether the user's original request is truly finished.",
+        "Do not say the task is complete if any requested step is still unfinished.",
+        "If the user asked for a sequence of actions, and only part of the sequence has been completed, you must request the next tool step.",
+        f"Remaining approved tool steps available: {max(0, int(remaining_steps))}.",
+        "Return JSON only in the normal decision format.",
+    ]
+    if clean_text:
+        lines.append(f"Original user request: {clean_text}")
+    return "\n".join(lines)
 
 
 def _sse(event: str, payload: dict[str, Any]) -> str:
@@ -190,11 +870,29 @@ def _sanitize_ai_text(text: str) -> str:
     return (text or "").replace("*", "").replace("#", "")
 
 
-def _build_system_prompt(user_prompt: str, expression_mode: bool, output_format: str) -> str:
+def _build_expression_protocol_prompt(available_expressions: list[str] | None = None) -> str:
+    allowed = [str(item).strip() for item in (available_expressions or []) if str(item).strip()]
+    if allowed:
+        expr_list = ", ".join(json.dumps(item, ensure_ascii=False) for item in allowed)
+        return (
+            f"{EXPR_PROTOCOL_PROMPT} "
+            f"Available expr values are: {expr_list}. "
+            'If none fits, use "" for expr.'
+        )
+    return f'{EXPR_PROTOCOL_PROMPT} If no matching expression exists, use "" for expr.'
+
+
+def _build_system_prompt(
+    user_prompt: str,
+    expression_mode: bool,
+    output_format: str,
+    available_expressions: list[str] | None = None,
+) -> str:
     base = (user_prompt or "").strip()
     if not expression_mode or output_format != EXPR_OUTPUT_FORMAT:
         return base
-    return f"{base}\n\n{EXPR_PROTOCOL_PROMPT}" if base else EXPR_PROTOCOL_PROMPT
+    protocol_prompt = _build_expression_protocol_prompt(available_expressions)
+    return f"{base}\n\n{protocol_prompt}" if base else protocol_prompt
 
 
 def _parse_ndjson_line(line: str) -> dict[str, str | None] | None:
@@ -216,6 +914,25 @@ def _parse_ndjson_line(line: str) -> dict[str, str | None] | None:
         return {"text": fallback, "expr": None} if fallback else None
 
 
+def _append_display_line(current_text: str, raw_line: str) -> tuple[str, str | None]:
+    cleaned = _sanitize_ai_text((raw_line or "").rstrip("\r"))
+    if cleaned.strip():
+        chunk = f"\n{cleaned}" if current_text else cleaned
+        return current_text + chunk, chunk
+    if current_text and not current_text.endswith("\n"):
+        return current_text + "\n", "\n"
+    return current_text, None
+
+
+def _split_display_delimiter(raw_line: str) -> tuple[bool, str]:
+    source = (raw_line or "").rstrip("\r")
+    stripped = source.lstrip()
+    if not stripped.startswith(DISPLAY_TEXT_DELIMITER):
+        return False, source
+    remainder = stripped[len(DISPLAY_TEXT_DELIMITER) :].lstrip()
+    return True, remainder
+
+
 async def _iter_ndjson_segments(delta_stream):
     buffer = ""
     async for delta in delta_stream:
@@ -235,27 +952,133 @@ async def _iter_ndjson_segments(delta_stream):
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _MCP_BRIDGE
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
         except Exception:
             pass
         _MCP_BRIDGE = None
+    _AGENT_GRAPH_RUNTIME = None
 
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     ollama_ok = await is_ollama_alive(OLLAMA_BASE_URL)
     tooling_cfg = _load_runtime_tooling_config()
-    bridge = _get_mcp_bridge()
+    third_enabled = bool(tooling_cfg.get("third_party", {}).get("enabled", False))
+    third_party_health: dict[str, Any] = {"enabled": third_enabled, "servers": [], "online": 0}
+    global _MCP_BRIDGE
+    if _MCP_BRIDGE is not None:
+        try:
+            third_party_health = _MCP_BRIDGE.health()
+        except Exception as exc:
+            third_party_health = {
+                "enabled": third_enabled,
+                "servers": [],
+                "online": 0,
+                "error": str(exc),
+            }
     return {
         "ok": True,
         "ollama": ollama_ok,
         "tts": tts_available(DEFAULT_PROVIDER),
         "tools": bool(tooling_cfg.get("enabled", True)),
-        "third_party_mcp": bridge.health(),
+        "third_party_mcp": third_party_health,
     }
+
+
+@app.get("/settings")
+async def settings_page() -> FileResponse:
+    return FileResponse(SETTINGS_HTML_PATH, media_type="text/html; charset=utf-8")
+
+
+@app.get("/settings.css")
+async def settings_css() -> FileResponse:
+    return FileResponse(SETTINGS_CSS_PATH, media_type="text/css; charset=utf-8")
+
+
+@app.get("/settings.js")
+async def settings_js() -> FileResponse:
+    return FileResponse(SETTINGS_JS_PATH, media_type="application/javascript; charset=utf-8")
+
+
+@app.get("/api/settings/config")
+async def get_settings_config() -> dict[str, Any]:
+    return {
+        "config": _load_settings_config(),
+        "defaults": _default_settings_config(),
+        "tts_presets": TTS_PRESETS,
+        "mcp_server_presets": MCP_SERVER_PRESETS,
+    }
+
+
+@app.put("/api/settings/config")
+async def put_settings_config(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        draft = payload.get("mcp_draft")
+        if isinstance(draft, dict):
+            draft_name = str(draft.get("name") or "").strip()
+            draft_json = str(draft.get("config_json") or "")
+            if draft_json.strip():
+                _ensure_mcp_server_from_draft(draft_name, draft_json)
+    previous = _load_settings_config()
+    raw_config = payload.get("config", payload) if isinstance(payload, dict) else {}
+    if not isinstance(raw_config, dict):
+        raise HTTPException(status_code=400, detail="settings payload must be an object")
+    merged = _deep_merge(_load_settings_config(), raw_config)
+    normalized = _normalize_settings_config(merged)
+    _save_full_config(normalized)
+    if normalized.get("model_path") and normalized.get("model_path") != previous.get("model_path"):
+        _write_runtime_command("load_model", {"model_path": normalized["model_path"]})
+    _get_mcp_bridge(force_reload=True)
+    return {
+        "config": normalized,
+        "defaults": _default_settings_config(),
+        "tts_presets": TTS_PRESETS,
+        "mcp_server_presets": MCP_SERVER_PRESETS,
+    }
+
+
+@app.get("/api/settings/models-local")
+async def get_local_models() -> dict[str, Any]:
+    return {"models": _list_local_models()}
+
+
+@app.post("/api/settings/preview-action")
+async def post_settings_preview_action(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="preview payload must be an object")
+
+    command_type = str(payload.get("type") or "").strip()
+    if command_type not in {"load_model", "play_motion", "play_expression"}:
+        raise HTTPException(status_code=400, detail="unsupported preview action")
+
+    command_payload: dict[str, Any] = {}
+    model_path = _normalize_model_path(payload.get("model_path", ""))
+    if model_path:
+        command_payload["model_path"] = model_path
+
+    if command_type == "load_model":
+        if not model_path:
+            raise HTTPException(status_code=400, detail="model_path is required")
+    elif command_type == "play_motion":
+        group = str(payload.get("group") or "").strip()
+        if not group:
+            raise HTTPException(status_code=400, detail="group is required")
+        command_payload["group"] = group
+        try:
+            command_payload["index"] = max(0, int(payload.get("index", 0)))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid motion index: {exc}") from exc
+    else:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        command_payload["name"] = name
+
+    _write_runtime_command(command_type, command_payload)
+    return {"ok": True, "command": {"type": command_type, "payload": command_payload}}
 
 
 @app.post("/api/chat/stream")
@@ -266,20 +1089,21 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
 
     async def event_gen():
         session_id = req.session_id or "default"
+        pet_display_name = _extract_pet_display_name(req.system_prompt)
         tooling_cfg = _load_runtime_tooling_config()
         history = SESSION_STORE.get(session_id, [])
         history = _trim_messages(history, req.memory_window)
         working = history + [{"role": "user", "content": text}]
-        prompt_msgs = working
+        max_reasoning_steps = max(1, min(12, int(req.max_reasoning_steps or 10)))
         sys_prompt = _build_system_prompt(
             req.system_prompt,
             bool(req.expression_mode),
             str(req.expression_output_format or ""),
+            req.available_expressions,
         )
-        if sys_prompt:
-            prompt_msgs = [{"role": "system", "content": sys_prompt}] + working
-
+        prompt_msgs = [{"role": "system", "content": sys_prompt}] + working if sys_prompt else list(working)
         tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
+
         yield _sse(
             "meta",
             {
@@ -288,34 +1112,123 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 "llm_provider": req.llm_provider,
                 "tool_mode": req.tool_mode,
                 "tools_enabled": tools_enabled,
+                "react_enabled": bool(req.react_enabled),
+                "react_visibility": str(req.react_visibility or "inline"),
+                "pet_display_name": pet_display_name,
             },
         )
+
         full_answer = ""
+        cleanup_turn_id = ""
         try:
-            mcp_bridge = _get_mcp_bridge() if tools_enabled else None
-            delta_stream = stream_reply(
-                messages=prompt_msgs,
+            outcome = await _get_agent_graph_runtime().start_turn(
+                {
+                    "turn_id": uuid4().hex,
+                    "session_id": session_id,
+                    "memory_window": int(req.memory_window),
+                    "model": req.model,
+                    "llm_provider": req.llm_provider,
+                    "api_base_url": req.api_base_url,
+                    "api_key": req.api_key,
+                    "system_prompt": req.system_prompt,
+                    "expression_mode": bool(req.expression_mode),
+                    "expression_output_format": str(req.expression_output_format or ""),
+                    "available_expressions": list(req.available_expressions),
+                    "tools_enabled": tools_enabled,
+                    "react_enabled": bool(req.react_enabled),
+                    "max_reasoning_steps": max_reasoning_steps,
+                    "reasoning_step": 1,
+                    "user_text": text,
+                    "pet_display_name": pet_display_name,
+                    "working_messages": working,
+                    "prompt_messages": prompt_msgs,
+                }
+            )
+            if outcome.thought_summary:
+                yield _sse("phase", _phase_payload("thought", outcome.thought_summary))
+            if outcome.is_pending and outcome.approval_request:
+                yield _sse(
+                    "approval_required",
+                    {
+                        "turn_id": outcome.turn_id,
+                        "phase": "action",
+                        "text": str(outcome.approval_request.get("text") or ""),
+                        "tools": list(outcome.approval_request.get("tools") or []),
+                        "speaker": str(outcome.approval_request.get("speaker") or "pet"),
+                    },
+                )
+                return
+
+            cleanup_turn_id = outcome.turn_id
+            event_stream = stream_final_reply(
+                messages=outcome.final_messages or prompt_msgs,
                 model=req.model,
-                tools_enabled=tools_enabled,
-                mcp_bridge=mcp_bridge,
-                max_tool_calls=int(tooling_cfg.get("max_tool_calls_per_turn", 6)),
                 llm_provider=req.llm_provider,
                 api_base_url=req.api_base_url,
                 api_key=req.api_key,
             )
             use_ndjson = bool(req.expression_mode) and str(req.expression_output_format or "") == EXPR_OUTPUT_FORMAT
             if use_ndjson:
-                async for segment in _iter_ndjson_segments(delta_stream):
-                    seg_text = str(segment.get("text") or "")
-                    seg_expr = segment.get("expr")
-                    if not seg_text:
+                buffer = ""
+                spoken_answer = ""
+                display_answer = ""
+                display_mode = False
+                async for item in event_stream:
+                    if str(item.get("type") or "") != "final_delta":
                         continue
-                    full_answer += seg_text
-                    yield _sse("segment", {"text": seg_text, "expr": seg_expr})
-                    yield _sse("token", {"delta": seg_text})
+                    delta = str(item.get("delta") or "")
+                    if not delta:
+                        continue
+                    buffer += delta
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        if not display_mode:
+                            display_mode, remainder = _split_display_delimiter(line)
+                            if display_mode:
+                                if remainder:
+                                    display_answer, display_chunk = _append_display_line(display_answer, remainder)
+                                    if display_chunk is not None:
+                                        yield _sse("display_segment", {"text": display_chunk})
+                                continue
+                        if display_mode:
+                            display_answer, display_chunk = _append_display_line(display_answer, line)
+                            if display_chunk is not None:
+                                yield _sse("display_segment", {"text": display_chunk})
+                            continue
+                        segment = _parse_ndjson_line(line)
+                        if segment is None:
+                            continue
+                        seg_text = str(segment.get("text") or "")
+                        seg_expr = segment.get("expr")
+                        if seg_text:
+                            spoken_answer += seg_text
+                            yield _sse("segment", {"text": seg_text, "expr": seg_expr})
+                if buffer.strip():
+                    if not display_mode:
+                        display_mode, remainder = _split_display_delimiter(buffer)
+                        if display_mode:
+                            if remainder:
+                                display_answer, display_chunk = _append_display_line(display_answer, remainder)
+                                if display_chunk is not None:
+                                    yield _sse("display_segment", {"text": display_chunk})
+                        else:
+                            segment = _parse_ndjson_line(buffer)
+                            if segment is not None:
+                                seg_text = str(segment.get("text") or "")
+                                seg_expr = segment.get("expr")
+                                if seg_text:
+                                    spoken_answer += seg_text
+                                    yield _sse("segment", {"text": seg_text, "expr": seg_expr})
+                    elif display_mode:
+                        display_answer, display_chunk = _append_display_line(display_answer, buffer)
+                        if display_chunk is not None:
+                            yield _sse("display_segment", {"text": display_chunk})
+                full_answer = display_answer or spoken_answer
             else:
-                async for delta in delta_stream:
-                    clean_delta = _sanitize_ai_text(delta)
+                async for item in event_stream:
+                    if str(item.get("type") or "") != "final_delta":
+                        continue
+                    clean_delta = _sanitize_ai_text(str(item.get("delta") or ""))
                     if not clean_delta:
                         continue
                     full_answer += clean_delta
@@ -328,6 +1241,132 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
         updated = working + [{"role": "assistant", "content": full_answer}]
         SESSION_STORE[session_id] = _trim_messages(updated, req.memory_window)
         yield _sse("done", {"text": full_answer})
+        if cleanup_turn_id:
+            _get_agent_graph_runtime().delete_turn(cleanup_turn_id)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.post("/api/chat/approval")
+async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
+    runtime = _get_agent_graph_runtime()
+    if runtime.get_pending_approval(req.turn_id) is None:
+        raise HTTPException(status_code=404, detail="pending turn not found or already handled")
+
+    async def event_gen():
+        full_answer = ""
+        cleanup_turn_id = req.turn_id
+        state: dict[str, Any] = {}
+        try:
+            outcome = await runtime.resume_turn(ApprovalDecision(turn_id=req.turn_id, approved=req.approved))
+            state = outcome.state
+            if req.approved:
+                yield _sse("phase", _phase_payload("action", "好呀，那我这就开始处理这件事。"))
+                if outcome.thought_summary:
+                    yield _sse("phase", _phase_payload("thought", outcome.thought_summary))
+            else:
+                yield _sse("phase", _phase_payload("action", "那这次我先不调用工具，直接按现有信息回答你。"))
+            if outcome.is_pending and outcome.approval_request:
+                cleanup_turn_id = ""
+                yield _sse(
+                    "approval_required",
+                    {
+                        "turn_id": outcome.turn_id,
+                        "phase": "action",
+                        "text": str(outcome.approval_request.get("text") or ""),
+                        "tools": list(outcome.approval_request.get("tools") or []),
+                        "speaker": str(outcome.approval_request.get("speaker") or "pet"),
+                    },
+                )
+                return
+
+            event_stream = stream_final_reply(
+                messages=outcome.final_messages or list(state.get("prompt_messages") or []),
+                model=str(state.get("model") or "qwen3:8b"),
+                llm_provider=str(state.get("llm_provider") or "ollama"),
+                api_base_url=str(state.get("api_base_url") or ""),
+                api_key=str(state.get("api_key") or ""),
+            )
+            use_ndjson = bool(state.get("expression_mode", True)) and str(
+                state.get("expression_output_format") or ""
+            ) == EXPR_OUTPUT_FORMAT
+            if use_ndjson:
+                buffer = ""
+                spoken_answer = ""
+                display_answer = ""
+                display_mode = False
+                async for item in event_stream:
+                    if str(item.get("type") or "") != "final_delta":
+                        continue
+                    delta = str(item.get("delta") or "")
+                    if not delta:
+                        continue
+                    buffer += delta
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        if not display_mode:
+                            display_mode, remainder = _split_display_delimiter(line)
+                            if display_mode:
+                                if remainder:
+                                    display_answer, display_chunk = _append_display_line(display_answer, remainder)
+                                    if display_chunk is not None:
+                                        yield _sse("display_segment", {"text": display_chunk})
+                                continue
+                        if display_mode:
+                            display_answer, display_chunk = _append_display_line(display_answer, line)
+                            if display_chunk is not None:
+                                yield _sse("display_segment", {"text": display_chunk})
+                            continue
+                        segment = _parse_ndjson_line(line)
+                        if segment is None:
+                            continue
+                        seg_text = str(segment.get("text") or "")
+                        seg_expr = segment.get("expr")
+                        if seg_text:
+                            spoken_answer += seg_text
+                            yield _sse("segment", {"text": seg_text, "expr": seg_expr})
+                if buffer.strip():
+                    if not display_mode:
+                        display_mode, remainder = _split_display_delimiter(buffer)
+                        if display_mode:
+                            if remainder:
+                                display_answer, display_chunk = _append_display_line(display_answer, remainder)
+                                if display_chunk is not None:
+                                    yield _sse("display_segment", {"text": display_chunk})
+                        else:
+                            segment = _parse_ndjson_line(buffer)
+                            if segment is not None:
+                                seg_text = str(segment.get("text") or "")
+                                seg_expr = segment.get("expr")
+                                if seg_text:
+                                    spoken_answer += seg_text
+                                    yield _sse("segment", {"text": seg_text, "expr": seg_expr})
+                    elif display_mode:
+                        display_answer, display_chunk = _append_display_line(display_answer, buffer)
+                        if display_chunk is not None:
+                            yield _sse("display_segment", {"text": display_chunk})
+                full_answer = display_answer or spoken_answer
+            else:
+                async for item in event_stream:
+                    if str(item.get("type") or "") != "final_delta":
+                        continue
+                    clean_delta = _sanitize_ai_text(str(item.get("delta") or ""))
+                    if not clean_delta:
+                        continue
+                    full_answer += clean_delta
+                    yield _sse("token", {"delta": clean_delta})
+        except Exception as exc:
+            yield _sse("error", {"message": str(exc)})
+            return
+
+        full_answer = _sanitize_ai_text(full_answer)
+        updated = list(state.get("working_messages") or []) + [{"role": "assistant", "content": full_answer}]
+        session_id = str(state.get("session_id") or "default")
+        memory_window = int(state.get("memory_window") or 10)
+        SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
+        yield _sse("done", {"text": full_answer})
+        if cleanup_turn_id:
+            runtime.delete_turn(cleanup_turn_id)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
@@ -343,8 +1382,7 @@ async def models(req: ModelListRequest) -> dict[str, Any]:
 
 @app.get("/api/mcp/servers")
 async def list_mcp_servers() -> dict[str, Any]:
-    bridge = _get_mcp_bridge()
-    return {"servers": bridge.list_servers()}
+    return {"servers": _lightweight_mcp_server_list()}
 
 
 @app.get("/api/mcp/health")
@@ -353,46 +1391,35 @@ async def mcp_health() -> dict[str, Any]:
     return bridge.health()
 
 
-@app.post("/api/mcp/install")
-async def install_mcp(req: MCPInstallRequest) -> dict[str, Any]:
+@app.post("/api/mcp/create-config")
+async def create_mcp_from_config(req: MCPServerCreateRequest) -> dict[str, Any]:
     try:
-        bridge = _get_mcp_bridge()
-        result = bridge.install_from_git(req.repo_url, req.name)
-        _update_third_party_config(
-            {
-                "name": result["name"],
-                "enabled": True,
-                "source_type": "git",
-                "source": req.repo_url,
-                "manifest_path": result["manifest_path"],
-                "runtime": result["runtime"],
-            }
-        )
+        result = _ensure_mcp_server_from_draft(req.name, req.config_json)
         bridge = _get_mcp_bridge(force_reload=True)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"install mcp failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"create mcp from config failed: {exc}") from exc
+    if not result:
+        raise HTTPException(status_code=400, detail="empty mcp server config")
     return {"ok": True, "server": next((s for s in bridge.list_servers() if s.get("name") == result["name"]), result)}
 
 
-@app.post("/api/mcp/register-local")
-async def register_local_mcp(req: MCPRegisterLocalRequest) -> dict[str, Any]:
+@app.post("/api/mcp/delete")
+async def delete_mcp(req: MCPDeleteRequest) -> dict[str, Any]:
     try:
         bridge = _get_mcp_bridge()
-        result = bridge.register_local(req.path, req.name)
-        _update_third_party_config(
-            {
-                "name": result["name"],
-                "enabled": True,
-                "source_type": "local",
-                "source": req.path,
-                "manifest_path": result["manifest_path"],
-                "runtime": result["runtime"],
-            }
-        )
+        server_cfg = bridge.get_server_config(req.name)
+        if not server_cfg:
+            raise FileNotFoundError(f"server not found: {req.name}")
+        manifest_path = str(server_cfg.get("manifest_path") or "").strip()
+        if not manifest_path:
+            raise FileNotFoundError(f"manifest path missing for server: {req.name}")
+        bridge.stop()
+        bridge.manager.delete_server(manifest_path)
+        _remove_third_party_config(req.name)
         bridge = _get_mcp_bridge(force_reload=True)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"register local mcp failed: {exc}") from exc
-    return {"ok": True, "server": next((s for s in bridge.list_servers() if s.get("name") == result["name"]), result)}
+        raise HTTPException(status_code=500, detail=f"delete mcp failed: {exc}") from exc
+    return {"ok": True, "name": req.name, "servers": bridge.list_servers()}
 
 
 @app.post("/api/mcp/toggle")
@@ -424,7 +1451,7 @@ async def tts(req: TTSRequest) -> dict[str, Any]:
 
     cleanup_old_audio(AUDIO_CACHE_DIR)
     try:
-        file_id, _, duration_ms = await synthesize_to_mp3(
+        result = await synthesize_to_audio(
             text=text,
             cache_dir=AUDIO_CACHE_DIR,
             voice=req.voice,
@@ -436,16 +1463,20 @@ async def tts(req: TTSRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {exc}") from exc
     return {
-        "audio_url": f"/api/audio/{file_id}.mp3",
-        "duration_ms": duration_ms,
+        "audio_url": f"/api/audio/{result.path.name}",
+        "duration_ms": result.duration_ms,
         "provider": provider,
         "supported_providers": list_supported_providers(),
     }
 
 
-@app.get("/api/audio/{file_id}.mp3")
-async def get_audio(file_id: str) -> FileResponse:
-    path = AUDIO_CACHE_DIR / f"{file_id}.mp3"
+@app.get("/api/audio/{file_name}")
+async def get_audio(file_name: str) -> FileResponse:
+    safe_name = Path(file_name).name
+    if safe_name != file_name:
+        raise HTTPException(status_code=400, detail="invalid audio file name")
+    path = AUDIO_CACHE_DIR / safe_name
     if not path.exists():
         raise HTTPException(status_code=404, detail="audio file not found")
-    return FileResponse(path, media_type="audio/mpeg", filename=path.name)
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)
