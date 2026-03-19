@@ -2,6 +2,8 @@
 
 AI Assistant Desktop Pet is a local-first desktop companion built with Python, Qt WebEngine, FastAPI, and Live2D-style character assets. It combines a floating desktop pet UI with chat, TTS, expression control, and an MCP-based tool system for controllable agent workflows.
 
+For coding agents, see `AGENTS.md`.
+
 ## Highlights
 
 - Desktop pet shell with Qt / WebEngine rendering and a browser-based settings page
@@ -15,9 +17,12 @@ AI Assistant Desktop Pet is a local-first desktop companion built with Python, Q
 
 - `main.py`: desktop host application
 - `backend/`: FastAPI backend, agent orchestration, MCP bridge, TTS, and model APIs
-- `index.html`, `settings.html`, `settings.css`, `settings.js`: frontend UI
+- `index.html`, `settings.html`, `settings.css`, `settings.js`: frontend UI entry files kept at the repository root for the current desktop/runtime loading path
+- `tests/`: regression and integration-oriented unit tests
+- `scripts/debug/`: one-off debug and smoke-test scripts
+- `docs/`: operational docs, reports, and subagent playbooks
+- `prompts/`: reusable prompt or character JSON assets
 - `third_party_mcp/`: third-party MCP manifest area and examples
-- `test_*.py`: regression and integration-oriented unit tests
 
 ## Requirements
 
@@ -65,7 +70,7 @@ python main.py
 Run the test suite with:
 
 ```powershell
-python -m unittest discover -p "test*.py" -v
+python -m unittest discover -s tests -p "test*.py" -v
 ```
 
 ## GitHub Hygiene
@@ -79,6 +84,8 @@ The public repository excludes:
 
 ## Documentation
 
-- Development notes: `DEVELOPMENT_REPORT.md`
+- Project structure guide: `docs/PROJECT_STRUCTURE.md`
+- Development notes: `docs/reports/DEVELOPMENT_REPORT.md`
 - Chinese README: `README.zh-CN.md`
-
+- Subagent quick guide: `docs/SUBAGENTS.md`
+- Subagent prompt library: `docs/subagents/`

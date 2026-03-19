@@ -12,6 +12,27 @@
   <script src="./js/index.min.js"></script>
 
   <style>
+    :root {
+      --shell-border: rgba(255, 255, 255, 0.42);
+      --shell-shadow: 0 22px 48px rgba(16, 24, 40, 0.18);
+      --panel-bg: linear-gradient(180deg, #f7fafd, #edf2f7);
+      --panel-border: rgba(201, 213, 229, 0.95);
+      --panel-text: #243447;
+      --panel-muted: #637487;
+      --panel-strong: #10243b;
+      --accent: #5c8dff;
+      --accent-soft: rgba(92, 141, 255, 0.16);
+      --accent-strong: #3b6fe6;
+      --success-soft: rgba(81, 184, 129, 0.18);
+      --warning-soft: rgba(237, 170, 74, 0.2);
+      --danger-soft: rgba(210, 72, 72, 0.22);
+      --backdrop-overlay: 0.42;
+      --stage-bg:
+        radial-gradient(circle at 18% 16%, rgba(143, 197, 255, 0.28), transparent 24%),
+        radial-gradient(circle at 82% 12%, rgba(255, 205, 227, 0.28), transparent 22%),
+        linear-gradient(180deg, rgba(233, 240, 251, 0.96), rgba(219, 230, 245, 0.92));
+    }
+
     html,
     body {
       width: 100%;
@@ -22,10 +43,49 @@
       user-select: none;
     }
 
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--panel-text);
+    }
+
+    #window-background {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      z-index: 0;
+      background: var(--stage-bg);
+    }
+
+    #window-background-image {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      display: none;
+      filter: saturate(1.02) contrast(1.04);
+      transform: scale(1.02);
+    }
+
+    #window-background.has-image #window-background-image {
+      display: block;
+    }
+
+    #window-background-overlay {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(14, 26, 43, calc(var(--backdrop-overlay) * 0.5)), rgba(14, 26, 43, calc(var(--backdrop-overlay) * 0.9)));
+    }
+
     #canvas {
+      position: fixed;
+      inset: 0;
       width: 100%;
       height: 100%;
       display: block;
+      z-index: 1;
     }
 
     #window-frame {
@@ -114,7 +174,7 @@
 
     #chat-panel.open {
       display: grid;
-      grid-template-rows: 56px 1fr auto;
+      grid-template-rows: 56px auto 1fr auto;
     }
 
     #chat-header {
@@ -131,6 +191,13 @@
       user-select: none;
     }
 
+    .chat-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #chat-skills-toggle,
     #chat-close {
       border: none;
       width: 30px;
@@ -140,6 +207,156 @@
       color: #8b4b67;
       cursor: pointer;
       font-size: 16px;
+    }
+
+    #chat-skills-toggle {
+      width: auto;
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    #chat-skills-toggle:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    #chat-mode-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid rgba(246, 203, 222, 0.78);
+      background: linear-gradient(180deg, rgba(255, 245, 249, 0.96), rgba(255, 251, 252, 0.94));
+    }
+
+    .chat-mode-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #7b5466;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.08);
+      cursor: pointer;
+      transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+    }
+
+    .chat-mode-btn.is-active {
+      color: #754258;
+      background: linear-gradient(180deg, rgba(255, 224, 237, 0.98), rgba(249, 203, 223, 0.96));
+      box-shadow: 0 10px 18px rgba(135, 90, 111, 0.14);
+      transform: translateY(-1px);
+    }
+
+    #chat-skills-drawer {
+      position: absolute;
+      top: 102px;
+      right: 12px;
+      width: min(280px, calc(100% - 24px));
+      max-height: min(420px, calc(100% - 186px));
+      display: none;
+      overflow: auto;
+      z-index: 35;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 252, 253, 0.98), rgba(250, 243, 246, 0.96));
+      border: 1px solid rgba(238, 203, 221, 0.98);
+      box-shadow: 0 18px 36px rgba(109, 77, 92, 0.18);
+      color: #654858;
+    }
+
+    #chat-skills-drawer.open {
+      display: block;
+    }
+
+    .chat-skills-head {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(238, 203, 221, 0.88);
+    }
+
+    .chat-skills-head strong {
+      display: block;
+      font-size: 13px;
+      color: #74475b;
+    }
+
+    .chat-skills-head span {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #8b6677;
+    }
+
+    .chat-skills-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px 10px;
+    }
+
+    .chat-skill-action {
+      border: none;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #74475b;
+      background: rgba(255, 255, 255, 0.86);
+      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.1);
+      cursor: pointer;
+    }
+
+    #chat-skills-status {
+      padding: 0 14px 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #8b6677;
+    }
+
+    #chat-skills-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 14px 14px;
+    }
+
+    .chat-skill-card {
+      border-radius: 16px;
+      border: 1px solid rgba(241, 213, 226, 0.92);
+      background: rgba(255, 255, 255, 0.86);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .chat-skill-card h4 {
+      margin: 0;
+      font-size: 13px;
+      color: #6f4458;
+    }
+
+    .chat-skill-card p {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #856575;
+    }
+
+    .chat-skill-meta {
+      font-size: 11px;
+      color: #9b7485;
+    }
+
+    .chat-skill-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #70495b;
     }
 
     #chat-messages {
@@ -380,9 +597,172 @@
       border-bottom: 2px solid rgba(181, 129, 151, 0.62);
       border-radius: 0 0 10px 0;
     }
+
+    #window-frame {
+      border: 1px solid var(--shell-border);
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+        0 0 0 1px rgba(19, 34, 58, 0.12);
+      border-radius: 24px;
+      background: rgba(13, 22, 37, 0.06);
+    }
+
+    #status,
+    #error {
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      box-shadow: var(--shell-shadow);
+    }
+
+    #status {
+      color: #f6fbff;
+      background: rgba(10, 21, 37, 0.34);
+      min-width: 208px;
+      padding: 10px 12px;
+    }
+
+    #error {
+      color: #fff4f4;
+      background: rgba(123, 29, 29, 0.42);
+    }
+
+    #chat-toggle {
+      color: #f7fbff;
+      background: linear-gradient(180deg, rgba(62, 112, 220, 0.96), rgba(46, 89, 191, 0.94));
+      box-shadow: 0 20px 42px rgba(33, 66, 134, 0.34);
+      letter-spacing: 0.02em;
+    }
+
+    #chat-panel {
+      border-radius: 28px;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      box-shadow: 0 26px 54px rgba(15, 23, 42, 0.18);
+      color: var(--panel-text);
+    }
+
+    #chat-header,
+    #chat-mode-bar,
+    #chat-input-wrap,
+    #chat-skills-drawer,
+    .chat-skill-card,
+    .msg,
+    #chat-input,
+    #chat-send,
+    #chat-stop,
+    .chat-skill-action,
+    .chat-mode-btn,
+    #chat-skills-toggle,
+    #chat-close {
+      color: var(--panel-text);
+    }
+
+    #chat-header {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(243, 248, 254, 0.44));
+      border-bottom: 1px solid rgba(255, 255, 255, 0.42);
+      color: var(--panel-strong);
+    }
+
+    #chat-skills-toggle,
+    #chat-close,
+    .chat-mode-btn,
+    .chat-skill-action,
+    #chat-send,
+    #chat-stop {
+      background: #ffffff;
+      border: 1px solid rgba(203, 213, 225, 0.95);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+    }
+
+    #chat-mode-bar {
+      gap: 10px;
+      padding: 14px 18px 12px;
+      background: linear-gradient(180deg, #f5f8fc, #eef3f8);
+      border-bottom: 1px solid rgba(215, 225, 236, 0.95);
+    }
+
+    .chat-mode-btn.is-active,
+    #chat-send {
+      color: #f8fbff;
+      background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+      border-color: rgba(70, 119, 233, 0.4);
+    }
+
+    #chat-messages {
+      background: linear-gradient(180deg, #f2f6fb, #ebf1f7);
+      padding: 18px 18px 14px;
+      gap: 14px;
+    }
+
+    .msg {
+      border-radius: 24px;
+      border: 1px solid rgba(214, 223, 234, 0.95);
+      box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+    }
+
+    .msg.pet {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 248, 253, 0.88));
+    }
+
+    .msg.pet.phase-thought {
+      background: linear-gradient(180deg, rgba(236, 243, 255, 0.98), rgba(221, 234, 255, 0.94));
+    }
+
+    .msg.pet.phase-action {
+      background: linear-gradient(180deg, rgba(255, 248, 231, 0.98), rgba(255, 239, 204, 0.94));
+    }
+
+    .msg.pet.phase-done {
+      background: linear-gradient(180deg, rgba(239, 251, 244, 0.98), rgba(224, 245, 232, 0.94));
+    }
+
+    .msg.user {
+      background: linear-gradient(180deg, rgba(97, 140, 242, 0.98), rgba(77, 118, 223, 0.94));
+      color: #f8fbff;
+    }
+
+    #chat-input-wrap {
+      padding: 16px 18px 18px;
+      gap: 10px;
+      background: linear-gradient(180deg, #f5f8fc, #eef3f8);
+      border-top: 1px solid rgba(215, 225, 236, 0.95);
+    }
+
+    #chat-input {
+      background: #ffffff;
+      border: 1px solid rgba(197, 214, 235, 0.86);
+      color: var(--panel-text);
+    }
+
+    #chat-stop {
+      background: #ffffff;
+    }
+
+    #chat-skills-drawer {
+      top: 110px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, #f8fbff, #eef4fa);
+      border: 1px solid rgba(210, 220, 232, 0.95);
+      box-shadow: 0 20px 38px rgba(15, 23, 42, 0.14);
+    }
+
+    .chat-skill-card {
+      background: #ffffff;
+      border: 1px solid rgba(212, 225, 241, 0.88);
+    }
+
+    .chat-skill-meta,
+    #chat-skills-status,
+    .chat-skills-head span {
+      color: var(--panel-muted);
+    }
   </style>
 </head>
 <body>
+  <div id="window-background">
+    <img id="window-background-image" alt="" />
+    <div id="window-background-overlay"></div>
+  </div>
   <canvas id="canvas"></canvas>
   <div id="window-frame"></div>
   <div id="status">loading...</div>
@@ -391,7 +771,27 @@
   <div id="chat-panel">
     <div id="chat-header">
       <span id="chat-title">桌宠对话</span>
-      <button id="chat-close">×</button>
+      <div class="chat-header-actions">
+        <button id="chat-skills-toggle">技能</button>
+        <button id="chat-close">×</button>
+      </div>
+    </div>
+    <div id="chat-mode-bar">
+      <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct模式</button>
+      <button class="chat-mode-btn" data-chat-mode="chat">聊天模式</button>
+      <button class="chat-mode-btn" data-chat-mode="skill">Skill模式</button>
+    </div>
+    <div id="chat-skills-drawer">
+      <div class="chat-skills-head">
+        <strong>Agent Skills</strong>
+        <span>这里管理当前聊天会话生效的技能。不会立即改写配置文件。</span>
+      </div>
+      <div class="chat-skills-actions">
+        <button id="chat-skills-refresh" class="chat-skill-action">刷新技能</button>
+        <button id="chat-skills-reset" class="chat-skill-action">恢复默认</button>
+      </div>
+      <div id="chat-skills-status">正在加载技能列表...</div>
+      <div id="chat-skills-list"></div>
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-wrap">
@@ -418,12 +818,21 @@
         opacity: 1,
         edit_mode: false,
         follow_mouse: true,
+        background_enabled: false,
+        background_image: "",
+        background_image_url: "",
+        background_overlay_opacity: 0.42,
         chat: {
           backend_url: "http://127.0.0.1:8008",
           llm_provider: "ollama",
           api_base_url: "http://127.0.0.1:11434",
           api_key: "",
           model: "qwen3:8b",
+          router_enabled: false,
+          router_llm_provider: "ollama",
+          router_api_base_url: "http://127.0.0.1:11434",
+          router_api_key: "",
+          router_model: "qwen3:8b",
           session_id: "default",
           memory_window: 10,
           voice: "zh-CN-XiaoxiaoNeural",
@@ -443,6 +852,10 @@
             enabled: true,
             mode: "mcp_local_phase2",
           },
+          skills: {
+            enabled: true,
+            default_active_ids: [],
+          },
           system_prompt: "",
           pet_display_name: "机魂",
         },
@@ -450,6 +863,8 @@
       const DEFAULT_MOUTH_OPEN_PARAMETER_IDS = ["ParamMouthOpenY", "PARAM_MOUTH_OPEN_Y", "ParamMouthOpenX", "LipSync"];
       const DEFAULT_MOUTH_FORM_PARAMETER_IDS = ["ParamMouthForm", "PARAM_MOUTH_FORM"];
 
+      const backgroundLayerEl = document.getElementById("window-background");
+      const backgroundImageEl = document.getElementById("window-background-image");
       const statusEl = document.getElementById("status");
       const errorEl = document.getElementById("error");
       const canvas = document.getElementById("canvas");
@@ -457,6 +872,13 @@
       const chatToggleEl = document.getElementById("chat-toggle");
       const chatPanelEl = document.getElementById("chat-panel");
       const chatCloseEl = document.getElementById("chat-close");
+      const chatSkillsToggleEl = document.getElementById("chat-skills-toggle");
+      const chatModeButtons = Array.from(document.querySelectorAll(".chat-mode-btn"));
+      const chatSkillsDrawerEl = document.getElementById("chat-skills-drawer");
+      const chatSkillsRefreshEl = document.getElementById("chat-skills-refresh");
+      const chatSkillsResetEl = document.getElementById("chat-skills-reset");
+      const chatSkillsStatusEl = document.getElementById("chat-skills-status");
+      const chatSkillsListEl = document.getElementById("chat-skills-list");
       const chatMessagesEl = document.getElementById("chat-messages");
       const chatInputEl = document.getElementById("chat-input");
       const chatSendEl = document.getElementById("chat-send");
@@ -495,11 +917,30 @@
       let panelStartW = 0;
       let panelStartH = 0;
       let activeApprovalId = "";
+      let chatSkillCatalog = [];
+      let chatSkillDefaultIds = [];
+      let chatSelectedSkillIds = [];
+      let chatSkillsLoaded = false;
+      let currentChatMode = "react";
 
       let dragging = false;
       let dragDx = 0;
       let dragDy = 0;
       let notifyTimer = null;
+
+      backgroundImageEl.addEventListener("load", () => {
+        backgroundLayerEl.classList.add("has-image");
+        backgroundImageEl.style.display = "block";
+      });
+
+      backgroundImageEl.addEventListener("error", () => {
+        backgroundLayerEl.classList.remove("has-image");
+        backgroundImageEl.style.display = "none";
+        backgroundImageEl.removeAttribute("src");
+        if (state.background_enabled && state.background_image) {
+          logToQt(`background image unavailable: ${state.background_image}`);
+        }
+      });
 
       function showError(msg) {
         errorEl.textContent = String(msg || "unknown error");
@@ -536,6 +977,27 @@
         return Math.round(Number(value) || 0);
       }
 
+      function backgroundOverlayValue(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          return 0.42;
+        }
+        return clamp(n, 0, 0.9);
+      }
+
+      function applyBackgroundVisuals() {
+        const enabled = !!state.background_enabled;
+        const imageUrl = String(state.background_image_url || "").trim();
+        document.documentElement.style.setProperty("--backdrop-overlay", String(backgroundOverlayValue(state.background_overlay_opacity)));
+        if (!enabled || !imageUrl) {
+          backgroundLayerEl.classList.remove("has-image");
+          backgroundImageEl.removeAttribute("src");
+          backgroundImageEl.style.display = "none";
+          return;
+        }
+        backgroundImageEl.src = imageUrl;
+      }
+
       function refreshStatus() {
         frameEl.style.display = state.edit_mode ? "block" : "none";
         statusEl.style.display = state.edit_mode ? "block" : "none";
@@ -545,6 +1007,7 @@
           `edit: ${state.edit_mode ? "on" : "off"}`,
           `scale: ${state.scale.toFixed(2)}`,
           `offset: (${roundInt(state.offset_x)}, ${roundInt(state.offset_y)})`,
+          `bg: ${state.background_enabled && state.background_image_url ? "image" : "default"}`,
         ].join("\n");
       }
 
@@ -608,6 +1071,209 @@
 
       function speakerNameForRole(role) {
         return role === "user" ? "你" : String(state.chat?.pet_display_name || "桌宠");
+      }
+
+      function normalizeSkillId(value) {
+        return String(value || "").trim();
+      }
+
+      function normalizeChatMode(value) {
+        const mode = String(value || "").trim().toLowerCase();
+        return mode === "chat" || mode === "skill" ? mode : "react";
+      }
+
+      function dedupeSkillIds(values, allowedIds = null) {
+        const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(normalizeSkillId).filter(Boolean)) : null;
+        const seen = new Set();
+        const result = [];
+        for (const value of values || []) {
+          const normalized = normalizeSkillId(value);
+          if (!normalized || seen.has(normalized)) {
+            continue;
+          }
+          if (allowedSet && !allowedSet.has(normalized)) {
+            continue;
+          }
+          seen.add(normalized);
+          result.push(normalized);
+        }
+        return result;
+      }
+
+      function activeChatSkillIds() {
+        if (state.chat?.skills?.enabled === false) {
+          return [];
+        }
+        const allowed = chatSkillCatalog.map((item) => item.id);
+        if (!allowed.length) {
+          return dedupeSkillIds(chatSelectedSkillIds);
+        }
+        return dedupeSkillIds(chatSelectedSkillIds, allowed);
+      }
+
+      function setChatMode(mode) {
+        currentChatMode = normalizeChatMode(mode);
+        applyChatModeUI();
+      }
+
+      function applyChatModeUI() {
+        for (const button of chatModeButtons) {
+          const mode = normalizeChatMode(button.dataset.chatMode);
+          const active = mode === currentChatMode;
+          button.classList.toggle("is-active", active);
+          button.setAttribute("aria-pressed", active ? "true" : "false");
+        }
+        const skillsEnabled = currentChatMode !== "chat";
+        if (chatSkillsToggleEl) {
+          chatSkillsToggleEl.disabled = !skillsEnabled;
+          chatSkillsToggleEl.title = skillsEnabled ? "管理当前会话技能" : "聊天模式不使用 Skills";
+        }
+        if (!skillsEnabled) {
+          chatSkillsDrawerEl.classList.remove("open");
+          setChatSkillsStatus("当前是聊天模式，只允许联网搜索工具，不使用 Skills。");
+          return;
+        }
+        if (currentChatMode === "skill") {
+          setChatSkillsStatus(`Skill模式当前启用 ${activeChatSkillIds().length} 个技能。`);
+          return;
+        }
+        if (chatSkillsLoaded) {
+          setChatSkillsStatus(`当前会话已选择 ${activeChatSkillIds().length} 个技能。`);
+        }
+      }
+
+      function setChatSkillsStatus(message) {
+        if (chatSkillsStatusEl) {
+          chatSkillsStatusEl.textContent = String(message || "");
+        }
+      }
+
+      function normalizeSkillRecord(raw) {
+        if (!raw || typeof raw !== "object") {
+          return null;
+        }
+        const id = normalizeSkillId(raw.id || raw.skill_id || raw.slug || raw.name);
+        if (!id) {
+          return null;
+        }
+        const sourceValue = String(raw.source || raw.origin || raw.source_type || "").toLowerCase();
+        const builtin = !!raw.builtin || sourceValue === "builtin";
+        const imported = !!raw.imported || sourceValue === "imported" || (!builtin && sourceValue !== "builtin");
+        return {
+          id,
+          name: String(raw.name || raw.title || id),
+          description: String(raw.description || raw.summary || ""),
+          source: builtin ? "builtin" : "imported",
+          builtin,
+          imported,
+          scriptCount: Number(raw.script_count || 0) || 0,
+          allowlistCount: Number(raw.allowlist_count || 0) || 0,
+        };
+      }
+
+      function renderChatSkillDrawer() {
+        if (!chatSkillsListEl) {
+          return;
+        }
+        chatSkillsListEl.innerHTML = "";
+        if (!chatSkillCatalog.length) {
+          chatSkillsListEl.innerHTML = '<div class="chat-skill-card"><p>当前没有可用技能，或后端还没有提供 `/api/skills` 接口。</p></div>';
+          return;
+        }
+        const activeSet = new Set(activeChatSkillIds());
+        for (const item of chatSkillCatalog) {
+          const card = document.createElement("article");
+          card.className = "chat-skill-card";
+          card.innerHTML = `
+            <h4>${item.name}</h4>
+            <p>${item.description || "暂无描述。"}</p>
+            <div class="chat-skill-meta">${item.builtin ? "内置" : "第三方"} | 脚本 ${item.scriptCount} | 工具白名单 ${item.allowlistCount}</div>
+          `;
+          const label = document.createElement("label");
+          label.className = "chat-skill-toggle";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.checked = activeSet.has(item.id);
+          input.addEventListener("change", () => {
+            const next = new Set(activeChatSkillIds());
+            if (input.checked) {
+              next.add(item.id);
+            } else {
+              next.delete(item.id);
+            }
+            chatSelectedSkillIds = dedupeSkillIds([...next], chatSkillCatalog.map((entry) => entry.id));
+            applyChatModeUI();
+          });
+          const text = document.createElement("span");
+          text.textContent = "本轮/本会话启用";
+          label.appendChild(input);
+          label.appendChild(text);
+          card.appendChild(label);
+          chatSkillsListEl.appendChild(card);
+        }
+      }
+
+      async function loadChatSkills(force = false) {
+        if (chatSkillsLoaded && !force) {
+          return;
+        }
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          setChatSkillsStatus("后端地址未配置，无法加载技能。");
+          return;
+        }
+        setChatSkillsStatus("正在加载技能列表...");
+        try {
+          const resp = await fetch(`${backend}/api/skills`);
+          const payload = await resp.json();
+          if (!resp.ok) {
+            throw new Error(payload.detail || `HTTP ${resp.status}`);
+          }
+          const rawItems = Array.isArray(payload.skills)
+            ? payload.skills
+            : Array.isArray(payload.items)
+              ? payload.items
+              : [];
+          chatSkillCatalog = rawItems.map(normalizeSkillRecord).filter(Boolean);
+          chatSkillDefaultIds = dedupeSkillIds(
+            payload.default_active_ids || state.chat?.skills?.default_active_ids || [],
+            chatSkillCatalog.map((item) => item.id),
+          );
+          if (!chatSelectedSkillIds.length || force) {
+            chatSelectedSkillIds = chatSkillDefaultIds.slice();
+          } else {
+            chatSelectedSkillIds = dedupeSkillIds(chatSelectedSkillIds, chatSkillCatalog.map((item) => item.id));
+          }
+          chatSkillsLoaded = true;
+          renderChatSkillDrawer();
+          applyChatModeUI();
+        } catch (error) {
+          chatSkillCatalog = [];
+          chatSkillDefaultIds = [];
+          chatSelectedSkillIds = [];
+          chatSkillsLoaded = false;
+          setChatSkillsStatus(`技能加载失败：${error?.message || String(error)}`);
+          renderChatSkillDrawer();
+        }
+      }
+
+      function toggleChatSkillsDrawer(forceOpen = null) {
+        if (currentChatMode === "chat") {
+          setChatSkillsStatus("当前是聊天模式，只允许联网搜索工具，不使用 Skills。");
+          chatSkillsDrawerEl.classList.remove("open");
+          return;
+        }
+        const shouldOpen = forceOpen === null ? !chatSkillsDrawerEl.classList.contains("open") : !!forceOpen;
+        chatSkillsDrawerEl.classList.toggle("open", shouldOpen);
+        if (shouldOpen) {
+          loadChatSkills(false);
+        }
+      }
+
+      function resetChatSkillsToDefault() {
+        chatSelectedSkillIds = chatSkillDefaultIds.slice();
+        renderChatSkillDrawer();
+        applyChatModeUI();
       }
 
       function phaseLabel(phase) {
@@ -739,11 +1405,13 @@
           chatPanelPositioned = true;
         }
         chatPanelEl.classList.add("open");
+        loadChatSkills(false);
         chatInputEl.focus();
       }
 
       function closeChat() {
         chatPanelEl.classList.remove("open");
+        toggleChatSkillsDrawer(false);
         saveChatPanelState();
       }
 
@@ -1165,8 +1833,23 @@
       }
 
       async function consumeChatStream(resp) {
-        if (!resp.ok || !resp.body) {
-          throw new Error(`chat http ${resp.status}`);
+        if (!resp.ok) {
+          let detail = `chat http ${resp.status}`;
+          try {
+            const payload = await resp.json();
+            detail = String(payload?.detail || payload?.message || detail);
+          } catch (_) {
+            try {
+              const text = await resp.text();
+              if (text) {
+                detail = text;
+              }
+            } catch (_) {}
+          }
+          throw new Error(detail);
+        }
+        if (!resp.body) {
+          throw new Error("chat response missing body");
         }
 
         const decoder = new TextDecoder();
@@ -1231,6 +1914,10 @@
               if (payload.pet_display_name) {
                 state.chat.pet_display_name = String(payload.pet_display_name);
                 syncPetDisplayName();
+              }
+              if (payload.chat_mode) {
+                currentChatMode = normalizeChatMode(payload.chat_mode);
+                applyChatModeUI();
               }
             } else if (eventName === "phase") {
               const phase = String(payload.phase || "");
@@ -1357,6 +2044,16 @@
         if (!userText) {
           return;
         }
+        if (currentChatMode === "skill") {
+          await loadChatSkills(false);
+          if (!activeChatSkillIds().length) {
+            appendMessage("error", "Skill模式至少需要启用一个技能。请先打开“技能”面板，或去设置页启用默认技能。", {
+              speakerName: "系统",
+            });
+            toggleChatSkillsDrawer(true);
+            return;
+          }
+        }
         appendMessage("user", userText, { speakerName: "你" });
         stopSpeaking(false);
         setChatState("streaming");
@@ -1389,6 +2086,13 @@
               llm_provider: state.chat.llm_provider || "ollama",
               api_base_url: state.chat.api_base_url || "",
               api_key: state.chat.api_key || "",
+              router_enabled: !!state.chat.router_enabled,
+              router_llm_provider: state.chat.router_llm_provider || "",
+              router_api_base_url: state.chat.router_api_base_url || "",
+              router_api_key: state.chat.router_api_key || "",
+              router_model: state.chat.router_model || "",
+              chat_mode: currentChatMode,
+              skill_ids: currentChatMode === "chat" ? [] : activeChatSkillIds(),
               text: userText,
             }),
           });
@@ -1634,8 +2338,22 @@
         }
         if (incoming.chat && typeof incoming.chat === "object") {
           Object.assign(state.chat, incoming.chat);
+          const configuredDefaults = Array.isArray(incoming.chat.skills?.default_active_ids)
+            ? incoming.chat.skills.default_active_ids
+            : [];
+          chatSkillDefaultIds = dedupeSkillIds(configuredDefaults);
+          if (!chatSelectedSkillIds.length) {
+            chatSelectedSkillIds = chatSkillDefaultIds.slice();
+          }
+          chatSkillsLoaded = false;
+          applyChatModeUI();
         }
         syncPetDisplayName();
+        state.background_enabled = !!state.background_enabled;
+        state.background_image = String(state.background_image || "");
+        state.background_image_url = String(state.background_image_url || "");
+        state.background_overlay_opacity = backgroundOverlayValue(state.background_overlay_opacity);
+        applyBackgroundVisuals();
 
         const nextModelUrl = incoming.model_url || incoming.modelUrl || state.model_url;
         if (typeof nextModelUrl === "string" && nextModelUrl.length > 0) {
@@ -1670,6 +2388,7 @@
           backgroundAlpha: 0,
           antialias: true,
         });
+        applyBackgroundVisuals();
 
         setupStageInteraction();
 
@@ -1700,7 +2419,13 @@
             openChat();
           }
         });
+        for (const button of chatModeButtons) {
+          button.addEventListener("click", () => setChatMode(button.dataset.chatMode));
+        }
         chatCloseEl.addEventListener("click", () => closeChat());
+        chatSkillsToggleEl.addEventListener("click", () => toggleChatSkillsDrawer());
+        chatSkillsRefreshEl.addEventListener("click", () => loadChatSkills(true));
+        chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
         chatSendEl.addEventListener("click", async () => {
           if (chatState !== "idle") {
             return;
@@ -1804,6 +2529,7 @@
         }
 
         syncPetDisplayName();
+        applyChatModeUI();
         refreshStatus();
       }
 

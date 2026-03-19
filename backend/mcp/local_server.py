@@ -84,12 +84,74 @@ class LocalMCPServer:
         {
             "type": "function",
             "function": {
+                "name": "copy_file",
+                "description": "Copy a file inside allowed paths.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "src_path": {"type": "string"},
+                        "dst_path": {"type": "string"},
+                        "overwrite": {"type": "boolean"},
+                    },
+                    "required": ["src_path", "dst_path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_file",
+                "description": "Delete a file inside allowed paths. Directories are not supported.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "missing_ok": {"type": "boolean"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "stat_path",
+                "description": "Return metadata for a file or directory inside allowed paths.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "list_dir",
                 "description": "List files/directories from an allowed directory.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
+                        "recursive": {"type": "boolean"},
+                        "max_entries": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_files",
+                "description": "Search files or directories by name pattern from an allowed directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "pattern": {"type": "string"},
                         "recursive": {"type": "boolean"},
                         "max_entries": {"type": "integer"},
                     },
@@ -131,8 +193,16 @@ class LocalMCPServer:
             return self.tools.write_file(**arguments)
         if tool_name == "move_file":
             return self.tools.move_file(**arguments)
+        if tool_name == "copy_file":
+            return self.tools.copy_file(**arguments)
+        if tool_name == "delete_file":
+            return self.tools.delete_file(**arguments)
+        if tool_name == "stat_path":
+            return self.tools.stat_path(**arguments)
         if tool_name == "list_dir":
             return self.tools.list_dir(**arguments)
+        if tool_name == "search_files":
+            return self.tools.search_files(**arguments)
         raise ValueError(f"unknown tool: {tool_name}")
 
     def get_tools(self) -> list[Tool]:

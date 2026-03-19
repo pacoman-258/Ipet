@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "scripts": [
+    {
+      "name": "suggest_tests",
+      "description": "Suggest relevant unittest commands based on changed files or concern areas.",
+      "path": "scripts/suggest_tests.py",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "areas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "timeout_sec": 10
+    }
+  ]
+}
+

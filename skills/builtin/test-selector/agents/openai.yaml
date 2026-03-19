@@ -1,0 +1,3 @@
+display_name: "Test Selector"
+short_description: "Recommend targeted tests before running the full suite"
+

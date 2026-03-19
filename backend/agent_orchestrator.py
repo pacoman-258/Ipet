@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 from .mcp_bridge import MCPBridge
@@ -35,6 +35,28 @@ class TurnDecision:
             "thought_summary": self.thought_summary,
             "action_message": self.action_message,
             "tool_calls": [item.to_dict() for item in self.tool_calls],
+        }
+
+
+@dataclass
+class RouteDecision:
+    route_kind: str = "direct_answer"
+    thought_summary: str = ""
+    skill_ids: list[str] = field(default_factory=list)
+    tool_candidates: list[str] = field(default_factory=list)
+    tool_call: ToolIntent | None = None
+    search_needed: bool = False
+    search_query: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "route_kind": self.route_kind,
+            "thought_summary": self.thought_summary,
+            "skill_ids": list(self.skill_ids),
+            "tool_candidates": list(self.tool_candidates),
+            "tool_call": self.tool_call.to_dict() if self.tool_call is not None else None,
+            "search_needed": self.search_needed,
+            "search_query": self.search_query,
         }
 
 
@@ -226,6 +248,173 @@ def _normalize_native_tool_calls(raw_items: Any, allowed_names: set[str]) -> lis
     return intents
 
 
+def _normalize_skill_ids(raw_items: Any, allowed_ids: set[str]) -> list[str]:
+    values = raw_items if isinstance(raw_items, list) else []
+    seen: set[str] = set()
+    items: list[str] = []
+    for item in values:
+        skill_id = str(item or "").strip()
+        if not skill_id or skill_id in seen:
+            continue
+        if allowed_ids and skill_id not in allowed_ids:
+            continue
+        seen.add(skill_id)
+        items.append(skill_id)
+    return items
+
+
+def _normalize_tool_candidates(raw_items: Any, allowed_names: set[str]) -> list[str]:
+    values = raw_items if isinstance(raw_items, list) else []
+    seen: set[str] = set()
+    items: list[str] = []
+    for item in values:
+        tool_name = str(item or "").strip()
+        if not tool_name or tool_name in seen:
+            continue
+        if allowed_names and tool_name not in allowed_names:
+            continue
+        seen.add(tool_name)
+        items.append(tool_name)
+    return items
+
+
+def _route_tool_call_payload(raw_item: Any, allowed_names: set[str]) -> ToolIntent | None:
+    if not isinstance(raw_item, dict):
+        return None
+    name = str(raw_item.get("name") or "").strip()
+    if not name or (allowed_names and name not in allowed_names):
+        return None
+    return ToolIntent(name=name, arguments=_parse_args(raw_item.get("arguments")))
+
+
+def _skill_summary_lines(skill_summaries: list[dict[str, str]]) -> list[str]:
+    lines: list[str] = []
+    for item in skill_summaries:
+        if not isinstance(item, dict):
+            continue
+        skill_id = str(item.get("id") or "").strip()
+        if not skill_id:
+            continue
+        name = str(item.get("name") or skill_id).strip()
+        description = _compact_text(item.get("description") or "", 160)
+        if description:
+            lines.append(f"- {skill_id} ({name}): {description}")
+        else:
+            lines.append(f"- {skill_id} ({name})")
+    return lines
+
+
+def _router_prompt_react(tools: list[dict[str, Any]], skill_summaries: list[dict[str, str]]) -> str:
+    lines = [
+        "You are the route-classifier stage for a desktop assistant.",
+        "Classify the user's request before the execution model acts.",
+        "Return JSON only.",
+        'Allowed route_kind values: "skill_task", "complex_task", "simple_tool_task", "direct_answer".',
+        'Return fields: {"route_kind":"","thought_summary":"","skill_ids":[],"tool_candidates":[],"tool_call":{"name":"","arguments":{}}}.',
+        "Use skill_task when one or more available skills are the clearest fit.",
+        "Use complex_task when the main model should perform full ReAct with a few preferred tools.",
+        "Use simple_tool_task only for a single obvious tool call with object arguments.",
+        "Use direct_answer when no tools or skills are needed.",
+        "tool_candidates are soft hints only.",
+    ]
+    tool_names = sorted(_tool_names(tools))
+    if tool_names:
+        lines.append("Available tools:")
+        lines.extend([f"- {name}" for name in tool_names])
+    skill_lines = _skill_summary_lines(skill_summaries)
+    if skill_lines:
+        lines.append("Available skills:")
+        lines.extend(skill_lines)
+    return "\n".join(lines)
+
+
+def _router_prompt_chat(tools: list[dict[str, Any]]) -> str:
+    lines = [
+        "You are the route-classifier stage for chat mode.",
+        "Return JSON only.",
+        'Return fields: {"search_needed":true,"search_query":"keywords","thought_summary":"brief user-facing summary"}.',
+        "Only decide whether web search is needed and what to search for.",
+        "Do not mention any other MCP, local tool, or skill.",
+        "If search is not needed, set search_needed to false and search_query to an empty string.",
+    ]
+    tool_names = sorted(_tool_names(tools))
+    if tool_names:
+        lines.append("Available search tools:")
+        lines.extend([f"- {name}" for name in tool_names])
+    return "\n".join(lines)
+
+
+def _router_prompt_skill(skill_summaries: list[dict[str, str]]) -> str:
+    lines = [
+        "You are the route-classifier stage for skill mode.",
+        "Return JSON only.",
+        'Return fields: {"skill_ids":[],"thought_summary":"brief user-facing summary"}.',
+        "Select the most relevant skill IDs for the user's request.",
+        "Do not mention MCP or other tools.",
+        "If no listed skill fits, return an empty array.",
+    ]
+    skill_lines = _skill_summary_lines(skill_summaries)
+    if skill_lines:
+        lines.append("Available skills:")
+        lines.extend(skill_lines)
+    return "\n".join(lines)
+
+
+def _route_from_assistant_message(
+    chat_mode: str,
+    assistant_msg: dict[str, Any],
+    allowed_skill_ids: set[str],
+    allowed_tool_names: set[str],
+) -> RouteDecision:
+    payload = _extract_json_payload(str(assistant_msg.get("content") or "")) or {}
+    thought_summary = _compact_text(str(payload.get("thought_summary") or ""), MAX_STEP_TEXT_CHARS)
+
+    if chat_mode == "chat":
+        search_needed = bool(payload.get("search_needed"))
+        search_query = _compact_text(str(payload.get("search_query") or "").strip(), MAX_PREVIEW_CHARS)
+        if search_needed and search_query:
+            return RouteDecision(
+                route_kind="simple_tool_task",
+                thought_summary=thought_summary or "I should search the web first.",
+                search_needed=True,
+                search_query=search_query,
+            )
+        return RouteDecision(
+            route_kind="direct_answer",
+            thought_summary=thought_summary or "I can answer directly without web search.",
+            search_needed=False,
+            search_query="",
+        )
+
+    if chat_mode == "skill":
+        skill_ids = _normalize_skill_ids(payload.get("skill_ids"), allowed_skill_ids)
+        return RouteDecision(
+            route_kind="skill_task" if skill_ids else "direct_answer",
+            thought_summary=thought_summary or ("I found matching skills." if skill_ids else "No matching skill was selected."),
+            skill_ids=skill_ids,
+        )
+
+    route_kind = str(payload.get("route_kind") or "direct_answer").strip().lower()
+    if route_kind not in {"skill_task", "complex_task", "simple_tool_task", "direct_answer"}:
+        route_kind = "direct_answer"
+    skill_ids = _normalize_skill_ids(payload.get("skill_ids"), allowed_skill_ids)
+    tool_candidates = _normalize_tool_candidates(payload.get("tool_candidates"), allowed_tool_names)
+    tool_call = _route_tool_call_payload(payload.get("tool_call"), allowed_tool_names)
+    if route_kind == "skill_task" and not skill_ids:
+        route_kind = "direct_answer"
+    if route_kind == "complex_task" and not tool_candidates:
+        route_kind = "direct_answer"
+    if route_kind == "simple_tool_task" and tool_call is None:
+        route_kind = "direct_answer"
+    return RouteDecision(
+        route_kind=route_kind,
+        thought_summary=thought_summary or _default_thought_summary(route_kind != "direct_answer"),
+        skill_ids=skill_ids,
+        tool_candidates=tool_candidates,
+        tool_call=tool_call,
+    )
+
+
 def _decision_from_assistant_message(
     assistant_msg: dict[str, Any],
     allowed_names: set[str],
@@ -308,6 +497,46 @@ async def decide_turn(
         tools=tools or None,
     )
     return _decision_from_assistant_message(assistant_msg, allowed_names)
+
+
+async def classify_route(
+    *,
+    chat_mode: str,
+    messages: list[dict[str, Any]],
+    model: str,
+    tools: list[dict[str, Any]],
+    skill_summaries: list[dict[str, str]] | None = None,
+    llm_provider: str = "ollama",
+    api_base_url: str = "",
+    api_key: str = "",
+    provider_adapter: ProviderAdapter | None = None,
+) -> RouteDecision:
+    skill_summaries = list(skill_summaries or [])
+    normalized_mode = str(chat_mode or "react").strip().lower()
+    if normalized_mode == "chat":
+        prompt = _router_prompt_chat(tools)
+    elif normalized_mode == "skill":
+        prompt = _router_prompt_skill(skill_summaries)
+    else:
+        normalized_mode = "react"
+        prompt = _router_prompt_react(tools, skill_summaries)
+    router_messages = [{"role": "system", "content": prompt}] + list(messages)
+    adapter = provider_adapter or ProviderAdapter(
+        provider=llm_provider,
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+    assistant_msg = await adapter.chat_once(
+        messages=router_messages,
+        model=model,
+        tools=None,
+    )
+    return _route_from_assistant_message(
+        normalized_mode,
+        assistant_msg,
+        {str(item.get("id") or "").strip() for item in skill_summaries if isinstance(item, dict)},
+        _tool_names(tools),
+    )
 
 
 def execute_tool_calls(

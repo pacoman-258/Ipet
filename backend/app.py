@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import mimetypes
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
 from .agent_orchestrator import (
+    classify_route,
     execute_tool_calls,
     decide_turn,
     stream_final_reply,
@@ -26,9 +29,15 @@ from .models import (
     MCPServerCreateRequest,
     MCPToggleRequest,
     ModelListRequest,
+    SkillDeleteRequest,
+    SkillImportGitRequest,
+    SkillImportLocalRequest,
     TTSRequest,
 )
 from .ollama_client import OLLAMA_BASE_URL, is_ollama_alive, list_models
+from .skills import ResolvedSkillSet, SkillAwareToolBridge, SkillManager, SkillRuntime
+from .tool_runtime import Tool, ToolRegistry, ToolResult
+from .tooling.security import normalize_file_allowlist
 from .tts import (
     DEFAULT_PROVIDER,
     cleanup_old_audio,
@@ -52,7 +61,11 @@ AUDIO_CACHE_DIR = ROOT_DIR / "backend" / "audio_cache"
 SETTINGS_HTML_PATH = ROOT_DIR / "settings.html"
 SETTINGS_CSS_PATH = ROOT_DIR / "settings.css"
 SETTINGS_JS_PATH = ROOT_DIR / "settings.js"
+SKILLS_BUILTIN_DIR = ROOT_DIR / "skills" / "builtin"
+THIRD_PARTY_SKILLS_DIR = ROOT_DIR / "third_party_skills"
 RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
+RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
+RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
 AGENT_GRAPH_CHECKPOINT_PATH = ROOT_DIR / "backend" / "agent_graph_state.pkl"
 SESSION_STORE: dict[str, list[dict[str, str]]] = {}
 PENDING_CHAT_TURNS: dict[str, dict[str, Any]] = {}
@@ -61,7 +74,14 @@ DISPLAY_TEXT_DELIMITER = "**"
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
+RUNTIME_PICK_TIMEOUT_SEC = 180.0
+RUNTIME_HOST_HEARTBEAT_MAX_AGE_SEC = 5.0
 AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
+CHAT_MODE_REACT = "react"
+CHAT_MODE_CHAT = "chat"
+CHAT_MODE_SKILL = "skill"
+CHAT_MODE_VALUES = {CHAT_MODE_REACT, CHAT_MODE_CHAT, CHAT_MODE_SKILL}
+CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
 EXPR_PROTOCOL_PROMPT = (
     "Output must be strict NDJSON. One JSON object per line with no extra commentary. "
     "Only fields expr and text are allowed. expr is an expression name string (or empty), "
@@ -126,6 +146,15 @@ MCP_SERVER_PRESETS = {
 _MCP_BRIDGE: MCPBridge | None = None
 _MCP_CONFIG_SNAPSHOT = ""
 _AGENT_GRAPH_RUNTIME: AgentGraphRuntime | None = None
+_SKILL_MANAGER: SkillManager | None = None
+
+
+def _settings_static_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -209,6 +238,9 @@ def _default_settings_config() -> dict[str, Any]:
             "opacity": 1.0,
             "edit_mode": False,
             "follow_mouse": True,
+            "background_enabled": False,
+            "background_image": "",
+            "background_overlay_opacity": 0.42,
         },
         "chat": {
             "backend_url": DEFAULT_BACKEND_URL,
@@ -216,6 +248,11 @@ def _default_settings_config() -> dict[str, Any]:
             "api_base_url": "http://127.0.0.1:11434",
             "api_key": "",
             "model": "qwen3:8b",
+            "router_enabled": False,
+            "router_llm_provider": "ollama",
+            "router_api_base_url": "http://127.0.0.1:11434",
+            "router_api_key": "",
+            "router_model": "qwen3:8b",
             "session_id": "default",
             "memory_window": 10,
             "voice": "zh-CN-XiaoxiaoNeural",
@@ -228,6 +265,10 @@ def _default_settings_config() -> dict[str, Any]:
             "react_visibility": "inline",
             "max_reasoning_steps": 10,
             "tooling": json.loads(json.dumps(DEFAULT_TOOLING)),
+            "skills": {
+                "enabled": True,
+                "default_active_ids": [],
+            },
             "system_prompt": "",
         },
     }
@@ -247,6 +288,186 @@ def _normalize_model_path(path_text: str) -> str:
             return text
 
 
+def _normalize_skill_ids(values: Any) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    candidates = values if isinstance(values, (list, tuple)) else (values or [])
+    for item in candidates:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _normalize_chat_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in CHAT_MODE_VALUES else CHAT_MODE_REACT
+
+
+def _resolve_router_request_config(req: ChatStreamRequest, settings_config: dict[str, Any]) -> dict[str, Any]:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    router_enabled = chat_cfg.get("router_enabled", False) if req.router_enabled is None else req.router_enabled
+    main_provider = str(req.llm_provider or chat_cfg.get("llm_provider") or "ollama").strip() or "ollama"
+    main_base_url = str(req.api_base_url or chat_cfg.get("api_base_url") or "").strip()
+    main_api_key = str(req.api_key or chat_cfg.get("api_key") or "")
+    main_model = str(req.model or chat_cfg.get("model") or "qwen3:8b").strip() or "qwen3:8b"
+    provider = str(req.router_llm_provider or chat_cfg.get("router_llm_provider") or main_provider).strip() or main_provider
+    base_url = str(req.router_api_base_url or chat_cfg.get("router_api_base_url") or main_base_url).strip()
+    api_key = str(req.router_api_key or chat_cfg.get("router_api_key") or "")
+    model = str(req.router_model or chat_cfg.get("router_model") or main_model).strip() or main_model
+    return {
+        "enabled": bool(router_enabled),
+        "llm_provider": provider,
+        "api_base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+    }
+
+
+def _skill_summaries_for_route(
+    *,
+    chat_mode: str,
+    requested_skill_ids: list[str],
+    settings_config: dict[str, Any],
+) -> list[dict[str, str]]:
+    if chat_mode == CHAT_MODE_CHAT:
+        return []
+    manager = _get_skill_manager()
+    available = {str(getattr(item, "skill_id", "")): item for item in manager.list_skills()}
+    if chat_mode == CHAT_MODE_SKILL:
+        candidate_ids = _normalize_skill_ids(requested_skill_ids)
+        if not candidate_ids:
+            candidate_ids = list(available.keys())
+    else:
+        candidate_ids = _normalize_skill_ids(requested_skill_ids)
+        if not candidate_ids:
+            candidate_ids = list(available.keys())
+    items: list[dict[str, str]] = []
+    for skill_id in candidate_ids:
+        record = available.get(skill_id)
+        if record is None:
+            continue
+        items.append(
+            {
+                "id": skill_id,
+                "name": str(getattr(record, "display_name", "") or getattr(record, "name", "") or skill_id),
+                "description": str(getattr(record, "short_description", "") or getattr(record, "description", "") or ""),
+            }
+        )
+    return items
+
+
+def _build_router_tool_schemas(chat_mode: str, active_skill_ids: list[str]) -> list[dict[str, Any]]:
+    bridge = _build_runtime_tool_bridge({"chat_mode": chat_mode, "active_skill_ids": list(active_skill_ids)})
+    if bridge is None or not hasattr(bridge, "list_tools"):
+        return []
+    try:
+        return list(bridge.list_tools() or [])
+    except Exception:
+        return []
+
+
+def _pick_tavily_tool_name(tools: list[dict[str, Any]]) -> str:
+    candidates: list[str] = []
+    for schema in tools:
+        if not isinstance(schema, dict):
+            continue
+        function = schema.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if name.startswith(CHAT_MODE_TAVILY_TOOL_PREFIX):
+            candidates.append(name)
+    for suffix in (".tavily_search", ".search"):
+        for name in candidates:
+            if name.endswith(suffix):
+                return name
+    return candidates[0] if candidates else ""
+
+
+def _route_guidance_message(tool_candidates: list[str]) -> str:
+    names = [str(item or "").strip() for item in tool_candidates if str(item or "").strip()]
+    if not names:
+        return ""
+    joined = ", ".join(dict.fromkeys(names))
+    return (
+        "Routing hint for this turn: prefer these tools first if they fit the request: "
+        f"{joined}. Keep the full visible toolset available."
+    )
+
+
+class _RegistryToolBridge:
+    def __init__(self, tools: list[Tool] | tuple[Tool, ...] | None = None, *, missing_message: str) -> None:
+        self.registry = ToolRegistry()
+        self.missing_message = str(missing_message or "tool not available")
+        for tool in tools or []:
+            self.registry.register(tool, overwrite=True)
+
+    def list_registered_tools(self) -> list[Tool]:
+        return self.registry.list()
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        return self.registry.to_llm_schemas()
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        try:
+            return self.registry.invoke(tool_name, arguments)
+        except KeyError:
+            return ToolResult.from_error(f"{self.missing_message}: {tool_name}")
+
+
+class _FilteredToolBridge:
+    def __init__(
+        self,
+        base_bridge: Any,
+        *,
+        allow_predicate,
+        missing_message: str,
+    ) -> None:
+        self.base_bridge = base_bridge
+        self.allow_predicate = allow_predicate
+        self.missing_message = str(missing_message or "tool not available")
+
+    def _tool_name_from_schema(self, schema: dict[str, Any]) -> str:
+        if not isinstance(schema, dict):
+            return ""
+        function = schema.get("function")
+        if not isinstance(function, dict):
+            return ""
+        return str(function.get("name") or "").strip()
+
+    def _is_allowed(self, tool_name: str) -> bool:
+        name = str(tool_name or "").strip()
+        return bool(name and self.allow_predicate(name))
+
+    def list_registered_tools(self) -> list[Tool]:
+        if self.base_bridge is None or not hasattr(self.base_bridge, "list_registered_tools"):
+            return []
+        return [tool for tool in self.base_bridge.list_registered_tools() if self._is_allowed(getattr(tool, "name", ""))]
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        if self.base_bridge is None:
+            return []
+        if hasattr(self.base_bridge, "list_registered_tools"):
+            return [tool.to_llm_schema() for tool in self.list_registered_tools()]
+        if hasattr(self.base_bridge, "list_tools"):
+            return [schema for schema in self.base_bridge.list_tools() if self._is_allowed(self._tool_name_from_schema(schema))]
+        return []
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        name = str(tool_name or "").strip()
+        if not self._is_allowed(name):
+            return ToolResult.from_error(f"{self.missing_message}: {name}")
+        if self.base_bridge is None or not hasattr(self.base_bridge, "call_tool"):
+            return ToolResult.from_error(f"{self.missing_message}: {name}")
+        return self.base_bridge.call_tool(name, arguments)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.base_bridge, name)
+
+
 def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     merged = _deep_merge(_default_settings_config(), config if isinstance(config, dict) else {})
     merged["model_path"] = _normalize_model_path(merged.get("model_path", ""))
@@ -260,6 +481,11 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     chat["api_base_url"] = str(chat.get("api_base_url") or "").strip()
     chat["api_key"] = str(chat.get("api_key") or "")
     chat["model"] = str(chat.get("model") or "qwen3:8b").strip() or "qwen3:8b"
+    chat["router_enabled"] = bool(chat.get("router_enabled", False))
+    chat["router_llm_provider"] = str(chat.get("router_llm_provider") or chat["llm_provider"]).strip() or chat["llm_provider"]
+    chat["router_api_base_url"] = str(chat.get("router_api_base_url") or chat["api_base_url"]).strip()
+    chat["router_api_key"] = str(chat.get("router_api_key") or "")
+    chat["router_model"] = str(chat.get("router_model") or chat["model"]).strip() or chat["model"]
     chat["session_id"] = str(chat.get("session_id") or "default").strip() or "default"
     try:
         chat["memory_window"] = max(1, min(50, int(chat.get("memory_window", 10))))
@@ -282,6 +508,12 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         chat["max_reasoning_steps"] = 10
     chat["system_prompt"] = str(chat.get("system_prompt") or "")
+    skills_cfg = chat.get("skills", {})
+    if not isinstance(skills_cfg, dict):
+        skills_cfg = {}
+    skills_cfg["enabled"] = bool(skills_cfg.get("enabled", True))
+    skills_cfg["default_active_ids"] = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
+    chat["skills"] = skills_cfg
 
     window = merged.get("window", {})
     if not isinstance(window, dict):
@@ -314,6 +546,13 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
             pet[key] = fallback
     pet["edit_mode"] = bool(pet.get("edit_mode", False))
     pet["follow_mouse"] = bool(pet.get("follow_mouse", True))
+    pet["background_enabled"] = bool(pet.get("background_enabled", False))
+    pet["background_image"] = str(pet.get("background_image") or "").strip()
+    try:
+        pet["background_overlay_opacity"] = float(pet.get("background_overlay_opacity", 0.42))
+    except Exception:
+        pet["background_overlay_opacity"] = 0.42
+    pet["background_overlay_opacity"] = max(0.0, min(0.9, pet["background_overlay_opacity"]))
 
     tooling = chat.get("tooling", {})
     if not isinstance(tooling, dict):
@@ -322,8 +561,8 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     tooling = _deep_merge(DEFAULT_TOOLING, tooling)
     tooling["enabled"] = bool(tooling.get("enabled", True))
     tooling["mode"] = "mcp_local_phase2"
-    allowlist = tooling.get("file_allowlist") or [str(ROOT_DIR)]
-    tooling["file_allowlist"] = [str(item) for item in allowlist if str(item).strip()] or [str(ROOT_DIR)]
+    allowlist = normalize_file_allowlist(tooling.get("file_allowlist"), default_paths=[str(ROOT_DIR)])
+    tooling["file_allowlist"] = [str(item) for item in allowlist]
     domains = tooling.get("network_allow_domains") or []
     tooling["network_allow_domains"] = [str(item).strip() for item in domains if str(item).strip()]
     try:
@@ -469,14 +708,63 @@ def _write_runtime_command(command_type: str, payload: dict[str, Any]) -> None:
     RUNTIME_COMMAND_PATH.write_text(json.dumps(command, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_runtime_command_with_response(
+    command_type: str,
+    payload: dict[str, Any],
+    *,
+    response_path: Path,
+) -> dict[str, Any]:
+    command = {
+        "nonce": str(time.time_ns()),
+        "type": command_type,
+        "payload": {
+            **(payload if isinstance(payload, dict) else {}),
+            "response_path": str(response_path),
+        },
+    }
+    RUNTIME_COMMAND_PATH.write_text(json.dumps(command, ensure_ascii=False, indent=2), encoding="utf-8")
+    return command
+
+
+def _wait_for_runtime_command_response(
+    *,
+    nonce: str,
+    response_path: Path,
+    timeout_sec: float,
+) -> dict[str, Any] | None:
+    deadline = time.monotonic() + max(0.1, float(timeout_sec))
+    while time.monotonic() < deadline:
+        try:
+            if response_path.exists():
+                raw = json.loads(response_path.read_text(encoding="utf-8"))
+            else:
+                raw = None
+        except Exception:
+            raw = None
+        if isinstance(raw, dict) and str(raw.get("nonce") or "").strip() == nonce:
+            return raw
+        time.sleep(0.1)
+    return None
+
+
+def _runtime_host_is_online(max_age_sec: float = RUNTIME_HOST_HEARTBEAT_MAX_AGE_SEC) -> bool:
+    try:
+        if not RUNTIME_HOST_HEARTBEAT_PATH.exists():
+            return False
+        stat = RUNTIME_HOST_HEARTBEAT_PATH.stat()
+    except Exception:
+        return False
+    age_sec = time.time() - float(stat.st_mtime)
+    return age_sec <= max(1.0, float(max_age_sec))
+
+
 def _load_runtime_tooling_config() -> dict[str, Any]:
     data = _load_full_config()
     chat = data.get("chat", {}) if isinstance(data, dict) else {}
     tooling = chat.get("tooling", {}) if isinstance(chat, dict) else {}
     merged = _deep_merge(DEFAULT_TOOLING, tooling if isinstance(tooling, dict) else {})
     merged["mode"] = "mcp_local_phase2"
-    if not merged.get("file_allowlist"):
-        merged["file_allowlist"] = [str(ROOT_DIR)]
+    merged["file_allowlist"] = [str(item) for item in normalize_file_allowlist(merged.get("file_allowlist"), default_paths=[str(ROOT_DIR)])]
     third = merged.get("third_party", {})
     if not isinstance(third, dict):
         merged["third_party"] = {"enabled": True, "servers": []}
@@ -515,12 +803,74 @@ def _get_mcp_bridge(force_reload: bool = False) -> MCPBridge:
     return _MCP_BRIDGE
 
 
+def _get_skill_manager(force_reload: bool = False) -> SkillManager:
+    global _SKILL_MANAGER
+    if force_reload or _SKILL_MANAGER is None:
+        _SKILL_MANAGER = SkillManager(ROOT_DIR, builtin_dir=SKILLS_BUILTIN_DIR, imported_dir=THIRD_PARTY_SKILLS_DIR)
+    return _SKILL_MANAGER
+
+
+def _get_skill_runtime(force_reload: bool = False) -> SkillRuntime:
+    return SkillRuntime(_get_skill_manager(force_reload=force_reload))
+
+
+def _resolve_request_skills(
+    req_skill_ids: list[str] | None = None,
+    settings: dict[str, Any] | None = None,
+    *,
+    chat_mode: str = CHAT_MODE_REACT,
+) -> ResolvedSkillSet:
+    if _normalize_chat_mode(chat_mode) == CHAT_MODE_CHAT:
+        return ResolvedSkillSet(defaulted=not _normalize_skill_ids(req_skill_ids or []))
+    config = settings or _load_settings_config()
+    chat_cfg = config.get("chat", {}) if isinstance(config, dict) else {}
+    skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
+    enabled = bool(skills_cfg.get("enabled", True))
+    default_active_ids = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
+    requested_ids = _normalize_skill_ids(req_skill_ids or [])
+    runtime = _get_skill_runtime()
+    return runtime.resolve_active_skills(
+        requested_ids,
+        default_active_ids=default_active_ids,
+        enabled=enabled,
+    )
+
+
+def _build_runtime_tool_bridge(state: dict[str, Any]) -> Any:
+    chat_mode = _normalize_chat_mode(state.get("chat_mode"))
+    if chat_mode == CHAT_MODE_CHAT:
+        return _FilteredToolBridge(
+            _get_mcp_bridge(),
+            allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
+            missing_message="tool not available in 聊天模式",
+        )
+
+    skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
+    if chat_mode == CHAT_MODE_SKILL:
+        settings = _load_settings_config()
+        resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
+        return _RegistryToolBridge(
+            list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
+            missing_message="tool not available in Skill模式",
+        )
+
+    if not skill_ids:
+        return _get_mcp_bridge()
+    settings = _load_settings_config()
+    resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
+    base_bridge = _get_mcp_bridge()
+    if not resolved.tool_allowlist and not resolved.resource_tools and not resolved.adapter_tools and not resolved.script_tools:
+        return base_bridge
+    return _get_skill_runtime().build_tool_bridge(base_bridge, resolved)
+
+
 def _agent_graph_dependencies() -> GraphDependencies:
     return GraphDependencies(
         decide_turn=decide_turn,
         execute_tool_calls=execute_tool_calls,
         get_mcp_bridge=_get_mcp_bridge,
         load_tooling_config=_load_runtime_tooling_config,
+        build_tool_bridge=_build_runtime_tool_bridge,
     )
 
 
@@ -535,13 +885,23 @@ def _get_agent_graph_runtime(force_reload: bool = False) -> AgentGraphRuntime:
 
 
 def _reset_agent_graph_runtime() -> None:
-    global _AGENT_GRAPH_RUNTIME
+    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER
     _AGENT_GRAPH_RUNTIME = None
+    _SKILL_MANAGER = None
     PENDING_CHAT_TURNS.clear()
     try:
         AGENT_GRAPH_CHECKPOINT_PATH.unlink()
     except FileNotFoundError:
         pass
+
+
+def _has_chat_mode_tavily_tools() -> bool:
+    bridge = _FilteredToolBridge(
+        _get_mcp_bridge(),
+        allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
+        missing_message="tool not available in 聊天模式",
+    )
+    return bool(bridge.list_tools())
 
 
 def _iter_registered_mcp_server_configs() -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -884,11 +1244,13 @@ def _build_expression_protocol_prompt(available_expressions: list[str] | None = 
 
 def _build_system_prompt(
     user_prompt: str,
+    skill_prompt: str,
     expression_mode: bool,
     output_format: str,
     available_expressions: list[str] | None = None,
 ) -> str:
-    base = (user_prompt or "").strip()
+    parts = [str(user_prompt or "").strip(), str(skill_prompt or "").strip()]
+    base = "\n\n".join([item for item in parts if item])
     if not expression_mode or output_format != EXPR_OUTPUT_FORMAT:
         return base
     protocol_prompt = _build_expression_protocol_prompt(available_expressions)
@@ -950,9 +1312,25 @@ async def _iter_ndjson_segments(delta_stream):
             yield segment
 
 
+def _skills_response_payload() -> dict[str, Any]:
+    settings = _load_settings_config()
+    chat_cfg = settings.get("chat", {}) if isinstance(settings, dict) else {}
+    skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
+    default_active_ids = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
+    enabled = bool(skills_cfg.get("enabled", True))
+    records = _get_skill_manager().list_skills()
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "default_active_ids": default_active_ids,
+        "skills": [item.to_summary(default_active=item.skill_id in default_active_ids) for item in records],
+        "config": settings,
+    }
+
+
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
@@ -960,6 +1338,7 @@ async def on_shutdown() -> None:
             pass
         _MCP_BRIDGE = None
     _AGENT_GRAPH_RUNTIME = None
+    _SKILL_MANAGER = None
 
 
 @app.get("/api/health")
@@ -990,17 +1369,29 @@ async def health() -> dict[str, Any]:
 
 @app.get("/settings")
 async def settings_page() -> FileResponse:
-    return FileResponse(SETTINGS_HTML_PATH, media_type="text/html; charset=utf-8")
+    return FileResponse(
+        SETTINGS_HTML_PATH,
+        media_type="text/html; charset=utf-8",
+        headers=_settings_static_headers(),
+    )
 
 
 @app.get("/settings.css")
 async def settings_css() -> FileResponse:
-    return FileResponse(SETTINGS_CSS_PATH, media_type="text/css; charset=utf-8")
+    return FileResponse(
+        SETTINGS_CSS_PATH,
+        media_type="text/css; charset=utf-8",
+        headers=_settings_static_headers(),
+    )
 
 
 @app.get("/settings.js")
 async def settings_js() -> FileResponse:
-    return FileResponse(SETTINGS_JS_PATH, media_type="application/javascript; charset=utf-8")
+    return FileResponse(
+        SETTINGS_JS_PATH,
+        media_type="application/javascript; charset=utf-8",
+        headers=_settings_static_headers(),
+    )
 
 
 @app.get("/api/settings/config")
@@ -1038,6 +1429,143 @@ async def put_settings_config(payload: dict[str, Any] = Body(...)) -> dict[str, 
         "tts_presets": TTS_PRESETS,
         "mcp_server_presets": MCP_SERVER_PRESETS,
     }
+
+
+@app.get("/api/skills")
+async def list_skills() -> dict[str, Any]:
+    return _skills_response_payload()
+
+
+@app.post("/api/skills/import-local")
+async def import_local_skill(req: SkillImportLocalRequest) -> dict[str, Any]:
+    source_dir = str(req.path or req.directory or "").strip()
+    if not source_dir:
+        raise HTTPException(status_code=400, detail="path is required")
+    try:
+        result = _get_skill_manager(force_reload=True).import_local_directory(source_dir, name=req.name)
+        _get_skill_manager(force_reload=True)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=f"skill already exists: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "skill": result.skill.to_summary(),
+        "target_path": str(result.target_path),
+        **_skills_response_payload(),
+    }
+
+
+@app.post("/api/skills/import-git")
+async def import_git_skill(req: SkillImportGitRequest) -> dict[str, Any]:
+    repo_url = str(req.repo_url or req.url or "").strip()
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="repo_url is required")
+    ref = str(req.ref or req.branch or "").strip()
+    try:
+        result = _get_skill_manager(force_reload=True).install_from_git(
+            repo_url,
+            name=req.name,
+            ref=ref,
+            subdir=req.subdir,
+        )
+        _get_skill_manager(force_reload=True)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=f"skill already exists: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=500, detail=f"git import failed: {exc}") from exc
+    return {
+        "ok": True,
+        "skill": result.skill.to_summary(),
+        "target_path": str(result.target_path),
+        **_skills_response_payload(),
+    }
+
+
+@app.post("/api/skills/delete")
+async def delete_skill(req: SkillDeleteRequest) -> dict[str, Any]:
+    skill_id = str(req.skill_id or req.id or req.name or "").strip()
+    if not skill_id:
+        raise HTTPException(status_code=400, detail="skill_id is required")
+    try:
+        _get_skill_manager(force_reload=True).delete_imported_skill(skill_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    config = _load_settings_config()
+    chat_cfg = config.setdefault("chat", {})
+    skills_cfg = chat_cfg.setdefault("skills", {"enabled": True, "default_active_ids": []})
+    skills_cfg["default_active_ids"] = [
+        item for item in _normalize_skill_ids(skills_cfg.get("default_active_ids")) if item != skill_id
+    ]
+    _save_full_config(_normalize_settings_config(config))
+    _get_skill_manager(force_reload=True)
+    return {"ok": True, "skill_id": skill_id, **_skills_response_payload()}
+
+
+@app.post("/api/settings/file-allowlist/pick")
+async def post_settings_file_allowlist_pick(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    data = payload if isinstance(payload, dict) else {}
+    if not _runtime_host_is_online():
+        return {
+            "ok": False,
+            "cancelled": False,
+            "path": "",
+            "detail": "桌宠宿主未连接，无法打开原生目录选择器。请先启动桌宠主程序。",
+        }
+    request_id = str(uuid4())
+    response_path = RUNTIME_COMMAND_RESPONSE_PATH.with_name(f".pet_runtime_command.response.{request_id}.json")
+    try:
+        response_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    start_dir = str(
+        data.get("start_dir")
+        or data.get("start_path")
+        or data.get("current_path")
+        or data.get("path")
+        or data.get("directory")
+        or ""
+    ).strip()
+    pick_kind = str(data.get("kind") or data.get("mode") or "directory").strip().lower()
+    command_type = "pick_image_file" if pick_kind in {"image", "file", "image_file"} else "pick_directory"
+    command = _write_runtime_command_with_response(
+        command_type,
+        {"request_id": request_id, "start_dir": start_dir, "start_path": start_dir},
+        response_path=response_path,
+    )
+    try:
+        response = await asyncio.to_thread(
+            _wait_for_runtime_command_response,
+            nonce=str(command.get("nonce") or ""),
+            response_path=response_path,
+            timeout_sec=RUNTIME_PICK_TIMEOUT_SEC,
+        )
+    finally:
+        try:
+            response_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if not isinstance(response, dict):
+        return {
+            "ok": False,
+            "cancelled": False,
+            "path": "",
+            "detail": "桌宠宿主当前不可用，或目录选择操作已超时。",
+        }
+    status = str(response.get("status") or "").strip().lower()
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    path = str(result.get("path") or result.get("directory") or "").strip()
+    if status == "success" and path:
+        return {"ok": True, "cancelled": False, "path": path, "detail": ""}
+    if status == "cancelled":
+        return {"ok": False, "cancelled": True, "path": "", "detail": "已取消目录选择。"}
+    detail = str(result.get("error") or response.get("error") or "目录选择失败。").strip()
+    return {"ok": False, "cancelled": False, "path": "", "detail": detail}
 
 
 @app.get("/api/settings/models-local")
@@ -1086,17 +1614,108 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text cannot be empty")
+    session_id = req.session_id or "default"
+    chat_mode = _normalize_chat_mode(req.chat_mode)
+    settings_config = _load_settings_config()
+    router_cfg = _resolve_router_request_config(req, settings_config)
+    resolved_skills = _resolve_request_skills(req.skill_ids, settings=settings_config, chat_mode=chat_mode)
+    tooling_cfg = _load_runtime_tooling_config()
+    tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
+    if chat_mode == CHAT_MODE_CHAT:
+        if not tools_enabled:
+            raise HTTPException(status_code=400, detail="?????????????? tavily-mcp?")
+        if not _has_chat_mode_tavily_tools():
+            raise HTTPException(status_code=400, detail="?????? tavily-mcp????????? tavily-mcp ???")
+    if chat_mode == CHAT_MODE_SKILL and not router_cfg["enabled"] and not resolved_skills.skill_ids:
+        raise HTTPException(status_code=400, detail="Skill?????????????")
+
+    pet_display_name = _extract_pet_display_name(req.system_prompt)
+    history = SESSION_STORE.get(session_id, [])
+    history = _trim_messages(history, req.memory_window)
+    working = history + [{"role": "user", "content": text}]
+    max_reasoning_steps = max(1, min(12, int(req.max_reasoning_steps or 10)))
+    router_used = False
+    route_kind = ""
+    route_thought_summary = ""
+    route_skill_ids: list[str] = []
+    route_tool_candidates: list[str] = []
+    route_tool_call: dict[str, Any] = {}
+    route_search_needed = False
+    route_search_query = ""
+    decision_messages = list(working)
+
+    if router_cfg["enabled"]:
+        route_tools = _build_router_tool_schemas(chat_mode, list(resolved_skills.skill_ids))
+        route_skill_summaries = _skill_summaries_for_route(
+            chat_mode=chat_mode,
+            requested_skill_ids=req.skill_ids,
+            settings_config=settings_config,
+        )
+        try:
+            route = await classify_route(
+                chat_mode=chat_mode,
+                messages=working,
+                model=router_cfg["model"],
+                tools=route_tools,
+                skill_summaries=route_skill_summaries,
+                llm_provider=router_cfg["llm_provider"],
+                api_base_url=router_cfg["api_base_url"],
+                api_key=router_cfg["api_key"],
+            )
+            router_used = True
+            route_kind = str(route.route_kind or "")
+            route_thought_summary = str(route.thought_summary or "")
+            route_search_needed = bool(route.search_needed)
+            route_search_query = str(route.search_query or "")
+            route_tool_candidates = list(route.tool_candidates or [])
+            route_skill_ids = list(route.skill_ids or [])
+            if route.tool_call is not None:
+                route_tool_call = route.tool_call.to_dict()
+
+            if chat_mode == CHAT_MODE_REACT:
+                if route_kind == "skill_task" and route_skill_ids:
+                    resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
+                elif route_kind == "complex_task" and route_tool_candidates:
+                    guidance = _route_guidance_message(route_tool_candidates)
+                    if guidance:
+                        decision_messages = list(history) + [{"role": "system", "content": guidance}, {"role": "user", "content": text}]
+            elif chat_mode == CHAT_MODE_CHAT:
+                if route_search_needed and route_search_query:
+                    search_tool_name = _pick_tavily_tool_name(route_tools)
+                    if not search_tool_name:
+                        raise HTTPException(status_code=400, detail="?????? tavily-mcp????????? tavily-mcp ???")
+                    route_kind = "simple_tool_task"
+                    route_tool_call = {
+                        "name": search_tool_name,
+                        "arguments": {"query": route_search_query},
+                        "action_message": f"?????????{route_search_query}",
+                    }
+                else:
+                    route_kind = "direct_answer"
+            elif chat_mode == CHAT_MODE_SKILL:
+                resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
+                if not resolved_skills.skill_ids:
+                    raise HTTPException(status_code=400, detail="Skill???? API ?????????????? skill ??????")
+                route_kind = "skill_task"
+                route_skill_ids = list(resolved_skills.skill_ids)
+        except HTTPException:
+            raise
+        except Exception:
+            router_used = False
+            route_kind = ""
+            route_thought_summary = ""
+            route_skill_ids = []
+            route_tool_candidates = []
+            route_tool_call = {}
+            route_search_needed = False
+            route_search_query = ""
+            decision_messages = list(working)
 
     async def event_gen():
-        session_id = req.session_id or "default"
-        pet_display_name = _extract_pet_display_name(req.system_prompt)
-        tooling_cfg = _load_runtime_tooling_config()
-        history = SESSION_STORE.get(session_id, [])
-        history = _trim_messages(history, req.memory_window)
-        working = history + [{"role": "user", "content": text}]
-        max_reasoning_steps = max(1, min(12, int(req.max_reasoning_steps or 10)))
+        skill_prompt_text = resolved_skills.prompt_text if chat_mode != CHAT_MODE_CHAT else ""
         sys_prompt = _build_system_prompt(
             req.system_prompt,
+            skill_prompt_text,
             bool(req.expression_mode),
             str(req.expression_output_format or ""),
             req.available_expressions,
@@ -1112,9 +1731,15 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 "llm_provider": req.llm_provider,
                 "tool_mode": req.tool_mode,
                 "tools_enabled": tools_enabled,
+                "chat_mode": chat_mode,
+                "router_used": router_used,
+                "route_kind": route_kind,
+                "router_model": router_cfg["model"],
+                "router_llm_provider": router_cfg["llm_provider"],
                 "react_enabled": bool(req.react_enabled),
                 "react_visibility": str(req.react_visibility or "inline"),
                 "pet_display_name": pet_display_name,
+                "active_skill_ids": list(resolved_skills.skill_ids),
             },
         )
 
@@ -1125,12 +1750,23 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 {
                     "turn_id": uuid4().hex,
                     "session_id": session_id,
+                    "chat_mode": chat_mode,
+                    "router_used": router_used,
+                    "route_kind": route_kind,
+                    "route_thought_summary": route_thought_summary,
+                    "route_skill_ids": list(route_skill_ids),
+                    "route_tool_candidates": list(route_tool_candidates),
+                    "route_tool_call": dict(route_tool_call),
+                    "route_search_needed": route_search_needed,
+                    "route_search_query": route_search_query,
                     "memory_window": int(req.memory_window),
                     "model": req.model,
                     "llm_provider": req.llm_provider,
                     "api_base_url": req.api_base_url,
                     "api_key": req.api_key,
                     "system_prompt": req.system_prompt,
+                    "active_skill_ids": list(resolved_skills.skill_ids),
+                    "skill_prompt_text": skill_prompt_text,
                     "expression_mode": bool(req.expression_mode),
                     "expression_output_format": str(req.expression_output_format or ""),
                     "available_expressions": list(req.available_expressions),
@@ -1141,6 +1777,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                     "user_text": text,
                     "pet_display_name": pet_display_name,
                     "working_messages": working,
+                    "decision_messages": decision_messages,
                     "prompt_messages": prompt_msgs,
                 }
             )

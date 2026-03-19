@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import re
 import subprocess
@@ -94,6 +94,8 @@ DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
 RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
+RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
+RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
 AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
 
 
@@ -128,6 +130,9 @@ DEFAULT_CONFIG = {
         "opacity": 1.0,
         "edit_mode": False,
         "follow_mouse": True,
+        "background_enabled": False,
+        "background_image": "",
+        "background_overlay_opacity": 0.42,
     },
     "chat": {
         "backend_url": DEFAULT_BACKEND_URL,
@@ -135,6 +140,11 @@ DEFAULT_CONFIG = {
         "api_base_url": "http://127.0.0.1:11434",
         "api_key": "",
         "model": "qwen3:8b",
+        "router_enabled": False,
+        "router_llm_provider": "ollama",
+        "router_api_base_url": "http://127.0.0.1:11434",
+        "router_api_key": "",
+        "router_model": "qwen3:8b",
         "session_id": "default",
         "memory_window": 10,
         "voice": "zh-CN-XiaoxiaoNeural",
@@ -157,6 +167,10 @@ DEFAULT_CONFIG = {
                 "enabled": True,
                 "servers": [],
             },
+        },
+        "skills": {
+            "enabled": True,
+            "default_active_ids": [],
         },
         "system_prompt": "",
     },
@@ -230,6 +244,17 @@ def load_config() -> dict:
 
     config = deep_merge(DEFAULT_CONFIG, raw if isinstance(raw, dict) else {})
     config["model_path"] = normalize_model_path(config.get("model_path", ""))
+    pet_cfg = config.get("pet", {})
+    if not isinstance(pet_cfg, dict):
+        pet_cfg = {}
+        config["pet"] = pet_cfg
+    pet_cfg["background_enabled"] = bool(pet_cfg.get("background_enabled", False))
+    pet_cfg["background_image"] = str(pet_cfg.get("background_image") or "").strip()
+    try:
+        pet_cfg["background_overlay_opacity"] = float(pet_cfg.get("background_overlay_opacity", 0.42))
+    except Exception:
+        pet_cfg["background_overlay_opacity"] = 0.42
+    pet_cfg["background_overlay_opacity"] = max(0.0, min(0.9, pet_cfg["background_overlay_opacity"]))
     _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
     return config
 
@@ -300,6 +325,18 @@ def normalize_model_path(path_text: str) -> str:
         return str(resolved)
 
 
+def resolve_background_image_path(path_text: str) -> Path:
+    image_path = Path(str(path_text or "").strip())
+    if not str(image_path):
+        return ROOT_DIR
+    if not image_path.is_absolute():
+        image_path = ROOT_DIR / image_path
+    try:
+        return image_path.resolve()
+    except Exception:
+        return image_path
+
+
 def _extract_motion_groups(model_json: dict) -> dict:
     groups = model_json.get("FileReferences", {}).get("Motions")
     if isinstance(groups, dict):
@@ -321,6 +358,22 @@ def _infer_motion_group(file_name: str) -> str:
         "flick": "Flick",
     }
     return mapping.get(token.lower(), token[:1].upper() + token[1:])
+
+
+def _resolve_runtime_directory_seed(start_dir_text: str) -> str:
+    text = str(start_dir_text or "").strip()
+    if not text:
+        return str(ROOT_DIR)
+    path = Path(text)
+    if not path.is_absolute():
+        path = ROOT_DIR / path
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+    if resolved.exists() and resolved.is_dir():
+        return str(resolved)
+    return str(ROOT_DIR)
 
 
 def _scan_motion_groups(model_path: Path) -> dict:
@@ -1102,6 +1155,7 @@ class DesktopPet(QMainWindow):
         self._config_poll_timer = QTimer(self)
         self._config_poll_timer.timeout.connect(self.on_config_poll)
         self._config_poll_timer.start(1000)
+        self._write_runtime_host_heartbeat()
 
     def apply_window_geometry_from_config(self) -> None:
         geom = self.config["window"]
@@ -1160,7 +1214,66 @@ class DesktopPet(QMainWindow):
             return None
         return (stat.st_mtime_ns, stat.st_size)
 
+    def _write_runtime_host_heartbeat(self) -> None:
+        payload = {
+            "pid": os.getpid(),
+            "timestamp_ns": time.time_ns(),
+        }
+        try:
+            RUNTIME_HOST_HEARTBEAT_PATH.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _response_path_for_command(self, command: dict) -> Path:
+        payload = command.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        response_path_text = str(
+            payload.get("response_path")
+            or command.get("response_path")
+            or RUNTIME_COMMAND_RESPONSE_PATH
+        ).strip()
+        path = Path(response_path_text)
+        if not path.is_absolute():
+            path = ROOT_DIR / path
+        try:
+            return path.resolve()
+        except Exception:
+            return path
+
+    def _write_runtime_command_response(self, command: dict, status: str, result: dict[str, object] | None = None) -> None:
+        nonce = str(command.get("nonce") or "").strip()
+        if not nonce:
+            return
+        payload = command.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        response = {
+            "nonce": nonce,
+            "type": str(command.get("type") or "").strip(),
+            "status": status,
+            "ok": status == "success",
+            "result": result or {},
+            "timestamp_ns": time.time_ns(),
+        }
+        if status == "error" and not response["result"]:
+            response["result"] = {"error": "runtime command failed"}
+        response_path = self._response_path_for_command(command)
+        try:
+            response_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = response_path.with_name(f"{response_path.name}.tmp")
+            tmp_path.write_text(json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(response_path)
+        except Exception as exc:
+            print(f"写入 runtime command 响应失败: {exc}")
+        finally:
+            self._write_runtime_host_heartbeat()
+
     def on_config_poll(self) -> None:
+        self._write_runtime_host_heartbeat()
         token = self._config_mtime_token()
         if token is not None and token != self._config_mtime:
             self._config_mtime = token
@@ -1179,9 +1292,12 @@ class DesktopPet(QMainWindow):
         if not isinstance(command, dict):
             return
         nonce = str(command.get("nonce") or "").strip()
-        if not nonce or nonce == self._last_runtime_command_nonce:
+        if not nonce:
+            return
+        if nonce == self._last_runtime_command_nonce:
             return
         self._last_runtime_command_nonce = nonce
+        self._write_runtime_host_heartbeat()
         self.process_runtime_command(command)
 
     def process_runtime_command(self, command: dict) -> None:
@@ -1199,6 +1315,7 @@ class DesktopPet(QMainWindow):
 
         if command_type == "load_model":
             self.apply_config_to_web()
+            self._write_runtime_command_response(command, "success", {"model_path": self.config.get("model_path", "")})
             return
 
         if command_type == "play_motion":
@@ -1209,12 +1326,91 @@ class DesktopPet(QMainWindow):
                 index = 0
             if group:
                 self.play_motion(group, index, reload_model=bool(model_path))
+                self._write_runtime_command_response(
+                    command,
+                    "success",
+                    {"group": group, "index": index, "model_path": self.config.get("model_path", "")},
+                )
+            else:
+                self._write_runtime_command_response(command, "error", {"error": "group is required"})
             return
 
         if command_type == "play_expression":
             name = str(payload.get("name") or "").strip()
             if name:
                 self.play_expression(name, reload_model=bool(model_path))
+                self._write_runtime_command_response(
+                    command,
+                    "success",
+                    {"name": name, "model_path": self.config.get("model_path", "")},
+                )
+            else:
+                self._write_runtime_command_response(command, "error", {"error": "name is required"})
+            return
+
+        if command_type == "pick_directory":
+            start_dir = _resolve_runtime_directory_seed(str(payload.get("start_dir") or ""))
+            try:
+                self.raise_()
+                self.activateWindow()
+                selected = QFileDialog.getExistingDirectory(self, "选择目录", start_dir)
+                if selected:
+                    self._write_runtime_command_response(
+                        command,
+                        "success",
+                        {"directory": selected, "start_dir": start_dir},
+                    )
+                else:
+                    self._write_runtime_command_response(
+                        command,
+                        "cancelled",
+                        {"directory": "", "start_dir": start_dir},
+                    )
+            except Exception as exc:
+                self._write_runtime_command_response(
+                    command,
+                    "error",
+                    {"error": str(exc), "start_dir": start_dir},
+                )
+            self._write_runtime_host_heartbeat()
+            return
+
+        if command_type == "pick_image_file":
+            start_path = str(payload.get("start_path") or payload.get("start_dir") or "").strip()
+            seed_path = resolve_background_image_path(start_path) if start_path else ROOT_DIR
+            start_dir = str(seed_path.parent if seed_path.exists() and seed_path.is_file() else seed_path)
+            try:
+                self.raise_()
+                self.activateWindow()
+                selected, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "选择背景图片",
+                    start_dir,
+                    "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All Files (*)",
+                )
+                if selected:
+                    self._write_runtime_command_response(
+                        command,
+                        "success",
+                        {"path": selected, "start_path": start_path},
+                    )
+                else:
+                    self._write_runtime_command_response(
+                        command,
+                        "cancelled",
+                        {"path": "", "start_path": start_path},
+                    )
+            except Exception as exc:
+                self._write_runtime_command_response(
+                    command,
+                    "error",
+                    {"error": str(exc), "start_path": start_path},
+                )
+            self._write_runtime_host_heartbeat()
+            return
+
+        self._write_runtime_command_response(command, "error", {"error": f"unsupported command: {command_type}"})
+        self._write_runtime_host_heartbeat()
 
     def reload_config_from_disk(self) -> None:
         self.config = load_config()
@@ -1475,10 +1671,16 @@ class DesktopPet(QMainWindow):
             model_path = resolve_model_path(DEFAULT_CONFIG["model_path"])
         runtime_path, _, _ = ensure_runtime_model(model_path)
         self.runtime_model_path = runtime_path
+        pet_cfg = dict(self.config.get("pet", {}))
+        background_path = resolve_background_image_path(pet_cfg.get("background_image", ""))
+        if pet_cfg.get("background_enabled") and background_path.exists() and background_path.is_file():
+            pet_cfg["background_image_url"] = QUrl.fromLocalFile(str(background_path)).toString()
+        else:
+            pet_cfg["background_image_url"] = ""
 
         return {
             "model_url": QUrl.fromLocalFile(str(runtime_path)).toString(),
-            "pet": self.config["pet"],
+            "pet": pet_cfg,
             "chat": {
                 **self.config.get("chat", {}),
                 "pet_display_name": extract_pet_display_name(self.config.get("chat", {}).get("system_prompt", "")),
@@ -1560,6 +1762,9 @@ class DesktopPet(QMainWindow):
             "opacity": float(panel.opacity_spin.value()),
             "edit_mode": bool(panel.edit_mode_check.isChecked()),
             "follow_mouse": bool(panel.follow_mouse_check.isChecked()),
+            "background_enabled": bool(self.config.get("pet", {}).get("background_enabled", False)),
+            "background_image": str(self.config.get("pet", {}).get("background_image", "")),
+            "background_overlay_opacity": float(self.config.get("pet", {}).get("background_overlay_opacity", 0.42) or 0.42),
         }
         chat_cfg = self.config.get("chat", {})
         tooling_cfg = chat_cfg.get("tooling", {}) if isinstance(chat_cfg, dict) else {}
@@ -1569,6 +1774,11 @@ class DesktopPet(QMainWindow):
             "api_base_url": panel.chat_api_base_input.text().strip() or "http://127.0.0.1:11434",
             "api_key": panel.chat_api_key_input.text().strip(),
             "model": panel.chat_model_input.text().strip() or "qwen3:8b",
+            "router_enabled": bool(chat_cfg.get("router_enabled", False)),
+            "router_llm_provider": str(chat_cfg.get("router_llm_provider", chat_cfg.get("llm_provider", "ollama"))),
+            "router_api_base_url": str(chat_cfg.get("router_api_base_url", chat_cfg.get("api_base_url", "http://127.0.0.1:11434"))),
+            "router_api_key": str(chat_cfg.get("router_api_key", "")),
+            "router_model": str(chat_cfg.get("router_model", chat_cfg.get("model", "qwen3:8b"))),
             "session_id": str(chat_cfg.get("session_id", "default")),
             "memory_window": int(chat_cfg.get("memory_window", 10)),
             "voice": panel.chat_voice_input.text().strip() or "zh-CN-XiaoxiaoNeural",
@@ -1588,6 +1798,10 @@ class DesktopPet(QMainWindow):
                     "enabled": bool(panel.third_party_enabled_check.isChecked()),
                     "servers": list(tooling_cfg.get("third_party", {}).get("servers", [])),
                 },
+            },
+            "skills": {
+                "enabled": bool(chat_cfg.get("skills", {}).get("enabled", True)),
+                "default_active_ids": list(chat_cfg.get("skills", {}).get("default_active_ids", [])),
             },
             "system_prompt": panel.system_prompt_input.toPlainText().strip(),
         }

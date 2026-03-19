@@ -1,0 +1,26 @@
+{
+  "name": "tavily-mcp",
+  "version": "0.1.0",
+  "enabled": true,
+  "transport": "stdio",
+  "runtime": "node",
+  "workdir": ".",
+  "entry": {
+    "command": "node",
+    "args": [
+      "node_modules/tavily-mcp/build/index.js"
+    ]
+  },
+  "install": {
+    "type": "none",
+    "requirements": "requirements.txt",
+    "package_json": true
+  },
+  "description": "Created from frontend MCP server config",
+  "env": {
+    "TAVILY_API_KEY": "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",
+    "DEFAULT_PARAMETERS": "{\"include_images\": true, \"max_results\": 15, \"search_depth\": \"advanced\"}"
+  },
+  "protocol": "jsonline",
+  "server_dir": "D:\\LYJ\\2. 02_学习提升\\third_round\\AI_assistant\\third_party_mcp\\tavily-mcp"
+}

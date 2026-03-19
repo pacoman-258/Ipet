@@ -476,3 +476,23 @@ python main.py
 - Agent state is persisted through a file-backed LangGraph checkpointer instead of relying on `PENDING_CHAT_TURNS` as the primary source of truth.
 - `POST /api/chat/stream` and `POST /api/chat/approval` keep the same SSE contract while using LangGraph interrupt/resume internally.
 - Existing `MCPBridge` and third-party MCP management stay in place; the refactor only changes agent orchestration.
+
+## 16. 2026-03 Fixed Subagent Operating Model
+
+- Added a repository-level quick guide in `docs/SUBAGENTS.md`.
+- Added reusable role prompt files under `docs/subagents/` for the coordinator and 6 fixed subagent roles.
+- Locked high-conflict ownership around `main.py`, `index.html`, and `backend/app.py` task slices.
+- Documented default task routing, cross-boundary review rules, and test ownership for long-term multi-agent development.
+
+## 17. 2026-03 Native File Tools and Allowlist Picker
+
+- Native local file tools now expose `copy_file`, `delete_file`, `stat_path`, and `search_files` in addition to the existing create/read/write/move/list operations.
+- `list_dir` now returns structured entries with path, type, size, and timestamp fields so the agent can reason over directory contents more reliably.
+- File allowlists are normalized through a shared helper that trims empty values, resolves absolute paths, deduplicates entries, and falls back to the project root only when the saved list is empty.
+- The web settings page now includes a dedicated File Tools allowlist editor that supports multiple directories, manual path entry, removal, and clear-all actions.
+- Added `POST /api/settings/file-allowlist/pick`, which asks the desktop runtime to open a native directory chooser and returns success, cancelled, or timeout/unavailable states to the settings page.
+- The desktop host runtime command bridge now supports `pick_directory` and writes structured responses for host-driven commands through per-request response files.
+- Added regression coverage for allowlist normalization, extended file tool schemas, native directory picking, and settings persistence for multiple allowlist directories.
+- Settings static assets now disable browser cache so the browser settings page always reloads the latest `settings.html` and `settings.js`.
+- The settings page now exposes visible error/status feedback for file allowlist actions and provides a direct view of the current effective allowlist.
+- The desktop host now writes a lightweight heartbeat file so the backend can detect whether the pet runtime is online before trying to open a native directory picker.

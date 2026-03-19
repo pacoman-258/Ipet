@@ -62,6 +62,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "model": "demo",
                     "expression_mode": False,
                     "react_enabled": True,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -111,6 +112,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "expression_mode": False,
                     "react_enabled": True,
                     "max_reasoning_steps": 1,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -200,6 +202,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "expression_mode": False,
                     "react_enabled": True,
                     "max_reasoning_steps": 3,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -304,6 +307,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "expression_mode": False,
                     "react_enabled": True,
                     "max_reasoning_steps": 3,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -375,6 +379,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "model": "demo",
                     "expression_mode": False,
                     "react_enabled": True,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -416,6 +421,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                     "model": "demo",
                     "expression_mode": False,
                     "react_enabled": True,
+                    "router_enabled": False,
                     "system_prompt": '{"character":{"name_cn":"Demo"}}',
                 },
             )
@@ -462,9 +468,10 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                             "text": "Read test.txt",
                             "model": "demo",
                             "llm_provider": provider,
-                            "expression_mode": False,
-                            "react_enabled": True,
-                        },
+                    "expression_mode": False,
+                    "react_enabled": True,
+                    "router_enabled": False,
+                },
                     )
 
                 self.assertEqual(resp.status_code, 200)

@@ -7,7 +7,7 @@ import httpx
 
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OPENAI_COMPAT_BASE_URL = "https://api.openai.com/v1"
+OPENAI_COMPAT_BASE_URL = "https://api.openai.com"
 
 
 def _norm_provider(provider: str | None) -> str:
@@ -24,7 +24,54 @@ def _auth_headers(api_key: str | None) -> dict[str, str]:
 
 def _openai_base(base_url: str | None) -> str:
     base = str(base_url or "").strip() or OPENAI_COMPAT_BASE_URL
-    return base.rstrip("/")
+    base = base.rstrip("/")
+    if base.endswith("/v1"):
+        return base[:-3]
+    return base
+
+
+def _openai_endpoint(base_url: str | None, path: str) -> str:
+    suffix = path if path.startswith("/") else f"/{path}"
+    return f"{_openai_base(base_url)}{suffix}"
+
+
+def _response_error_text(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or "").strip()
+            if message:
+                return message
+        detail = str(payload.get("detail") or "").strip()
+        if detail:
+            return detail
+    text = response.text.strip()
+    return text
+
+
+def _should_retry_without_tools(exc: httpx.HTTPStatusError) -> bool:
+    response = exc.response
+    if response is None:
+        return False
+    if response.status_code not in {400, 404, 415, 422}:
+        return False
+    detail = _response_error_text(response).lower()
+    if not detail:
+        return True
+    retry_markers = (
+        "tool",
+        "function",
+        "schema",
+        "unsupported",
+        "not support",
+        "invalid parameter",
+        "unknown parameter",
+    )
+    return any(marker in detail for marker in retry_markers)
 
 
 async def is_ollama_alive(base_url: str = OLLAMA_BASE_URL) -> bool:
@@ -73,7 +120,7 @@ async def stream_chat(
         headers = _auth_headers(api_key)
         async with client.stream(
             "POST",
-            f"{target}/v1/chat/completions",
+            _openai_endpoint(target, "/v1/chat/completions"),
             headers=headers,
             json=payload,
         ) as resp:
@@ -124,21 +171,36 @@ async def chat_once(
             return message if isinstance(message, dict) else {}
 
         target = _openai_base(base_url)
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "stream": False,
         }
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         headers = _auth_headers(api_key)
-        resp = await client.post(
-            f"{target}/v1/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        resp.raise_for_status()
+        endpoint = _openai_endpoint(target, "/v1/chat/completions")
+        try:
+            resp = await client.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if tools and _should_retry_without_tools(exc):
+                retry_payload = {
+                    "model": model,
+                    "messages": messages,
+                }
+                resp = await client.post(
+                    endpoint,
+                    headers=headers,
+                    json=retry_payload,
+                )
+                resp.raise_for_status()
+            else:
+                raise
         data = resp.json()
         choices = data.get("choices", [])
         if not choices:
@@ -173,7 +235,7 @@ async def list_models(
 
         target = _openai_base(base_url)
         headers = _auth_headers(api_key)
-        resp = await client.get(f"{target}/v1/models", headers=headers)
+        resp = await client.get(_openai_endpoint(target, "/v1/models"), headers=headers)
         resp.raise_for_status()
         data = resp.json()
         items = data.get("data", [])

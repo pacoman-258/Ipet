@@ -27,12 +27,23 @@ from .agent_orchestrator import (
 class AgentRunState(TypedDict, total=False):
     turn_id: str
     session_id: str
+    chat_mode: str
+    router_used: bool
+    route_kind: str
+    route_thought_summary: str
+    route_skill_ids: list[str]
+    route_tool_candidates: list[str]
+    route_tool_call: dict[str, Any]
+    route_search_needed: bool
+    route_search_query: str
     model: str
     llm_provider: str
     api_base_url: str
     api_key: str
     memory_window: int
     system_prompt: str
+    active_skill_ids: list[str]
+    skill_prompt_text: str
     expression_mode: bool
     expression_output_format: str
     available_expressions: list[str]
@@ -43,6 +54,7 @@ class AgentRunState(TypedDict, total=False):
     user_text: str
     pet_display_name: str
     working_messages: list[dict[str, Any]]
+    decision_messages: list[dict[str, Any]]
     prompt_messages: list[dict[str, Any]]
     followup_messages: list[dict[str, Any]]
     decision: dict[str, Any]
@@ -95,6 +107,7 @@ class GraphDependencies:
     execute_tool_calls: Callable[..., list[ToolExecution]]
     get_mcp_bridge: Callable[[], Any]
     load_tooling_config: Callable[[], dict[str, Any]]
+    build_tool_bridge: Callable[[AgentRunState], Any] | None = None
 
 
 class PersistentInMemorySaver(InMemorySaver):
@@ -227,6 +240,28 @@ def _append_trace(state: AgentRunState, event: str, **payload: Any) -> list[dict
     trace = list(state.get("trace") or [])
     trace.append({"event": event, "ts": time.time(), **payload})
     return trace
+
+
+def _route_tool_intent(state: AgentRunState) -> ToolIntent | None:
+    payload = state.get("route_tool_call")
+    if not isinstance(payload, dict):
+        return None
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return None
+    arguments = payload.get("arguments")
+    return ToolIntent(name=name, arguments=arguments if isinstance(arguments, dict) else {})
+
+
+def _route_action_message(state: AgentRunState, intent: ToolIntent | None) -> str:
+    payload = state.get("route_tool_call")
+    if isinstance(payload, dict):
+        text = str(payload.get("action_message") or "").strip()
+        if text:
+            return text
+    if intent is None:
+        return ""
+    return f"I will call {intent.name} next."
 
 
 class AgentGraphRuntime:
@@ -369,6 +404,45 @@ class AgentGraphRuntime:
         }
 
     async def _decide_or_respond(self, state: AgentRunState) -> AgentRunState:
+        route_kind = str(state.get("route_kind") or "").strip()
+        route_thought_summary = str(state.get("route_thought_summary") or "").strip()
+        if route_kind == "direct_answer":
+            return {
+                "decision": {
+                    "needs_tool": False,
+                    "thought_summary": route_thought_summary,
+                    "action_message": "",
+                    "tool_calls": [],
+                },
+                "tool_plan": [],
+                "thought_summary": route_thought_summary,
+                "approval_request": {},
+                "needs_additional_approval": False,
+                "trace": _append_trace(state, "decide_or_respond", mode="route_direct_answer"),
+            }
+
+        if route_kind == "simple_tool_task":
+            intent = _route_tool_intent(state)
+            if intent is not None and bool(state.get("tools_enabled", True)):
+                decision = TurnDecision(
+                    needs_tool=True,
+                    thought_summary=route_thought_summary,
+                    action_message=_route_action_message(state, intent),
+                    tool_calls=[intent],
+                )
+                return {
+                    "decision": decision.to_dict(),
+                    "tool_plan": serialize_tool_calls(decision.tool_calls),
+                    "thought_summary": route_thought_summary,
+                    "approval_request": {
+                        "text": decision.action_message,
+                        "tools": approval_tool_items(decision),
+                        "speaker": "pet",
+                    },
+                    "needs_additional_approval": True,
+                    "trace": _append_trace(state, "decide_or_respond", mode="route_simple_tool_task"),
+                }
+
         if not bool(state.get("react_enabled", True)):
             return {
                 "decision": {
@@ -386,10 +460,12 @@ class AgentGraphRuntime:
 
         deps = self._deps()
         tools_enabled = bool(state.get("tools_enabled", True))
-        bridge = deps.get_mcp_bridge() if tools_enabled else None
+        bridge = deps.build_tool_bridge(state) if tools_enabled and deps.build_tool_bridge else None
+        if tools_enabled and bridge is None:
+            bridge = deps.get_mcp_bridge()
         tools = bridge.list_tools() if bridge is not None else []
         decision = await deps.decide_turn(
-            messages=list(state.get("working_messages") or []),
+            messages=list(state.get("decision_messages") or state.get("working_messages") or []),
             model=str(state.get("model") or ""),
             tools=tools,
             llm_provider=str(state.get("llm_provider") or "ollama"),
@@ -462,7 +538,9 @@ class AgentGraphRuntime:
     async def _execute_tools(self, state: AgentRunState) -> AgentRunState:
         deps = self._deps()
         tooling_cfg = deps.load_tooling_config()
-        bridge = deps.get_mcp_bridge()
+        bridge = deps.build_tool_bridge(state) if deps.build_tool_bridge else None
+        if bridge is None:
+            bridge = deps.get_mcp_bridge()
         tool_calls = deserialize_tool_calls(list(state.get("tool_plan") or []))
         executions = deps.execute_tool_calls(
             tool_calls=tool_calls,
@@ -505,13 +583,29 @@ class AgentGraphRuntime:
         max_reasoning_steps = max(1, int(state.get("max_reasoning_steps") or 1))
         reasoning_step = max(1, int(state.get("reasoning_step") or 1))
         followup_messages = list(state.get("followup_messages") or [])
+        if str(state.get("route_kind") or "").strip() == "simple_tool_task":
+            return {
+                "final_messages": followup_messages,
+                "tool_plan": [],
+                "approval_request": {},
+                "needs_additional_approval": False,
+                "trace": _append_trace(
+                    state,
+                    "continuation_check",
+                    needs_tool=False,
+                    tool_count=0,
+                    reason="route_simple_tool",
+                ),
+            }
         if (
             bool(state.get("react_enabled", True))
             and bool(state.get("tools_enabled", True))
             and reasoning_step < max_reasoning_steps
         ):
             deps = self._deps()
-            bridge = deps.get_mcp_bridge()
+            bridge = deps.build_tool_bridge(state) if deps.build_tool_bridge else None
+            if bridge is None:
+                bridge = deps.get_mcp_bridge()
             tools = bridge.list_tools() if bridge is not None else []
             executed_signatures = {
                 str(item)

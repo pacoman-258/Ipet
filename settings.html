@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>桌宠设置</title>
-  <link rel="stylesheet" href="/settings.css" />
+  <link rel="stylesheet" href="/settings.css?v=3" />
 </head>
 <body>
   <div class="app-shell">
@@ -19,6 +19,7 @@
         <a href="#overview">总览</a>
         <a href="#model">模型</a>
         <a href="#chat">聊天与 TTS</a>
+        <a href="#skills">Agent Skills</a>
         <a href="#mcp">第三方 MCP</a>
         <a href="#pet">形象参数</a>
         <a href="#window">窗口</a>
@@ -39,6 +40,37 @@
           <p>模型切换、动作预览、TTS 预设和第三方 MCP 都能在浏览器里完成。</p>
         </div>
         <div class="hero-summary" id="summary-cards"></div>
+
+        <section class="mini-panel file-tools-panel" aria-labelledby="file-tools-title">
+          <div class="section-head compact">
+            <div>
+              <h4 id="file-tools-title">文件工具白名单目录</h4>
+              <p>这里维护 <code>chat.tooling.file_allowlist</code>。你可以手动添加目录，也可以调用桌宠宿主的原生目录选择器。</p>
+            </div>
+          </div>
+
+          <div class="allowlist-editor">
+            <label class="field wide">
+              <span>目录路径</span>
+              <input id="file-allowlist-input" type="text" placeholder="D:\projects\my-notes" />
+            </label>
+            <div class="button-row wrap allowlist-actions">
+              <button id="file-allowlist-add-btn" type="button" class="ghost-button">添加目录</button>
+              <button id="file-allowlist-pick-btn" type="button" class="pill-button" onclick="window.__pickFileAllowlistDirectory && window.__pickFileAllowlistDirectory()">选择目录</button>
+              <button id="file-allowlist-clear-btn" type="button" class="danger-button ghost-button">清空编辑列表</button>
+              <button id="file-allowlist-effective-btn" type="button" class="ghost-button" onclick="window.__refreshEffectiveFileAllowlist && window.__refreshEffectiveFileAllowlist()">查看当前生效目录</button>
+            </div>
+            <div id="file-allowlist-list" class="allowlist-list empty-state">当前还没有编辑中的白名单目录。</div>
+          </div>
+
+          <div class="section-head compact allowlist-current-head">
+            <div>
+              <h4>当前生效目录</h4>
+              <p>这里显示后端当前已保存并完成归一化处理的白名单目录。</p>
+            </div>
+          </div>
+          <div id="file-allowlist-effective-list" class="allowlist-list empty-state">当前还没有生效的白名单目录。</div>
+        </section>
       </section>
 
       <div id="toast" class="toast"></div>
@@ -126,6 +158,40 @@
             </div>
           </div>
           <label class="field">
+            <span>副 API 思考</span>
+            <label class="inline-toggle">
+              <input id="chat-router-enabled" type="checkbox" />
+              <span>启用副 API 思考</span>
+            </label>
+          </label>
+          <label class="field">
+            <span>副 API 源</span>
+            <select id="chat-router-llm-provider">
+              <option value="ollama">ollama</option>
+              <option value="openai_compat">openai_compat</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>副 API Base</span>
+            <input id="chat-router-api-base-url" type="text" />
+          </label>
+          <label class="field">
+            <span>副 API Key</span>
+            <input id="chat-router-api-key" type="password" />
+          </label>
+          <label class="field">
+            <span>副 API 模型</span>
+            <input id="chat-router-model" type="text" />
+          </label>
+          <div class="field inline-actions">
+            <span>副 API 远端模型</span>
+            <div class="button-row stretch">
+              <select id="router-remote-model-select"></select>
+              <button id="fetch-router-models-btn" class="ghost-button">拉取模型</button>
+              <button id="use-router-model-btn" class="pill-button">使用</button>
+            </div>
+          </div>
+          <label class="field">
             <span>语音</span>
             <input id="chat-voice" type="text" />
           </label>
@@ -175,15 +241,15 @@
             <span>Agent / ReAct</span>
             <label class="inline-toggle">
               <input id="chat-react-enabled" type="checkbox" />
-              <span>Enable inline ReAct</span>
+              <span>启用内联 ReAct</span>
             </label>
           </label>
           <label class="field">
-            <span>ReAct steps</span>
+            <span>ReAct 步数</span>
             <input id="chat-max-reasoning-steps" type="number" min="1" max="12" />
           </label>
           <label class="field">
-            <span>Trace visibility</span>
+            <span>Trace 可见性</span>
             <select id="chat-react-visibility">
               <option value="inline">inline</option>
             </select>
@@ -201,6 +267,71 @@
           </label>
         </div>
       </section>
+
+      <section id="skills" class="panel-card">
+        <div class="section-head">
+          <div>
+            <h3>Agent Skills</h3>
+            <p>在这里管理已安装的技能包、默认启用范围，以及本地目录 / Git 仓库导入入口。</p>
+          </div>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="toggle-card">
+            <input id="skills-enabled" type="checkbox" />
+            <span>启用技能系统</span>
+          </label>
+        </div>
+
+        <div class="hero-summary" id="skills-summary"></div>
+
+        <div class="form-grid two-col">
+          <label class="field wide">
+            <span>&#26412;&#22320;&#25216;&#33021;&#30446;&#24405;</span>
+            <input id="skill-local-path" type="text" placeholder="D:\skills\my-skill" />
+          </label>
+          <div class="field inline-actions">
+            <span>&#26412;&#22320;&#23548;&#20837;</span>
+            <div class="button-row wrap">
+              <button id="skill-local-pick-btn" type="button" class="ghost-button">&#36873;&#25321;&#30446;&#24405;</button>
+              <button id="skill-local-import-btn" type="button" class="pill-button">&#23548;&#20837;&#26412;&#22320;&#25216;&#33021;</button>
+            </div>
+            <span class="field-hint">&#20250;&#25353; `SKILL.md` &#35268;&#33539;&#26657;&#39564;&#21518;&#22797;&#21046;&#21040;&#21463;&#31649;&#30446;&#24405;&#12290;</span>
+          </div>
+
+          <label class="field wide">
+            <span>Git &#20179;&#24211;&#22320;&#22336;</span>
+            <input id="skill-git-url" type="text" placeholder="https://github.com/user/repo.git" />
+          </label>
+          <label class="field">
+            <span>Git &#30446;&#26631;&#21517;&#31216;</span>
+            <input id="skill-git-name" type="text" placeholder="optional-skill-id" />
+          </label>
+          <label class="field">
+            <span>Git &#20998;&#25903; / Tag / Commit</span>
+            <input id="skill-git-ref" type="text" placeholder="main" />
+          </label>
+          <label class="field">
+            <span>&#25216;&#33021;&#23376;&#30446;&#24405;</span>
+            <input id="skill-git-subdir" type="text" placeholder="skills/pptx" />
+          </label>
+          <div class="field inline-actions">
+            <span>Git &#23548;&#20837;</span>
+            <div class="button-row wrap">
+              <button id="skill-git-import-btn" type="button" class="pill-button">&#23548;&#20837; Git &#25216;&#33021;</button>
+            </div>
+            <span class="field-hint">&#25903;&#25345;&#26631;&#20934;&#21270;&#31532;&#19977;&#26041; skill &#20179;&#24211;&#65307;&#33509;&#25216;&#33021;&#20301;&#20110;&#20179;&#24211;&#23376;&#30446;&#24405;&#65292;&#35831;&#22635;&#20889;&#31867;&#20284; `skills/pptx` &#30340;&#36335;&#24452;&#12290;</span>
+          </div>
+        </div>
+
+        <div class="panel-header">
+          <div>
+            <h4>&#24050;&#23433;&#35013;&#25216;&#33021;</h4>
+            <p>&#20869;&#32622;&#19982;&#31532;&#19977;&#26041;&#25216;&#33021;&#20250;&#22312;&#36825;&#37324;&#32479;&#19968;&#23637;&#31034;&#12290;&#40664;&#35748;&#21551;&#29992;&#30340;&#25216;&#33021;&#20445;&#23384;&#21040;&#37197;&#32622;&#37324;&#65292;&#20020;&#26102;&#20999;&#25442;&#19981;&#20250;&#31435;&#21051;&#25913;&#20889;&#30913;&#30424;&#12290;</p>
+          </div>
+        </div>
+        <div id="skills-list" class="server-grid empty-state">&#25216;&#33021;&#21015;&#34920;&#23578;&#26410;&#21152;&#36733;&#12290;</div>
+        <div id="skills-status" class="field-hint">&#25216;&#33021;&#38754;&#26495;&#23601;&#32490;&#21518;&#20250;&#33258;&#21160;&#20174; `/api/skills` &#25289;&#21462;&#25968;&#25454;&#12290;</div>
 
       <section id="mcp" class="panel-card">
         <div class="section-head">
@@ -248,43 +379,66 @@
       <section id="pet" class="panel-card">
         <div class="section-head">
           <div>
-            <h3>形象参数</h3>
-            <p>控制桌宠缩放、透明度、视线跟随和编辑模式。</p>
+            <h3>&#24418;&#35937;&#21442;&#25968;</h3>
+            <p>&#25511;&#21046;&#26700;&#23456;&#32553;&#25918;&#12289;&#36879;&#26126;&#24230;&#12289;&#35270;&#32447;&#36319;&#38543;&#19982;&#32972;&#26223;&#23637;&#31034;&#12290;</p>
           </div>
         </div>
 
         <div class="form-grid two-col">
           <label class="field">
-            <span>缩放</span>
+            <span>&#32553;&#25918;</span>
             <input id="pet-scale" type="number" min="0.05" max="5" step="0.01" />
           </label>
           <label class="field">
-            <span>透明度</span>
+            <span>&#36879;&#26126;&#24230;</span>
             <input id="pet-opacity" type="number" min="0.1" max="1" step="0.01" />
           </label>
           <label class="field">
-            <span>偏移 X</span>
+            <span>&#20559;&#31227; X</span>
             <input id="pet-offset-x" type="number" />
           </label>
           <label class="field">
-            <span>偏移 Y</span>
+            <span>&#20559;&#31227; Y</span>
             <input id="pet-offset-y" type="number" />
           </label>
           <label class="field">
-            <span>旋转</span>
+            <span>&#26059;&#36716;</span>
             <input id="pet-rotation" type="number" min="-180" max="180" step="0.1" />
+          </label>
+          <label class="field">
+            <span>&#32972;&#26223;&#36974;&#32617;</span>
+            <input id="pet-background-overlay-opacity" type="number" min="0" max="0.9" step="0.05" />
           </label>
         </div>
 
         <div class="toggle-grid">
           <label class="toggle-card">
             <input id="pet-edit-mode" type="checkbox" />
-            <span>编辑模式</span>
+            <span>&#32534;&#36753;&#27169;&#24335;</span>
           </label>
           <label class="toggle-card">
             <input id="pet-follow-mouse" type="checkbox" />
-            <span>视线跟随鼠标</span>
+            <span>&#35270;&#32447;&#36319;&#38543;&#40736;&#26631;</span>
           </label>
+          <label class="toggle-card">
+            <input id="pet-background-enabled" type="checkbox" />
+            <span>&#21551;&#29992;&#32972;&#26223;&#22270;</span>
+          </label>
+        </div>
+
+        <div class="form-grid two-col">
+          <label class="field wide">
+            <span>&#32972;&#26223;&#22270;&#29255;&#36335;&#24452;</span>
+            <input id="pet-background-image" type="text" placeholder="D:\backgrounds\scene.png" />
+          </label>
+          <div class="field inline-actions">
+            <span>&#32972;&#26223;&#22270;&#25805;&#20316;</span>
+            <div class="button-row wrap">
+              <button id="pet-background-pick-btn" type="button" class="ghost-button">&#36873;&#25321;&#22270;&#29255;</button>
+              <button id="pet-background-clear-btn" type="button" class="ghost-button">&#28165;&#38500;&#32972;&#26223;</button>
+            </div>
+            <span class="field-hint">&#20165;&#25903;&#25345;&#26412;&#22320;&#22270;&#29255;&#25991;&#20214;&#12290;&#20445;&#23384;&#21518;&#20250;&#21516;&#27493;&#21040;&#26700;&#23456;&#26174;&#31034;&#31383;&#21475;&#12290;</span>
+          </div>
         </div>
       </section>
 
@@ -325,6 +479,6 @@
     </main>
   </div>
 
-  <script src="/settings.js"></script>
+  <script src="/settings.js?v=4"></script>
 </body>
 </html>

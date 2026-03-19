@@ -16,10 +16,14 @@ backend/audio_cache/
 # Local config and personal workspace files
 pet_config.json
 .pet_runtime_command.json
+.pet_runtime_command.response.json
+.pet_runtime_command.response.*.json
+.pet_runtime_host.heartbeat.json
 Todo.txt
 .tmp_index_inline.js
 .tmp_test/
 tmp*/
+tests/.tmp_*/
 
 # Local models and downloaded assets
 model/
@@ -33,3 +37,6 @@ third_party_mcp/*/.tool_cache.json
 third_party_mcp/*/downloads/
 third_party_mcp/*/.uv-cache/
 third_party_mcp/*/.uv-tools/
+
+# Imported third-party skills
+third_party_skills/

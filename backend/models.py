@@ -18,6 +18,13 @@ class ChatStreamRequest(BaseModel):
     llm_provider: str = Field(default="ollama")
     api_base_url: str = Field(default="")
     api_key: str = Field(default="")
+    router_enabled: bool | None = Field(default=None)
+    router_llm_provider: str = Field(default="")
+    router_api_base_url: str = Field(default="")
+    router_api_key: str = Field(default="")
+    router_model: str = Field(default="")
+    chat_mode: str = Field(default="react")
+    skill_ids: list[str] = Field(default_factory=list)
 
 
 class ChatApprovalRequest(BaseModel):
@@ -52,3 +59,24 @@ class MCPToggleRequest(BaseModel):
 
 class MCPDeleteRequest(BaseModel):
     name: str
+
+
+class SkillImportLocalRequest(BaseModel):
+    path: str = Field(default="")
+    directory: str = Field(default="")
+    name: str = Field(default="")
+
+
+class SkillImportGitRequest(BaseModel):
+    url: str = Field(default="")
+    repo_url: str = Field(default="")
+    name: str = Field(default="")
+    ref: str = Field(default="")
+    branch: str = Field(default="")
+    subdir: str = Field(default="")
+
+
+class SkillDeleteRequest(BaseModel):
+    skill_id: str = Field(default="")
+    id: str = Field(default="")
+    name: str = Field(default="")
