@@ -1,10 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from backend.tool_runtime import Tool
+
+
+@dataclass(frozen=True)
+class SkillDiscoveryCandidate:
+    source_type: str
+    package_root: Path
+    discovery_root: Path
 
 
 @dataclass(frozen=True)
@@ -23,6 +30,7 @@ class SkillScriptDefinition:
     absolute_path: Path
     input_schema: dict[str, Any]
     timeout_sec: int
+    runner: str = "json_stdin"
 
     @property
     def tool_name(self) -> str:
@@ -45,10 +53,12 @@ class SkillRecord:
     root_path: Path
     skill_md_path: Path
     prompt_body: str
+    aliases: tuple[str, ...] = ()
     manifest: SkillManifest = field(default_factory=SkillManifest)
     has_manifest: bool = False
     ok: bool = True
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
     references: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     resources: tuple[SkillResourceEntry, ...] = ()
@@ -60,6 +70,11 @@ class SkillRecord:
     source_subdir: str = ""
     compatibility_mode: str = "native"
     adapter_profile: str = ""
+    platform: str = "native"
+    package_root: Path = field(default_factory=Path)
+    discovery_root: Path = field(default_factory=Path)
+    capabilities: tuple[str, ...] = ()
+    site_metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def valid(self) -> bool:
@@ -68,6 +83,7 @@ class SkillRecord:
     def to_summary(self, *, default_active: bool = False) -> dict[str, Any]:
         return {
             "id": self.skill_id,
+            "aliases": list(self.aliases),
             "name": self.display_name or self.name,
             "description": self.short_description or self.description,
             "source": self.source_type,
@@ -76,6 +92,7 @@ class SkillRecord:
             "valid": self.ok,
             "error": "; ".join(self.errors),
             "errors": list(self.errors),
+            "warnings": list(self.warnings),
             "default_active": bool(default_active),
             "has_openai_metadata": self.has_openai_metadata,
             "has_manifest": self.has_manifest,
@@ -87,6 +104,7 @@ class SkillRecord:
                     "path": item.path,
                     "timeout_sec": item.timeout_sec,
                     "tool_name": f"skill.{self.skill_id}.{item.name}",
+                    "runner": item.runner,
                 }
                 for item in self.manifest.scripts
             ],
@@ -100,6 +118,11 @@ class SkillRecord:
             "source_subdir": self.source_subdir,
             "compatibility_mode": self.compatibility_mode,
             "adapter_profile": self.adapter_profile,
+            "platform": self.platform,
+            "package_root": str(self.package_root or self.root_path),
+            "discovery_root": str(self.discovery_root or self.root_path),
+            "capabilities": list(self.capabilities),
+            "site_metadata": dict(self.site_metadata),
         }
 
 

@@ -117,6 +117,24 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(payload["default_active_ids"], ["repo-guide"])
         self.assertEqual(payload["skills"][0]["id"], "repo-guide")
 
+    def test_list_skills_endpoint_canonicalizes_directory_alias_defaults(self) -> None:
+        with _workspace_tempdir() as root:
+            _write_skill(root / "third_party_skills" / "atr-pptx", name="pptx", description="PPTX helper")
+            manager = SkillManager(root)
+            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": ["atr-pptx"]}}}
+            with mock.patch.object(
+                backend_app,
+                "_get_skill_manager",
+                side_effect=lambda force_reload=False: manager,
+            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
+                resp = self.client.get("/api/skills")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertEqual(payload["default_active_ids"], ["pptx"])
+        self.assertEqual(payload["skills"][0]["id"], "pptx")
+        self.assertIn("atr-pptx", payload["skills"][0]["aliases"])
+
     def test_import_local_and_delete_skill_endpoints(self) -> None:
         with _workspace_tempdir() as root:
             source_dir = _write_skill(root / "source-skill", name="Imported Skill")

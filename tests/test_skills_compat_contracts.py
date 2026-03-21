@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import shutil
@@ -30,31 +30,25 @@ def _workspace_tempdir() -> Path:
         shutil.rmtree(path, ignore_errors=True)
 
 
+
 def _write_skill(
     root: Path,
     *,
-    name: str = "Repo Guide",
-    description: str = "Guidance",
+    name: str | None = "Repo Guide",
+    description: str | None = "Guidance",
     body: str = "Always inspect the repo before editing.",
     with_manifest: bool = False,
     with_resources: bool = False,
 ) -> Path:
     skill_dir = Path(root)
     skill_dir.mkdir(parents=True, exist_ok=True)
-    skill_dir.joinpath("SKILL.md").write_text(
-        "\n".join(
-            [
-                "---",
-                f'name: "{name}"',
-                f'description: "{description}"',
-                "---",
-                "",
-                body,
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    lines = ["---"]
+    if name is not None:
+        lines.append(f'name: "{name}"')
+    if description is not None:
+        lines.append(f'description: "{description}"')
+    lines.extend(["---", "", body, ""])
+    skill_dir.joinpath("SKILL.md").write_text("\n".join(lines), encoding="utf-8")
     if with_resources:
         (skill_dir / "references").mkdir(exist_ok=True)
         (skill_dir / "references" / "guide.md").write_text("# Guide", encoding="utf-8")
@@ -91,6 +85,7 @@ def _write_skill(
             encoding="utf-8",
         )
     return skill_dir
+
 
 
 def _fake_git_run_factory(source_repo: Path):
@@ -175,6 +170,57 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
         self.assertFalse(read_bad.ok)
         self.assertIn("resource not available", read_bad.error)
 
+    def test_recursive_imported_skill_package_is_exposed_via_api(self) -> None:
+        with _workspace_tempdir() as root:
+            _write_skill(root / "third_party_skills" / "vendor" / "2025.02" / "skillsmp-skill", name="SkillsMP Skill")
+            manager = SkillManager(root)
+            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": []}}}
+            with mock.patch.object(
+                backend_app,
+                "_get_skill_manager",
+                side_effect=lambda force_reload=False: manager,
+            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
+                resp = self.client.get("/api/skills")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        skill = payload["skills"][0]
+        self.assertEqual(skill["id"], "skillsmp-skill")
+        self.assertEqual(skill["platform"], "standard")
+        self.assertIn("prompt", skill["capabilities"])
+        self.assertTrue(skill["package_root"].endswith("vendor"))
+        self.assertTrue(skill["discovery_root"].endswith("skillsmp-skill"))
+
+    def test_clawhub_skill_summary_exposes_site_metadata(self) -> None:
+        with _workspace_tempdir() as root:
+            skill_dir = _write_skill(root / "third_party_skills" / "obsidian-package" / "obsidian-direct", name="Obsidian Direct")
+            (skill_dir / ".clawhub").mkdir(exist_ok=True)
+            (skill_dir / ".clawhub" / "origin.json").write_text(
+                json.dumps(
+                    {
+                        "source_platform": "clawhub",
+                        "package_name": "obsidian-direct",
+                        "author": "openclaw",
+                        "source_url": "https://clawhub-skills.example/obsidian-direct",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            manager = SkillManager(root)
+            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": []}}}
+            with mock.patch.object(
+                backend_app,
+                "_get_skill_manager",
+                side_effect=lambda force_reload=False: manager,
+            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
+                resp = self.client.get("/api/skills")
+
+        self.assertEqual(resp.status_code, 200)
+        skill = resp.json()["skills"][0]
+        self.assertEqual(skill["platform"], "clawhub")
+        self.assertEqual(skill["site_metadata"]["author"], "openclaw")
+
     def test_pptx_adapter_tools_are_registered_and_missing_dependency_is_clear(self) -> None:
         with _workspace_tempdir() as root:
             skill_dir = _write_skill(
@@ -207,8 +253,6 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
         self.assertIn("skill.pptx.thumbnail", tools)
         self.assertIn("skill.pptx.unpack_xml", tools)
         self.assertIn("skill.pptx.extract_text", bridge_tool_names)
-        self.assertIn("skill.pptx.thumbnail", bridge_tool_names)
-        self.assertIn("skill.pptx.unpack_xml", bridge_tool_names)
         self.assertFalse(result.ok)
         self.assertIn("pptx file not found", result.error)
 

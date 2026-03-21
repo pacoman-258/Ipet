@@ -222,6 +222,39 @@ def _filter_repeated_tool_calls(
     return filtered
 
 
+def _deserialize_tool_executions(raw_items: list[dict[str, Any]] | None) -> list[ToolExecution]:
+    items: list[ToolExecution] = []
+    for raw in raw_items or []:
+        if not isinstance(raw, dict):
+            continue
+        arguments = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
+        items.append(
+            ToolExecution(
+                name=str(raw.get("name") or ""),
+                arguments=arguments,
+                ok=bool(raw.get("ok")),
+                summary=str(raw.get("summary") or ""),
+                payload=str(raw.get("payload") or ""),
+            )
+        )
+    return items
+
+
+def _final_tool_results_prompt(executions: list[ToolExecution], user_text: str = "") -> str:
+    lines = [
+        "The following tool steps have already been executed for this turn.",
+        "Use these results to produce the best possible final answer.",
+        "Do not claim that additional tools were executed, and do not request more tools in this final reply.",
+    ]
+    if user_text:
+        lines.append(f"Original user request: {user_text}")
+    for item in executions:
+        lines.append(
+            f"- {item.name} | ok={str(bool(item.ok)).lower()} | summary={item.summary} | payload={item.payload}"
+        )
+    return "\n".join(lines)
+
+
 def _continuation_recheck_prompt(user_text: str, remaining_steps: int) -> str:
     clean_text = str(user_text or "").strip()
     lines = [
@@ -554,19 +587,22 @@ class AgentGraphRuntime:
         }
         for item in tool_calls:
             executed_signatures.add(_tool_call_signature(item.name, item.arguments))
+        current_results = [item.to_dict() for item in executions]
+        all_tool_results = list(state.get("tool_results") or []) + current_results
+        all_executions = _deserialize_tool_executions(all_tool_results)
         remaining_steps = max(0, int(state.get("max_reasoning_steps") or 1) - int(state.get("reasoning_step") or 1))
-        followup_messages = list(state.get("prompt_messages") or []) + [
+        followup_messages = list(state.get("decision_messages") or state.get("working_messages") or []) + [
             {
                 "role": "system",
                 "content": build_approved_tool_message(
-                    executions,
+                    all_executions,
                     remaining_steps=remaining_steps,
                     user_request=str(state.get("user_text") or ""),
                 ),
             }
         ]
         return {
-            "tool_results": [item.to_dict() for item in executions],
+            "tool_results": all_tool_results,
             "followup_messages": followup_messages,
             "executed_call_signatures": sorted(executed_signatures),
             "approval_request": {},
@@ -583,9 +619,21 @@ class AgentGraphRuntime:
         max_reasoning_steps = max(1, int(state.get("max_reasoning_steps") or 1))
         reasoning_step = max(1, int(state.get("reasoning_step") or 1))
         followup_messages = list(state.get("followup_messages") or [])
+        cumulative_executions = _deserialize_tool_executions(list(state.get("tool_results") or []))
+        final_messages = list(state.get("prompt_messages") or [])
+        if cumulative_executions:
+            final_messages = final_messages + [
+                {
+                    "role": "system",
+                    "content": _final_tool_results_prompt(
+                        cumulative_executions,
+                        user_text=str(state.get("user_text") or ""),
+                    ),
+                }
+            ]
         if str(state.get("route_kind") or "").strip() == "simple_tool_task":
             return {
-                "final_messages": followup_messages,
+                "final_messages": final_messages,
                 "tool_plan": [],
                 "approval_request": {},
                 "needs_additional_approval": False,
@@ -664,7 +712,7 @@ class AgentGraphRuntime:
                 }
             return {
                 "thought_summary": next_decision.thought_summary,
-                "final_messages": followup_messages,
+                "final_messages": final_messages,
                 "tool_plan": [],
                 "approval_request": {},
                 "needs_additional_approval": False,
@@ -677,7 +725,7 @@ class AgentGraphRuntime:
             }
 
         if reasoning_step >= max_reasoning_steps:
-            followup_messages = list(followup_messages) + [
+            final_messages = list(final_messages) + [
                 {
                     "role": "system",
                     "content": (
@@ -687,7 +735,7 @@ class AgentGraphRuntime:
                 }
             ]
         return {
-            "final_messages": followup_messages,
+            "final_messages": final_messages,
             "tool_plan": [],
             "approval_request": {},
             "needs_additional_approval": False,

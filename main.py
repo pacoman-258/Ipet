@@ -527,6 +527,9 @@ def action_items_from_defs(groups: dict, exprs: list[dict]) -> list[dict]:
 
 class PetBridge(QObject):
     stateChanged = Signal(str)
+    openSettingsRequested = Signal()
+    minimizeWindowRequested = Signal()
+    closeWindowRequested = Signal()
 
     @Slot(str)
     def petStateChanged(self, payload: str) -> None:
@@ -535,6 +538,18 @@ class PetBridge(QObject):
     @Slot(str)
     def log(self, text: str) -> None:
         print(f"[WEB] {text}")
+
+    @Slot()
+    def openSettingsPage(self) -> None:
+        self.openSettingsRequested.emit()
+
+    @Slot()
+    def minimizeWindow(self) -> None:
+        self.minimizeWindowRequested.emit()
+
+    @Slot()
+    def closeWindow(self) -> None:
+        self.closeWindowRequested.emit()
 
 
 class ControlPanel(QWidget):
@@ -1104,6 +1119,7 @@ class DesktopPet(QMainWindow):
         self.runtime_model_path: Path | None = None
         self.backend_process: subprocess.Popen | None = None
         self.backend_started_by_app = False
+        self._shutdown_in_progress = False
         self.control_panel = None
         self.resize_margin = 8
         self._window_dragging = False
@@ -1114,6 +1130,9 @@ class DesktopPet(QMainWindow):
 
         self.bridge = PetBridge()
         self.bridge.stateChanged.connect(self.on_web_state_changed)
+        self.bridge.openSettingsRequested.connect(self.open_settings_page)
+        self.bridge.minimizeWindowRequested.connect(self.showMinimized)
+        self.bridge.closeWindowRequested.connect(self.close)
 
         self.browser = QWebEngineView(self)
         self.browser.setMouseTracking(True)
@@ -1128,7 +1147,9 @@ class DesktopPet(QMainWindow):
         self.browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.browser.customContextMenuRequested.connect(self.show_context_menu)
         self.browser.installEventFilter(self)
-        QApplication.instance().installEventFilter(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
         self.channel = QWebChannel(self.browser.page())
         self.channel.registerObject("qtBridge", self.bridge)
@@ -1472,7 +1493,7 @@ class DesktopPet(QMainWindow):
         ]
         creationflags = 0
         if os.name == "nt":
-            creationflags = subprocess.CREATE_NO_WINDOW
+            creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
         try:
             self.backend_process = subprocess.Popen(
@@ -1498,15 +1519,87 @@ class DesktopPet(QMainWindow):
         if not proc or not self.backend_started_by_app:
             return
         if proc.poll() is not None:
+            self.backend_process = None
+            self.backend_started_by_app = False
             return
         try:
-            proc.terminate()
-            proc.wait(timeout=2)
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                proc.wait(timeout=2)
+            else:
+                proc.terminate()
+                proc.wait(timeout=2)
         except Exception:
             try:
                 proc.kill()
+                proc.wait(timeout=2)
             except Exception:
                 pass
+        finally:
+            self.backend_process = None
+            self.backend_started_by_app = False
+
+    def shutdown_runtime(self) -> None:
+        if self._shutdown_in_progress:
+            return
+        self._shutdown_in_progress = True
+
+        try:
+            if hasattr(self, "_config_poll_timer") and self._config_poll_timer.isActive():
+                self._config_poll_timer.stop()
+        except Exception:
+            pass
+
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
+        except Exception:
+            pass
+
+        try:
+            if self.control_panel is not None:
+                self.control_panel.close()
+                self.control_panel.deleteLater()
+                self.control_panel = None
+        except Exception:
+            pass
+
+        try:
+            self.browser.loadFinished.disconnect(self.on_web_loaded)
+        except Exception:
+            pass
+
+        try:
+            self.browser.stop()
+        except Exception:
+            pass
+
+        try:
+            page = self.browser.page()
+            if page is not None:
+                page.setWebChannel(None)
+        except Exception:
+            pass
+
+        try:
+            self.browser.close()
+            self.browser.deleteLater()
+        except Exception:
+            pass
+
+        try:
+            self.channel.deleteLater()
+        except Exception:
+            pass
+
+        self.stop_backend_service()
 
     def eventFilter(self, watched, event):
         def _is_browser_related(obj: QObject) -> bool:
@@ -1546,6 +1639,11 @@ class DesktopPet(QMainWindow):
             top = p.y() <= self.resize_margin
             bottom = p.y() >= rect.height() - self.resize_margin
             return (left, top, right, bottom)
+
+        def _hit_titlebar_button_exclusion(p: QPoint) -> bool:
+            if p.y() > 40:
+                return False
+            return p.x() >= max(0, self.width() - 96)
 
         def _cursor_from_edges(edges: tuple[bool, bool, bool, bool]):
             left, top, right, bottom = edges
@@ -1600,7 +1698,7 @@ class DesktopPet(QMainWindow):
                     self._resize_edges = _hit_edges(local)
                     self._window_resizing = any(self._resize_edges)
                     move_zone = local.y() <= 40
-                    self._window_dragging = (not self._window_resizing) and move_zone
+                    self._window_dragging = (not self._window_resizing) and move_zone and not _hit_titlebar_button_exclusion(local)
                     if self._window_resizing:
                         self.browser.setCursor(_cursor_from_edges(self._resize_edges))
                         return True
@@ -1654,7 +1752,7 @@ class DesktopPet(QMainWindow):
                 edges = _hit_edges(local)
                 if any(edges):
                     self.browser.setCursor(_cursor_from_edges(edges))
-                elif local.y() <= 40:
+                elif local.y() <= 40 and not _hit_titlebar_button_exclusion(local):
                     self.browser.setCursor(Qt.CursorShape.OpenHandCursor)
                 else:
                     self.browser.setCursor(Qt.CursorShape.ArrowCursor)
@@ -1851,18 +1949,16 @@ class DesktopPet(QMainWindow):
         self.apply_config_to_web()
 
     def closeEvent(self, event) -> None:
+        event.accept()
         try:
             self.save_config()
         except Exception as exc:
             print(f"保存配置失败: {exc}")
-        try:
-            if self.control_panel is not None:
-                self.control_panel.close()
-        except Exception:
-            pass
-        self.stop_backend_service()
+        self.shutdown_runtime()
         super().closeEvent(event)
-        QApplication.quit()
+        app = QApplication.instance()
+        if app is not None:
+            QTimer.singleShot(0, lambda: app.exit(0))
 
 
 if __name__ == "__main__":

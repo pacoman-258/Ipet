@@ -36,6 +36,8 @@ def _make_skill(
     allowlist: list[str] | None = None,
     script_name: str | None = None,
     script_source: str | None = None,
+    script_relative_path: str | None = None,
+    write_script_manifest: bool = True,
 ) -> Path:
     skill_dir = Path(root)
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -58,7 +60,10 @@ def _make_skill(
     if script_name:
         scripts_dir = skill_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
-        scripts_dir.joinpath(f"{script_name}.py").write_text(
+        relative_path = script_relative_path or f"{script_name}.py"
+        script_path = scripts_dir / Path(relative_path)
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text(
             script_source
             or "\n".join(
                 [
@@ -69,15 +74,16 @@ def _make_skill(
             ),
             encoding="utf-8",
         )
-        manifest["scripts"] = [
-            {
-                "name": script_name,
-                "description": f"Run {script_name}",
-                "path": f"scripts/{script_name}.py",
-                "input_schema": {"type": "object", "properties": {"value": {"type": "string"}}},
-                "timeout_sec": 10,
-            }
-        ]
+        if write_script_manifest:
+            manifest["scripts"] = [
+                {
+                    "name": script_name,
+                    "description": f"Run {script_name}",
+                    "path": f"scripts/{Path(relative_path).as_posix()}",
+                    "input_schema": {"type": "object", "properties": {"value": {"type": "string"}}},
+                    "timeout_sec": 10,
+                }
+            ]
     if manifest:
         skill_dir.joinpath("skill.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     return skill_dir
@@ -206,6 +212,115 @@ class SkillRuntimeTests(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertIn("not valid JSON", result.error)
+
+    def test_auto_discovered_cli_script_tools_run_without_manifest(self) -> None:
+        with _workspace_tempdir() as root:
+            manager = SkillManager(root)
+            imported_dir = root / "third_party_skills"
+            _make_skill(
+                imported_dir / "pptx-helper",
+                name="PPTX Helper",
+                description="Imported CLI helper",
+                script_name="thumbnail",
+                write_script_manifest=False,
+                script_source="\n".join(
+                    [
+                        "import sys",
+                        "if __name__ == '__main__':",
+                        "    print(' '.join(sys.argv[1:]))",
+                    ]
+                ),
+            )
+            runtime = SkillRuntime(manager)
+            resolved = runtime.resolve_active_skills(["pptx-helper"])
+
+            tools = runtime.build_script_tools(resolved)
+            result = tools[0].call({"args": ["slides.pptx", "preview"]})
+
+            self.assertEqual([tool.name for tool in tools], ["skill.pptx-helper.thumbnail"])
+            self.assertTrue(result.ok)
+            self.assertEqual(result.content, "slides.pptx preview")
+            self.assertEqual(tools[0].metadata["script_name"], "thumbnail")
+
+    def test_auto_discovered_scripts_skip_internal_helper_dirs(self) -> None:
+        with _workspace_tempdir() as root:
+            manager = SkillManager(root)
+            imported_dir = root / "third_party_skills"
+            _make_skill(
+                imported_dir / "pptx-helper",
+                name="PPTX Helper",
+                description="Imported CLI helper",
+                script_name="unpack",
+                script_relative_path="office/unpack.py",
+                write_script_manifest=False,
+                script_source="\n".join(["if __name__ == '__main__':", "    print('unpacked')"]),
+            )
+            _make_skill(
+                imported_dir / "pptx-helper",
+                name="PPTX Helper",
+                description="Imported CLI helper",
+                script_name="helper",
+                script_relative_path="office/helpers/helper.py",
+                write_script_manifest=False,
+                script_source="\n".join(["if __name__ == '__main__':", "    print('helper')"]),
+            )
+            runtime = SkillRuntime(manager)
+            resolved = runtime.resolve_active_skills(["pptx-helper"])
+
+            tool_names = [tool.name for tool in runtime.build_script_tools(resolved)]
+
+            self.assertIn("skill.pptx-helper.office.unpack", tool_names)
+            self.assertNotIn("skill.pptx-helper.office.helpers.helper", tool_names)
+
+    def test_auto_discovered_office_pack_tool_accepts_structured_arguments(self) -> None:
+        with _workspace_tempdir() as root:
+            manager = SkillManager(root)
+            imported_dir = root / "third_party_skills"
+            _make_skill(
+                imported_dir / "pptx-helper",
+                name="PPTX Helper",
+                description="Imported CLI helper",
+                script_name="pack",
+                script_relative_path="office/pack.py",
+                write_script_manifest=False,
+                script_source="\n".join(
+                    [
+                        "import json, sys",
+                        "if __name__ == '__main__':",
+                        "    print(json.dumps({'argv': sys.argv[1:]}, ensure_ascii=False))",
+                    ]
+                ),
+            )
+            runtime = SkillRuntime(manager)
+            resolved = runtime.resolve_active_skills(["pptx-helper"])
+
+            tools = {tool.name: tool for tool in runtime.build_script_tools(resolved)}
+            pack_tool = tools["skill.pptx-helper.office.pack"]
+            result = pack_tool.call(
+                {
+                    "input_directory": "work/unpacked",
+                    "output_file": "dist/output.pptx",
+                    "original_file": "source/template.pptx",
+                    "validate": False,
+                }
+            )
+
+            self.assertTrue(result.ok)
+            self.assertEqual(
+                result.structured_data,
+                {
+                    "argv": [
+                        "work/unpacked",
+                        "dist/output.pptx",
+                        "--original",
+                        "source/template.pptx",
+                        "--validate",
+                        "false",
+                    ]
+                },
+            )
+            self.assertIn("final .pptx", pack_tool.description)
+            self.assertEqual(pack_tool.input_schema.get("required"), ["input_directory", "output_file"])
 
     def test_skill_aware_tool_bridge_filters_base_tools_and_adds_skill_tools(self) -> None:
         with _workspace_tempdir() as root:

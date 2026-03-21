@@ -1,160 +1,205 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import ast
 import json
-import re
 import shutil
 import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
 
-from .adapters import detect_adapter_profile, normalize_subdir, resolve_compatibility_mode, safe_relative_subdir
-from .models import SkillImportResult, SkillManifest, SkillRecord, SkillResourceEntry, SkillScriptDefinition
+from .adapters import normalize_subdir, safe_relative_subdir
+from .discovery import AUTO_SCRIPT_IGNORED_PARTS, IGNORED_DISCOVERY_DIRS, SKILL_JSON_NAME, SKILL_MD_NAME
+from .discovery import discover_builtin_candidates, discover_imported_candidates
+from .models import SkillDiscoveryCandidate, SkillImportResult, SkillManifest, SkillRecord, SkillScriptDefinition
+from .normalizer import discover_resource_entries, manifest_allowlist_from_sources, normalize_skill_record, safe_skill_id
+from .parsers import build_site_metadata, load_clawhub_metadata, load_source_metadata, parse_frontmatter, parse_simple_yaml, write_source_metadata
 
 
-SKILL_MD_NAME = "SKILL.md"
-SKILL_JSON_NAME = "skill.json"
-SKILL_SOURCE_META_NAME = ".skill_source.json"
-IGNORED_DISCOVERY_DIRS = {
-    ".git",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    ".uv-cache",
-    ".uv-tools",
-    "dist",
-    "build",
-}
-RESOURCE_TEXT_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml"}
+
+def _script_tool_name_from_path(relative_path: str) -> str:
+    normalized = str(relative_path or "").replace("\\", "/").strip().strip("/")
+    if not normalized:
+        return ""
+    raw_parts = list(Path(normalized).with_suffix("").parts)
+    if raw_parts and raw_parts[0] == "scripts":
+        raw_parts = raw_parts[1:]
+    cleaned_parts: list[str] = []
+    for part in raw_parts:
+        token = safe_skill_id(part).replace(".", "-")
+        if token:
+            cleaned_parts.append(token)
+    return ".".join(cleaned_parts)
 
 
-def _safe_skill_id(name: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(name or "").strip())
-    cleaned = cleaned.strip("._-").lower()
-    return cleaned or "skill"
 
-
-def _dedupe_strings(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for item in items or []:
-        text = str(item or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        out.append(text)
-    return tuple(out)
-
-
-def _parse_frontmatter(raw_text: str) -> tuple[dict[str, str], str]:
-    text = str(raw_text or "")
-    match = re.match(r"^\s*---\s*\r?\n(.*?)\r?\n---\s*\r?\n?(.*)$", text, re.DOTALL)
-    if not match:
-        return {}, text.strip()
-    frontmatter_text = match.group(1)
-    body = match.group(2).strip()
-    frontmatter: dict[str, str] = {}
-    for raw_line in frontmatter_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        frontmatter[key.strip()] = value.strip().strip('"').strip("'")
-    return frontmatter, body
-
-
-def _parse_simple_yaml(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    payload: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        payload[key.strip()] = value.strip().strip('"').strip("'")
-    return payload
-
-
-def _relative_files(root: Path, directory_name: str) -> tuple[str, ...]:
-    target = root / directory_name
-    if not target.exists() or not target.is_dir():
-        return ()
-    items: list[str] = []
-    for child in sorted(target.rglob("*")):
-        if not child.is_file():
-            continue
-        try:
-            items.append(child.relative_to(root).as_posix())
-        except ValueError:
-            continue
-    return tuple(items)
-
-
-def _load_source_metadata(root_path: Path) -> dict[str, Any]:
-    meta_path = root_path / SKILL_SOURCE_META_NAME
-    if not meta_path.exists():
-        return {}
+def _script_summary(path: Path) -> str:
     try:
-        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        module = ast.parse(path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        return f"Run {path.name}"
+    raw_doc = ast.get_docstring(module)
+    if raw_doc:
+        first_line = str(raw_doc).strip().splitlines()[0].strip()
+        if first_line:
+            return first_line
+    return f"Run {path.name}"
 
 
-def _write_source_metadata(root_path: Path, metadata: dict[str, Any]) -> None:
-    payload = {str(key): value for key, value in dict(metadata or {}).items() if value not in (None, "")}
-    if not payload:
-        return
-    (root_path / SKILL_SOURCE_META_NAME).write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+
+def _default_cli_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "args": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Command-line arguments passed to the skill script.",
+            },
+            "stdin": {
+                "type": "string",
+                "description": "Optional plain-text stdin passed to the script.",
+            },
+            "stdin_json": {
+                "type": "object",
+                "description": "Optional JSON payload encoded to stdin.",
+            },
+        },
+    }
 
 
-def _discover_resource_entries(root_path: Path) -> tuple[SkillResourceEntry, ...]:
-    resources: list[SkillResourceEntry] = []
-    seen_paths: set[str] = set()
 
-    def _append(path: Path, category: str) -> None:
-        if not path.exists() or not path.is_file():
-            return
+def _auto_script_spec(tool_name: str, summary: str) -> tuple[str, dict[str, Any], str]:
+    generic_description = f"{summary} (auto-discovered CLI script)"
+    if tool_name == "office.pack":
+        return (
+            "Create or save the final .pptx/.docx/.xlsx file by packing an edited unpacked directory. Use this after editing slides or XML. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "input_directory": {"type": "string", "description": "Unpacked Office document directory to pack."},
+                    "output_file": {"type": "string", "description": "Output .pptx/.docx/.xlsx file path to create."},
+                    "original_file": {"type": "string", "description": "Optional original Office file used for validation comparison."},
+                    "validate": {"type": "boolean", "description": "Whether to run validation before packing. Defaults to true."},
+                },
+                "required": ["input_directory", "output_file"],
+            },
+            "argv_office_pack",
+        )
+    if tool_name == "office.unpack":
+        return (
+            "Unpack a .pptx/.docx/.xlsx into a working directory so it can be edited slide-by-slide or XML-by-XML. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "input_file": {"type": "string", "description": "Source Office file path to unpack."},
+                    "output_directory": {"type": "string", "description": "Directory that will receive the unpacked Office contents."},
+                    "merge_runs": {"type": "boolean", "description": "DOCX-only option to merge adjacent runs."},
+                    "simplify_redlines": {"type": "boolean", "description": "DOCX-only option to simplify adjacent tracked changes."},
+                },
+                "required": ["input_file", "output_directory"],
+            },
+            "argv_office_unpack",
+        )
+    if tool_name == "office.validate":
+        return (
+            "Validate an Office file or unpacked directory before packing/exporting it. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to a packed Office file or unpacked directory."},
+                    "original_file": {"type": "string", "description": "Optional original Office file for comparison."},
+                    "auto_repair": {"type": "boolean", "description": "Automatically repair common issues before validating."},
+                    "author": {"type": "string", "description": "Optional author name for redlining validation."},
+                    "verbose": {"type": "boolean", "description": "Enable verbose validator output."},
+                },
+                "required": ["path"],
+            },
+            "argv_office_validate",
+        )
+    if tool_name == "add_slide":
+        return (
+            "Add a new slide to an unpacked PPTX directory by duplicating an existing slide or creating one from a layout. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "unpacked_dir": {"type": "string", "description": "Unpacked PPTX working directory."},
+                    "source": {"type": "string", "description": "Source slide or layout XML filename."},
+                },
+                "required": ["unpacked_dir", "source"],
+            },
+            "argv_pptx_add_slide",
+        )
+    if tool_name == "clean":
+        return (
+            "Clean an unpacked PPTX directory by removing unreferenced slides and assets before packing the final .pptx. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "unpacked_dir": {"type": "string", "description": "Unpacked PPTX working directory to clean."},
+                },
+                "required": ["unpacked_dir"],
+            },
+            "argv_pptx_clean",
+        )
+    if tool_name == "thumbnail":
+        return (
+            "Render thumbnail grids from a PPTX so the model can visually inspect slides or layout before or after editing. (auto-discovered CLI script)",
+            {
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string", "description": "Input .pptx file path."},
+                    "output_prefix": {"type": "string", "description": "Optional output image prefix."},
+                    "cols": {"type": "integer", "description": "Optional number of thumbnail columns."},
+                },
+                "required": ["input"],
+            },
+            "argv_pptx_thumbnail",
+        )
+    return generic_description, _default_cli_input_schema(), "argv"
+
+
+
+def _discover_auto_script_entries(root_path: Path, *, existing_names: set[str]) -> tuple[SkillScriptDefinition, ...]:
+    scripts_root = root_path / "scripts"
+    if not scripts_root.exists() or not scripts_root.is_dir():
+        return ()
+
+    entries: list[SkillScriptDefinition] = []
+    for candidate in sorted(scripts_root.rglob("*.py")):
+        if candidate.name == "__init__.py":
+            continue
         try:
-            relative = path.relative_to(root_path).as_posix()
+            relative_under_scripts = candidate.relative_to(scripts_root)
+            relative_path = candidate.relative_to(root_path).as_posix()
         except ValueError:
-            return
-        if relative in seen_paths:
-            return
-        seen_paths.add(relative)
+            continue
+        if any(part in AUTO_SCRIPT_IGNORED_PARTS for part in relative_under_scripts.parts):
+            continue
         try:
-            size_bytes = int(path.stat().st_size)
+            source_text = candidate.read_text(encoding="utf-8")
         except Exception:
-            size_bytes = 0
-        resources.append(
-            SkillResourceEntry(
-                path=relative,
-                category=category,
-                absolute_path=path.resolve(),
-                size_bytes=size_bytes,
+            continue
+        if "__main__" not in source_text:
+            continue
+        tool_name = _script_tool_name_from_path(relative_path)
+        if not tool_name or tool_name in existing_names:
+            continue
+        existing_names.add(tool_name)
+        summary = _script_summary(candidate)
+        description, input_schema, runner = _auto_script_spec(tool_name, summary)
+        entries.append(
+            SkillScriptDefinition(
+                name=tool_name,
+                description=description,
+                path=relative_path,
+                absolute_path=candidate.resolve(),
+                input_schema=input_schema,
+                timeout_sec=120,
+                runner=runner,
             )
         )
-
-    _append(root_path / SKILL_MD_NAME, "prompt")
-    for directory_name, category in (("references", "reference"), ("assets", "asset")):
-        directory = root_path / directory_name
-        if not directory.exists() or not directory.is_dir():
-            continue
-        for child in sorted(directory.rglob("*")):
-            _append(child, category)
-    for child in sorted(root_path.iterdir(), key=lambda item: item.name.lower()):
-        if not child.is_file():
-            continue
-        if child.name in {SKILL_MD_NAME, SKILL_JSON_NAME, SKILL_SOURCE_META_NAME}:
-            continue
-        if child.suffix.lower() not in RESOURCE_TEXT_SUFFIXES:
-            continue
-        _append(child, "document")
-    return tuple(resources)
+    return tuple(entries)
 
 
 class SkillManager:
@@ -176,27 +221,55 @@ class SkillManager:
         root_path = Path(skill_dir).resolve()
         if not root_path.exists() or not root_path.is_dir():
             raise FileNotFoundError(str(root_path))
-        skill = self._load_skill(root_path, source_type=source_type, preferred_name=preferred_name)
+        candidate = SkillDiscoveryCandidate(
+            source_type=source_type,
+            package_root=root_path,
+            discovery_root=root_path,
+        )
+        skill = self._load_skill(candidate, preferred_name=preferred_name)
         if not skill.ok:
             raise ValueError("; ".join(skill.errors) or "invalid skill")
         return skill
 
     def list_skills(self) -> list[SkillRecord]:
         items: list[SkillRecord] = []
-        for source_type, base_dir in (("builtin", self.builtin_dir), ("imported", self.imported_dir)):
-            if not base_dir.exists():
+        seen_ids: set[str] = set()
+        candidates = [
+            *discover_builtin_candidates(self.builtin_dir),
+            *discover_imported_candidates(self.imported_dir),
+        ]
+        for candidate in candidates:
+            item = self._load_skill(candidate)
+            if item.skill_id in seen_ids:
                 continue
-            for child in sorted(base_dir.iterdir(), key=lambda item: item.name.lower()):
-                if child.is_dir():
-                    items.append(self._load_skill(child, source_type=source_type))
+            seen_ids.add(item.skill_id)
+            items.append(item)
         return items
 
     def get_skill(self, skill_id: str) -> SkillRecord | None:
-        target = _safe_skill_id(skill_id)
+        target = safe_skill_id(skill_id)
         for item in self.list_skills():
-            if item.skill_id == target:
+            if item.skill_id == target or target in item.aliases:
                 return item
         return None
+
+    def canonicalize_skill_id(self, skill_id: str) -> str:
+        target = safe_skill_id(skill_id)
+        if not target:
+            return ""
+        skill = self.get_skill(target)
+        return skill.skill_id if skill is not None else target
+
+    def canonicalize_skill_ids(self, skill_ids: list[str] | tuple[str, ...] | None) -> list[str]:
+        seen: set[str] = set()
+        items: list[str] = []
+        for skill_id in skill_ids or []:
+            canonical = self.canonicalize_skill_id(str(skill_id or "").strip())
+            if not canonical or canonical in seen:
+                continue
+            seen.add(canonical)
+            items.append(canonical)
+        return items
 
     def import_local_directory(self, source_dir: str | Path, name: str = "") -> SkillImportResult:
         src = Path(source_dir).resolve()
@@ -208,7 +281,7 @@ class SkillManager:
             target_path,
             ignore=shutil.ignore_patterns(*IGNORED_DISCOVERY_DIRS),
         )
-        _write_source_metadata(
+        write_source_metadata(
             target_path,
             {
                 "source_type": "local",
@@ -254,7 +327,7 @@ class SkillManager:
             )
         finally:
             shutil.rmtree(temp_path, ignore_errors=True)
-        _write_source_metadata(
+        write_source_metadata(
             target_path,
             {
                 "source_type": "git",
@@ -282,95 +355,97 @@ class SkillManager:
         return self.install_from_git(repo_url=repo_url, name=name, ref=ref, subdir=subdir)
 
     def delete_imported_skill(self, skill_id: str) -> None:
-        target_path = self.imported_dir / _safe_skill_id(skill_id)
+        record = self.get_skill(skill_id)
+        if record is not None and record.source_type == "imported":
+            target_path = record.package_root or record.root_path
+        else:
+            target_path = self.imported_dir / safe_skill_id(skill_id)
         if not target_path.exists():
             raise FileNotFoundError(str(target_path))
         shutil.rmtree(target_path)
 
-    def _load_skill(self, root_path: Path, *, source_type: str, preferred_name: str = "") -> SkillRecord:
+    def _load_skill(self, candidate: SkillDiscoveryCandidate, *, preferred_name: str = "") -> SkillRecord:
+        root_path = candidate.discovery_root.resolve()
         skill_md_path = root_path / SKILL_MD_NAME
         if not skill_md_path.exists():
             return SkillRecord(
-                skill_id=_safe_skill_id(preferred_name or root_path.name),
+                skill_id=safe_skill_id(preferred_name or root_path.name),
                 name=preferred_name or root_path.name,
                 description="",
-                source_type=source_type,
+                source_type=candidate.source_type,
                 root_path=root_path,
                 skill_md_path=skill_md_path,
                 prompt_body="",
                 ok=False,
                 errors=("missing SKILL.md",),
+                package_root=candidate.package_root,
+                discovery_root=root_path,
             )
 
-        raw_frontmatter, prompt_body = _parse_frontmatter(skill_md_path.read_text(encoding="utf-8"))
-        name = str(raw_frontmatter.get("name") or preferred_name or root_path.name).strip()
-        description = str(raw_frontmatter.get("description") or "").strip()
-        errors: list[str] = []
-        if not str(raw_frontmatter.get("name") or "").strip():
-            errors.append("SKILL.md requires name in frontmatter")
-        if not description:
-            errors.append("SKILL.md requires description in frontmatter")
-
-        metadata = _parse_simple_yaml(root_path / "agents" / "openai.yaml")
-        display_name = str(metadata.get("display_name") or name).strip() or name
-        short_description = str(metadata.get("short_description") or description).strip() or description
-        source_meta = _load_source_metadata(root_path)
-        source_repo = str(source_meta.get("source_repo") or source_meta.get("repo_url") or "").strip()
-        source_ref = str(source_meta.get("source_ref") or source_meta.get("ref") or "").strip()
-        source_subdir = normalize_subdir(source_meta.get("source_subdir") or source_meta.get("subdir") or "")
-
-        manifest = self._load_manifest(root_path, errors)
-        has_manifest = root_path.joinpath(SKILL_JSON_NAME).exists()
-        resources = _discover_resource_entries(root_path)
-        adapter_profile = detect_adapter_profile(source_repo=source_repo, source_subdir=source_subdir)
-        compatibility_mode = resolve_compatibility_mode(
-            has_manifest=has_manifest,
-            adapter_profile=adapter_profile,
-            source_repo=source_repo,
-            source_subdir=source_subdir,
-            resource_count=len(resources),
-        )
-        return SkillRecord(
-            skill_id=_safe_skill_id(preferred_name or name or root_path.name),
-            name=name or root_path.name,
-            description=description,
-            source_type=source_type,
+        raw_frontmatter, prompt_body = parse_frontmatter(skill_md_path.read_text(encoding="utf-8"))
+        metadata = parse_simple_yaml(root_path / "agents" / "openai.yaml")
+        source_meta = load_source_metadata(root_path)
+        manifest, manifest_payload, manifest_errors = self._load_manifest(root_path)
+        clawhub_meta = load_clawhub_metadata(root_path)
+        site_metadata = build_site_metadata(
             root_path=root_path,
+            source_meta=source_meta,
+            manifest_payload=manifest_payload,
+            clawhub_meta=clawhub_meta,
+        )
+        if manifest.tool_allowlist:
+            allowlist = manifest.tool_allowlist
+        else:
+            allowlist = manifest_allowlist_from_sources(raw_frontmatter, manifest_payload)
+            if allowlist:
+                manifest = SkillManifest(version=manifest.version, tool_allowlist=allowlist, scripts=manifest.scripts)
+        if not manifest.scripts:
+            existing_names: set[str] = set()
+            auto_scripts = _discover_auto_script_entries(root_path, existing_names=existing_names)
+            if auto_scripts:
+                manifest = SkillManifest(
+                    version=manifest.version,
+                    tool_allowlist=manifest.tool_allowlist,
+                    scripts=tuple(auto_scripts),
+                )
+        resources = discover_resource_entries(root_path)
+        record = normalize_skill_record(
+            source_type=candidate.source_type,
+            root_path=root_path,
+            package_root=candidate.package_root.resolve(),
             skill_md_path=skill_md_path,
             prompt_body=prompt_body,
+            frontmatter=raw_frontmatter,
+            metadata=metadata,
+            source_meta=source_meta,
+            site_metadata=site_metadata,
             manifest=manifest,
-            has_manifest=has_manifest,
-            ok=not errors,
-            errors=tuple(errors),
-            references=_relative_files(root_path, "references"),
-            assets=_relative_files(root_path, "assets"),
+            has_manifest=root_path.joinpath(SKILL_JSON_NAME).exists(),
             resources=resources,
-            display_name=display_name,
-            short_description=short_description,
-            has_openai_metadata=bool(metadata),
-            source_repo=source_repo,
-            source_ref=source_ref,
-            source_subdir=source_subdir,
-            compatibility_mode=compatibility_mode,
-            adapter_profile=adapter_profile,
+            preferred_name=preferred_name,
         )
+        if manifest_errors:
+            merged_errors = tuple(list(record.errors) + list(manifest_errors))
+            return SkillRecord(
+                **{**record.__dict__, "ok": False, "errors": merged_errors}
+            )
+        return record
 
-    def _load_manifest(self, root_path: Path, errors: list[str]) -> SkillManifest:
+    def _load_manifest(self, root_path: Path) -> tuple[SkillManifest, dict[str, Any], tuple[str, ...]]:
         manifest_path = root_path / SKILL_JSON_NAME
         if not manifest_path.exists():
-            return SkillManifest()
+            return SkillManifest(), {}, ()
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            errors.append(f"invalid skill.json: {exc}")
-            return SkillManifest()
+            return SkillManifest(), {}, (f"invalid skill.json: {exc}",)
         if not isinstance(payload, dict):
-            errors.append("skill.json must be an object")
-            return SkillManifest()
+            return SkillManifest(), {}, ("skill.json must be an object",)
 
         version = str(payload.get("version") or "1.0.0").strip() or "1.0.0"
-        tool_allowlist = _dedupe_strings(payload.get("tool_allowlist"))
+        tool_allowlist = manifest_allowlist_from_sources({}, payload)
         raw_scripts = payload.get("scripts") or []
+        errors: list[str] = []
         if raw_scripts and not isinstance(raw_scripts, list):
             errors.append("skill.json scripts must be a list")
             raw_scripts = []
@@ -381,7 +456,7 @@ class SkillManager:
             if not isinstance(raw_script, dict):
                 errors.append("skill.json script entries must be objects")
                 continue
-            script_name = _safe_skill_id(raw_script.get("name") or "")
+            script_name = safe_skill_id(raw_script.get("name") or "")
             if not script_name:
                 errors.append("skill.json script requires name")
                 continue
@@ -418,10 +493,12 @@ class SkillManager:
                     absolute_path=absolute_path,
                     input_schema=input_schema,
                     timeout_sec=timeout_sec,
+                    runner=str(raw_script.get("runner") or "json_stdin").strip() or "json_stdin",
                 )
             )
-        return SkillManifest(version=version, tool_allowlist=tool_allowlist, scripts=tuple(scripts))
+        return SkillManifest(version=version, tool_allowlist=tool_allowlist, scripts=tuple(scripts)), payload, tuple(errors)
 
     def _ensure_skill_id_available(self, skill_id: str) -> None:
         if self.get_skill(skill_id) is not None:
             raise FileExistsError(skill_id)
+

@@ -27,6 +27,13 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('currentChatMode === "chat"', source)
         self.assertIn("聊天模式不使用 Skills", source)
 
+    def test_index_contains_shell_action_buttons(self) -> None:
+        source = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="nav-settings"', source)
+        self.assertIn('id="nav-chat"', source)
+        self.assertIn('id="window-minimize"', source)
+        self.assertIn('id="window-close"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

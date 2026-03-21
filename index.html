@@ -13,8 +13,23 @@
 
   <style>
     :root {
-      --shell-border: rgba(255, 255, 255, 0.42);
-      --shell-shadow: 0 22px 48px rgba(16, 24, 40, 0.18);
+      --shell-border: rgba(255, 255, 255, 0.68);
+      --shell-shadow: 0 28px 58px rgba(121, 108, 177, 0.22);
+      --shell-surface: rgba(255, 251, 255, 0.76);
+      --shell-surface-strong: rgba(255, 255, 255, 0.88);
+      --shell-pink: #f7a2c2;
+      --shell-pink-strong: #ea88ae;
+      --shell-blue: #8dc2ff;
+      --shell-blue-strong: #6e9df3;
+      --shell-ink: #5562a5;
+      --window-inset: 12px;
+      --window-radius: 30px;
+      --chrome-height: 40px;
+      --sidebar-width: 148px;
+      --sidebar-width-current: 148px;
+      --sidebar-width-compact: 112px;
+      --shell-overlay: 0.42;
+      --shell-sidebar-bg: linear-gradient(180deg, rgba(255, 239, 245, 0.84), rgba(240, 233, 255, 0.78));
       --panel-bg: linear-gradient(180deg, #f7fafd, #edf2f7);
       --panel-border: rgba(201, 213, 229, 0.95);
       --panel-text: #243447;
@@ -28,9 +43,10 @@
       --danger-soft: rgba(210, 72, 72, 0.22);
       --backdrop-overlay: 0.42;
       --stage-bg:
-        radial-gradient(circle at 18% 16%, rgba(143, 197, 255, 0.28), transparent 24%),
-        radial-gradient(circle at 82% 12%, rgba(255, 205, 227, 0.28), transparent 22%),
-        linear-gradient(180deg, rgba(233, 240, 251, 0.96), rgba(219, 230, 245, 0.92));
+        radial-gradient(circle at 16% 18%, rgba(255, 211, 227, 0.78), transparent 28%),
+        radial-gradient(circle at 84% 18%, rgba(198, 223, 255, 0.78), transparent 24%),
+        radial-gradient(circle at 50% 82%, rgba(255, 255, 255, 0.58), transparent 18%),
+        linear-gradient(180deg, #ffd9e8 0%, #f8dfef 34%, #dce8ff 100%);
     }
 
     html,
@@ -54,6 +70,7 @@
       overflow: hidden;
       z-index: 0;
       background: var(--stage-bg);
+      clip-path: inset(var(--window-inset) round var(--window-radius));
     }
 
     #window-background-image {
@@ -65,7 +82,6 @@
       object-position: center;
       display: none;
       filter: saturate(1.02) contrast(1.04);
-      transform: scale(1.02);
     }
 
     #window-background.has-image #window-background-image {
@@ -76,7 +92,8 @@
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(180deg, rgba(14, 26, 43, calc(var(--backdrop-overlay) * 0.5)), rgba(14, 26, 43, calc(var(--backdrop-overlay) * 0.9)));
+        radial-gradient(circle at 50% 8%, rgba(255, 255, 255, 0.36), transparent 30%),
+        linear-gradient(180deg, rgba(255, 255, 255, calc(var(--backdrop-overlay) * 0.24)), rgba(235, 240, 255, calc(var(--backdrop-overlay) * 0.2)));
     }
 
     #canvas {
@@ -85,68 +102,351 @@
       width: 100%;
       height: 100%;
       display: block;
-      z-index: 1;
+      z-index: 12;
+      clip-path: polygon(
+        calc(var(--window-inset) + var(--sidebar-width-current)) calc(var(--window-inset) + var(--chrome-height)),
+        calc(100% - var(--window-inset)) calc(var(--window-inset) + var(--chrome-height)),
+        calc(100% - var(--window-inset)) calc(100% - var(--window-inset)),
+        calc(var(--window-inset) + var(--sidebar-width-current)) calc(100% - var(--window-inset))
+      );
     }
 
     #window-frame {
       position: fixed;
-      inset: 0;
-      border: 1px solid rgba(255, 255, 255, 0.28);
-      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
-      border-radius: 8px;
+      inset: var(--window-inset);
+      border: 1px solid var(--shell-border);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.78),
+        0 0 0 1px rgba(141, 156, 209, 0.16);
+      border-radius: var(--window-radius);
       pointer-events: none;
-      display: none;
-      z-index: 9;
+      display: block;
+      z-index: 13;
     }
 
     #status {
       position: fixed;
-      left: 10px;
-      top: 10px;
-      z-index: 10;
-      padding: 4px 8px;
+      left: calc(var(--window-inset) + var(--sidebar-width-current) + 14px);
+      top: 66px;
+      z-index: 14;
+      padding: 10px 12px;
       font-size: 11px;
       font-family: "Consolas", "Microsoft YaHei", sans-serif;
-      color: rgba(255, 255, 255, 0.85);
-      background: rgba(0, 0, 0, 0.22);
-      border-radius: 8px;
+      color: var(--shell-ink);
+      background: rgba(255, 255, 255, 0.74);
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.44);
+      box-shadow: 0 14px 28px rgba(119, 106, 175, 0.16);
       pointer-events: none;
       white-space: pre;
-      min-width: 180px;
+      min-width: 210px;
       display: none;
     }
 
     #error {
       position: fixed;
-      left: 10px;
-      bottom: 10px;
-      z-index: 11;
-      color: #ffd7d7;
-      background: rgba(120, 0, 0, 0.5);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 6px;
-      padding: 6px 10px;
+      left: calc(var(--window-inset) + var(--sidebar-width-current) + 14px);
+      bottom: 28px;
+      z-index: 15;
+      color: #8b365f;
+      background: rgba(255, 245, 248, 0.84);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 18px;
+      box-shadow: 0 14px 28px rgba(119, 106, 175, 0.16);
+      padding: 8px 12px;
       font-family: monospace;
       font-size: 12px;
-      max-width: calc(100vw - 20px);
+      max-width: calc(100vw - 176px);
       display: none;
       pointer-events: none;
     }
 
-    #chat-toggle {
+    #shell-app {
       position: fixed;
-      right: 18px;
-      bottom: 18px;
-      z-index: 30;
+      inset: var(--window-inset);
+      z-index: 8;
+      display: grid;
+      grid-template-columns: var(--sidebar-width-current) minmax(0, 1fr);
+      grid-template-rows: var(--chrome-height) minmax(0, 1fr);
+      overflow: hidden;
+      border-radius: var(--window-radius);
+      background: linear-gradient(
+        135deg,
+        rgba(255, 244, 248, calc(0.14 + var(--shell-overlay) * 0.34)),
+        rgba(237, 243, 255, calc(0.12 + var(--shell-overlay) * 0.32))
+      );
+      box-shadow: var(--shell-shadow);
+      pointer-events: none;
+    }
+
+    #shell-app::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      border: 1px solid rgba(255, 255, 255, 0.62);
+      pointer-events: none;
+    }
+
+    #shell-app::after {
+      content: "";
+      position: absolute;
+      inset: auto -6% -24% 38%;
+      height: 58%;
+      background:
+        radial-gradient(circle at 18% 36%, rgba(255, 186, 213, 0.72), transparent 16%),
+        radial-gradient(circle at 46% 34%, rgba(255, 255, 255, 0.76), transparent 15%),
+        radial-gradient(circle at 72% 26%, rgba(196, 224, 255, 0.78), transparent 18%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(216, 231, 255, 0));
+      border-radius: 999px;
+      opacity: 0.88;
+      pointer-events: none;
+    }
+
+    #shell-chrome {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      position: relative;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      height: var(--chrome-height);
+      padding: 0 18px 0 16px;
+      border-bottom: 1px solid rgba(210, 210, 242, 0.56);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, calc(0.34 + var(--shell-overlay) * 0.3)),
+        rgba(248, 244, 255, calc(0.26 + var(--shell-overlay) * 0.28))
+      );
+      pointer-events: auto;
+    }
+
+    #shell-chrome-lights {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .chrome-light {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    }
+
+    .chrome-light:nth-child(1) {
+      background: #f8aac5;
+    }
+
+    .chrome-light:nth-child(2) {
+      background: #ffd8a5;
+    }
+
+    .chrome-light:nth-child(3) {
+      background: #9ddbb9;
+    }
+
+    #shell-title-pill {
+      justify-self: center;
+      min-width: min(280px, 48vw);
+      max-width: min(360px, 52vw);
+      padding: 4px 24px;
+      border-radius: 999px;
+      background: rgba(241, 236, 252, 0.92);
+      color: var(--shell-ink);
+      font-family: "Segoe UI Variable Display", "Trebuchet MS", "Microsoft YaHei", sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: 0.02em;
+      text-align: center;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    }
+
+    #shell-window-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-self: end;
+      pointer-events: auto;
+    }
+
+    .window-action-button {
+      width: 30px;
+      height: 30px;
       border: none;
       border-radius: 999px;
-      padding: 12px 18px;
-      font-size: 13px;
-      font-weight: 700;
-      color: #7f3d59;
-      background: linear-gradient(180deg, rgba(255, 247, 250, 0.95), rgba(255, 230, 240, 0.92));
-      box-shadow: 0 14px 32px rgba(84, 45, 66, 0.28);
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 10px 18px rgba(123, 115, 182, 0.18);
+      font-size: 18px;
+      line-height: 1;
       cursor: pointer;
+      color: var(--shell-ink);
+      transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    #window-close {
+      color: #c06792;
+    }
+
+    #shell-sidebar {
+      grid-column: 1;
+      grid-row: 2;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 18px 16px 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, calc(0.08 + var(--shell-overlay) * 0.16)), rgba(255, 255, 255, 0)),
+        var(--shell-sidebar-bg);
+      border-right: 1px solid rgba(245, 181, 207, 0.3);
+      box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.44);
+      overflow: hidden;
+      pointer-events: auto;
+    }
+
+    #shell-sidebar::before,
+    #shell-sidebar::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+    }
+
+    #shell-sidebar::before {
+      top: 20px;
+      right: 12px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0)),
+        radial-gradient(circle, rgba(248, 183, 213, 0.35), rgba(248, 183, 213, 0));
+      opacity: 0.9;
+    }
+
+    #shell-sidebar::after {
+      left: 14px;
+      right: 14px;
+      bottom: 22px;
+      height: 72px;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at 22% 30%, rgba(255, 255, 255, 0.75), transparent 18%),
+        radial-gradient(circle at 52% 55%, rgba(255, 195, 223, 0.56), transparent 16%),
+        radial-gradient(circle at 78% 38%, rgba(205, 226, 255, 0.56), transparent 17%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0));
+      opacity: 0.72;
+    }
+
+    .shell-nav-button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      box-sizing: border-box;
+      height: 52px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 12px 24px rgba(137, 119, 185, 0.12);
+      color: var(--shell-ink);
+      font-family: "Segoe UI Variable Display", "Trebuchet MS", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease;
+      position: relative;
+      z-index: 1;
+    }
+
+    .shell-nav-button svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+      flex: 0 0 auto;
+    }
+
+    .shell-nav-button span {
+      white-space: nowrap;
+      line-height: 1;
+    }
+
+    .shell-nav-button.is-active {
+      color: #fff9fd;
+      background: linear-gradient(135deg, var(--shell-pink), var(--shell-blue));
+      box-shadow: 0 18px 28px rgba(130, 123, 194, 0.28);
+    }
+
+    #shell-stage {
+      grid-column: 2;
+      grid-row: 2;
+      position: relative;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    #shell-stage::before,
+    #shell-stage::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      pointer-events: none;
+    }
+
+    #shell-stage::before {
+      inset: 12px 12% auto auto;
+      width: 160px;
+      height: 160px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0));
+    }
+
+    #shell-stage::after {
+      inset: auto auto -54px 18%;
+      width: 360px;
+      height: 180px;
+      background:
+        radial-gradient(circle at 20% 42%, rgba(255, 255, 255, 0.86), transparent 22%),
+        radial-gradient(circle at 38% 56%, rgba(255, 215, 232, 0.8), transparent 18%),
+        radial-gradient(circle at 62% 44%, rgba(214, 230, 255, 0.8), transparent 22%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0));
+    }
+
+    @media (max-width: 760px) {
+      :root {
+        --sidebar-width-current: var(--sidebar-width-compact);
+      }
+
+      #shell-app {
+        grid-template-columns: var(--sidebar-width-current) minmax(0, 1fr);
+      }
+
+      #shell-title-pill {
+        min-width: 0;
+        max-width: min(220px, 40vw);
+        padding-left: 16px;
+        padding-right: 16px;
+        font-size: 16px;
+      }
+
+      #shell-sidebar {
+        padding-left: 12px;
+        padding-right: 10px;
+      }
+
+      .shell-nav-button {
+        gap: 10px;
+        height: 48px;
+        padding: 0 12px;
+        font-size: 14px;
+      }
+
+      #status,
+      #error {
+        left: calc(var(--window-inset) + var(--sidebar-width-current) + 10px);
+        max-width: calc(100vw - 136px);
+      }
     }
 
     #chat-panel {
@@ -599,38 +899,23 @@
     }
 
     #window-frame {
-      border: 1px solid var(--shell-border);
-      box-shadow:
-        inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-        0 0 0 1px rgba(19, 34, 58, 0.12);
-      border-radius: 24px;
-      background: rgba(13, 22, 37, 0.06);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
     }
 
     #status,
     #error {
-      border-radius: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.28);
-      box-shadow: var(--shell-shadow);
+      box-shadow: 0 14px 28px rgba(119, 106, 175, 0.16);
     }
 
-    #status {
-      color: #f6fbff;
-      background: rgba(10, 21, 37, 0.34);
-      min-width: 208px;
-      padding: 10px 12px;
+    .shell-nav-button:hover,
+    .window-action-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 26px rgba(130, 123, 194, 0.24);
     }
 
-    #error {
-      color: #fff4f4;
-      background: rgba(123, 29, 29, 0.42);
-    }
-
-    #chat-toggle {
-      color: #f7fbff;
-      background: linear-gradient(180deg, rgba(62, 112, 220, 0.96), rgba(46, 89, 191, 0.94));
-      box-shadow: 0 20px 42px rgba(33, 66, 134, 0.34);
-      letter-spacing: 0.02em;
+    .shell-nav-button:active,
+    .window-action-button:active {
+      transform: translateY(0);
     }
 
     #chat-panel {
@@ -764,10 +1049,38 @@
     <div id="window-background-overlay"></div>
   </div>
   <canvas id="canvas"></canvas>
+  <div id="shell-app">
+    <div id="shell-chrome">
+      <div id="shell-chrome-lights" aria-hidden="true">
+        <span class="chrome-light"></span>
+        <span class="chrome-light"></span>
+        <span class="chrome-light"></span>
+      </div>
+      <div id="shell-title-pill">My Desktop Pet</div>
+      <div id="shell-window-actions">
+        <button id="window-minimize" class="window-action-button" type="button" aria-label="Minimize window">-</button>
+        <button id="window-close" class="window-action-button" type="button" aria-label="Close window">x</button>
+      </div>
+    </div>
+    <aside id="shell-sidebar" aria-label="Desktop pet shortcuts">
+      <button id="nav-settings" class="shell-nav-button" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M19.14 12.94a7.48 7.48 0 0 0 .05-.94 7.48 7.48 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58a7.48 7.48 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.25A3.25 3.25 0 1 1 12 8.75a3.25 3.25 0 0 1 0 6.5Z" />
+        </svg>
+        <span>Settings</span>
+      </button>
+      <button id="nav-chat" class="shell-nav-button" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16.5H9.5l-4.8 3.6a.5.5 0 0 1-.8-.4v-3.2H4A1.5 1.5 0 0 1 2.5 15V6A1.5 1.5 0 0 1 4 4.5Zm2.5 4a1 1 0 1 0 0 2h11a1 1 0 1 0 0-2Zm0 3.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2Z" />
+        </svg>
+        <span>Chat</span>
+      </button>
+    </aside>
+    <div id="shell-stage" aria-hidden="true"></div>
+    <div id="status">loading...</div>
+    <div id="error"></div>
+  </div>
   <div id="window-frame"></div>
-  <div id="status">loading...</div>
-  <div id="error"></div>
-  <button id="chat-toggle">Chat</button>
   <div id="chat-panel">
     <div id="chat-header">
       <span id="chat-title">桌宠对话</span>
@@ -868,8 +1181,10 @@
       const statusEl = document.getElementById("status");
       const errorEl = document.getElementById("error");
       const canvas = document.getElementById("canvas");
-      const frameEl = document.getElementById("window-frame");
-      const chatToggleEl = document.getElementById("chat-toggle");
+      const navSettingsButtonEl = document.getElementById("nav-settings");
+      const navChatButtonEl = document.getElementById("nav-chat");
+      const windowMinimizeEl = document.getElementById("window-minimize");
+      const windowCloseEl = document.getElementById("window-close");
       const chatPanelEl = document.getElementById("chat-panel");
       const chatCloseEl = document.getElementById("chat-close");
       const chatSkillsToggleEl = document.getElementById("chat-skills-toggle");
@@ -988,7 +1303,9 @@
       function applyBackgroundVisuals() {
         const enabled = !!state.background_enabled;
         const imageUrl = String(state.background_image_url || "").trim();
-        document.documentElement.style.setProperty("--backdrop-overlay", String(backgroundOverlayValue(state.background_overlay_opacity)));
+        const overlay = backgroundOverlayValue(state.background_overlay_opacity);
+        document.documentElement.style.setProperty("--backdrop-overlay", String(overlay));
+        document.documentElement.style.setProperty("--shell-overlay", String(overlay));
         if (!enabled || !imageUrl) {
           backgroundLayerEl.classList.remove("has-image");
           backgroundImageEl.removeAttribute("src");
@@ -999,7 +1316,6 @@
       }
 
       function refreshStatus() {
-        frameEl.style.display = state.edit_mode ? "block" : "none";
         statusEl.style.display = state.edit_mode ? "block" : "none";
         const modelName = state.model_url ? state.model_url.split("/").pop() : "(none)";
         statusEl.textContent = [
@@ -1009,6 +1325,29 @@
           `offset: (${roundInt(state.offset_x)}, ${roundInt(state.offset_y)})`,
           `bg: ${state.background_enabled && state.background_image_url ? "image" : "default"}`,
         ].join("\n");
+      }
+
+      function updateShellButtons() {
+        const chatOpen = chatPanelEl.classList.contains("open");
+        navChatButtonEl.classList.toggle("is-active", chatOpen);
+        navChatButtonEl.setAttribute("aria-pressed", String(chatOpen));
+      }
+
+      function callQtBridge(methodName) {
+        if (!qtBridge || typeof qtBridge[methodName] !== "function") {
+          return false;
+        }
+        qtBridge[methodName]();
+        return true;
+      }
+
+      function openSettingsPage() {
+        if (callQtBridge("openSettingsPage")) {
+          return;
+        }
+        const backendBase = String(state.chat.backend_url || "http://127.0.0.1:8008").trim() || "http://127.0.0.1:8008";
+        const normalizedBase = backendBase.replace(/\/+$/, "");
+        window.open(`${normalizedBase}/settings`, "_blank", "noopener");
       }
 
       function loadChatPanelState() {
@@ -1405,12 +1744,14 @@
           chatPanelPositioned = true;
         }
         chatPanelEl.classList.add("open");
+        updateShellButtons();
         loadChatSkills(false);
         chatInputEl.focus();
       }
 
       function closeChat() {
         chatPanelEl.classList.remove("open");
+        updateShellButtons();
         toggleChatSkillsDrawer(false);
         saveChatPanelState();
       }
@@ -2412,12 +2753,21 @@
           });
         }
 
-        chatToggleEl.addEventListener("click", () => {
+        navSettingsButtonEl.addEventListener("click", () => {
+          openSettingsPage();
+        });
+        navChatButtonEl.addEventListener("click", () => {
           if (chatPanelEl.classList.contains("open")) {
             closeChat();
           } else {
             openChat();
           }
+        });
+        windowMinimizeEl.addEventListener("click", () => {
+          callQtBridge("minimizeWindow");
+        });
+        windowCloseEl.addEventListener("click", () => {
+          callQtBridge("closeWindow");
         });
         for (const button of chatModeButtons) {
           button.addEventListener("click", () => setChatMode(button.dataset.chatMode));
@@ -2426,6 +2776,7 @@
         chatSkillsToggleEl.addEventListener("click", () => toggleChatSkillsDrawer());
         chatSkillsRefreshEl.addEventListener("click", () => loadChatSkills(true));
         chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
+        updateShellButtons();
         chatSendEl.addEventListener("click", async () => {
           if (chatState !== "idle") {
             return;

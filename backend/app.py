@@ -301,6 +301,14 @@ def _normalize_skill_ids(values: Any) -> list[str]:
     return out
 
 
+def _canonicalize_skill_ids(values: Any, *, manager: SkillManager | None = None) -> list[str]:
+    normalized = _normalize_skill_ids(values)
+    if not normalized:
+        return []
+    active_manager = manager or _get_skill_manager()
+    return active_manager.canonicalize_skill_ids(normalized)
+
+
 def _normalize_chat_mode(value: Any) -> str:
     mode = str(value or "").strip().lower()
     return mode if mode in CHAT_MODE_VALUES else CHAT_MODE_REACT
@@ -337,11 +345,11 @@ def _skill_summaries_for_route(
     manager = _get_skill_manager()
     available = {str(getattr(item, "skill_id", "")): item for item in manager.list_skills()}
     if chat_mode == CHAT_MODE_SKILL:
-        candidate_ids = _normalize_skill_ids(requested_skill_ids)
+        candidate_ids = _canonicalize_skill_ids(requested_skill_ids, manager=manager)
         if not candidate_ids:
             candidate_ids = list(available.keys())
     else:
-        candidate_ids = _normalize_skill_ids(requested_skill_ids)
+        candidate_ids = _canonicalize_skill_ids(requested_skill_ids, manager=manager)
         if not candidate_ids:
             candidate_ids = list(available.keys())
     items: list[dict[str, str]] = []
@@ -512,7 +520,7 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(skills_cfg, dict):
         skills_cfg = {}
     skills_cfg["enabled"] = bool(skills_cfg.get("enabled", True))
-    skills_cfg["default_active_ids"] = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
+    skills_cfg["default_active_ids"] = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"))
     chat["skills"] = skills_cfg
 
     window = merged.get("window", {})
@@ -826,8 +834,9 @@ def _resolve_request_skills(
     chat_cfg = config.get("chat", {}) if isinstance(config, dict) else {}
     skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
     enabled = bool(skills_cfg.get("enabled", True))
-    default_active_ids = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
-    requested_ids = _normalize_skill_ids(req_skill_ids or [])
+    manager = _get_skill_manager()
+    default_active_ids = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"), manager=manager)
+    requested_ids = _canonicalize_skill_ids(req_skill_ids or [], manager=manager)
     runtime = _get_skill_runtime()
     return runtime.resolve_active_skills(
         requested_ids,
@@ -1316,9 +1325,10 @@ def _skills_response_payload() -> dict[str, Any]:
     settings = _load_settings_config()
     chat_cfg = settings.get("chat", {}) if isinstance(settings, dict) else {}
     skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
-    default_active_ids = _normalize_skill_ids(skills_cfg.get("default_active_ids"))
+    manager = _get_skill_manager()
+    default_active_ids = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"), manager=manager)
     enabled = bool(skills_cfg.get("enabled", True))
-    records = _get_skill_manager().list_skills()
+    records = manager.list_skills()
     return {
         "ok": True,
         "enabled": enabled,
@@ -1488,7 +1498,7 @@ async def import_git_skill(req: SkillImportGitRequest) -> dict[str, Any]:
 
 @app.post("/api/skills/delete")
 async def delete_skill(req: SkillDeleteRequest) -> dict[str, Any]:
-    skill_id = str(req.skill_id or req.id or req.name or "").strip()
+    skill_id = _get_skill_manager().canonicalize_skill_id(str(req.skill_id or req.id or req.name or "").strip())
     if not skill_id:
         raise HTTPException(status_code=400, detail="skill_id is required")
     try:

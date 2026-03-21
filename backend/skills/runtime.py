@@ -307,6 +307,8 @@ class SkillRuntime:
             return ToolResult.from_error(f"skill script missing: {tool.definition.path}")
         if tool.skill.root_path.resolve() not in script_path.parents:
             return ToolResult.from_error(f"skill script escapes skill directory: {tool.definition.path}")
+        if str(tool.definition.runner or "").startswith("argv"):
+            return self._run_cli_script_tool(tool, script_path, args)
 
         payload = json.dumps(args, ensure_ascii=False)
         env = dict(os.environ)
@@ -346,6 +348,151 @@ class SkillRuntime:
                 raw={"stdout": stdout, "stderr": stderr},
             )
         return self._tool_result_from_script_output(parsed, stderr=stderr)
+
+    def _run_cli_script_tool(
+        self,
+        tool: SkillScriptTool,
+        script_path: Path,
+        arguments: dict[str, Any],
+    ) -> ToolResult:
+        try:
+            cli_args, stdin_payload = self._build_cli_invocation(tool.definition.runner, arguments)
+        except ValueError as exc:
+            return ToolResult.from_error(str(exc))
+
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(script_path), *cli_args],
+                input=stdin_payload,
+                capture_output=True,
+                text=True,
+                timeout=tool.definition.timeout_sec,
+                cwd=str(tool.skill.root_path),
+                encoding="utf-8",
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return ToolResult.from_error(f"skill script timed out after {tool.definition.timeout_sec}s", raw=exc)
+        except Exception as exc:
+            return ToolResult.from_error(str(exc), raw=exc)
+
+        stdout = str(completed.stdout or "").strip()
+        stderr = str(completed.stderr or "").strip()
+        if completed.returncode != 0:
+            detail = stderr or stdout or f"skill script failed with exit code {completed.returncode}"
+            return ToolResult.from_error(
+                detail,
+                raw={"returncode": completed.returncode, "stderr": stderr, "stdout": stdout},
+            )
+        return self._tool_result_from_cli_output(stdout, stderr=stderr)
+
+    def _build_cli_invocation(self, runner: str, arguments: dict[str, Any]) -> tuple[list[str], str | None]:
+        mode = str(runner or "argv").strip() or "argv"
+        generic_requested = arguments.get("args") is not None
+        if mode == "argv_office_pack":
+            if generic_requested and not any(key in arguments for key in ("input_directory", "output_file", "original_file", "validate")):
+                return self._build_generic_cli_invocation(arguments)
+            input_directory = str(arguments.get("input_directory") or "").strip()
+            output_file = str(arguments.get("output_file") or "").strip()
+            if not input_directory:
+                raise ValueError("input_directory cannot be empty")
+            if not output_file:
+                raise ValueError("output_file cannot be empty")
+            cli_args = [input_directory, output_file]
+            original_file = str(arguments.get("original_file") or "").strip()
+            if original_file:
+                cli_args.extend(["--original", original_file])
+            if arguments.get("validate") is not None:
+                cli_args.extend(["--validate", "true" if bool(arguments.get("validate")) else "false"])
+            return cli_args, None
+        if mode == "argv_office_unpack":
+            if generic_requested and not any(
+                key in arguments for key in ("input_file", "output_directory", "merge_runs", "simplify_redlines")
+            ):
+                return self._build_generic_cli_invocation(arguments)
+            input_file = str(arguments.get("input_file") or "").strip()
+            output_directory = str(arguments.get("output_directory") or "").strip()
+            if not input_file:
+                raise ValueError("input_file cannot be empty")
+            if not output_directory:
+                raise ValueError("output_directory cannot be empty")
+            cli_args = [input_file, output_directory]
+            if arguments.get("merge_runs") is not None:
+                cli_args.extend(["--merge-runs", "true" if bool(arguments.get("merge_runs")) else "false"])
+            if arguments.get("simplify_redlines") is not None:
+                cli_args.extend(
+                    ["--simplify-redlines", "true" if bool(arguments.get("simplify_redlines")) else "false"]
+                )
+            return cli_args, None
+        if mode == "argv_office_validate":
+            if generic_requested and not any(key in arguments for key in ("path", "original_file", "auto_repair", "author", "verbose")):
+                return self._build_generic_cli_invocation(arguments)
+            target_path = str(arguments.get("path") or "").strip()
+            if not target_path:
+                raise ValueError("path cannot be empty")
+            cli_args = [target_path]
+            original_file = str(arguments.get("original_file") or "").strip()
+            if original_file:
+                cli_args.extend(["--original", original_file])
+            if bool(arguments.get("verbose")):
+                cli_args.append("--verbose")
+            if bool(arguments.get("auto_repair")):
+                cli_args.append("--auto-repair")
+            author = str(arguments.get("author") or "").strip()
+            if author:
+                cli_args.extend(["--author", author])
+            return cli_args, None
+        if mode == "argv_pptx_add_slide":
+            if generic_requested and not any(key in arguments for key in ("unpacked_dir", "source")):
+                return self._build_generic_cli_invocation(arguments)
+            unpacked_dir = str(arguments.get("unpacked_dir") or "").strip()
+            source = str(arguments.get("source") or "").strip()
+            if not unpacked_dir:
+                raise ValueError("unpacked_dir cannot be empty")
+            if not source:
+                raise ValueError("source cannot be empty")
+            return [unpacked_dir, source], None
+        if mode == "argv_pptx_clean":
+            if generic_requested and "unpacked_dir" not in arguments:
+                return self._build_generic_cli_invocation(arguments)
+            unpacked_dir = str(arguments.get("unpacked_dir") or "").strip()
+            if not unpacked_dir:
+                raise ValueError("unpacked_dir cannot be empty")
+            return [unpacked_dir], None
+        if mode == "argv_pptx_thumbnail":
+            if generic_requested and not any(key in arguments for key in ("input", "output_prefix", "cols")):
+                return self._build_generic_cli_invocation(arguments)
+            input_path = str(arguments.get("input") or "").strip()
+            if not input_path:
+                raise ValueError("input cannot be empty")
+            cli_args = [input_path]
+            output_prefix = str(arguments.get("output_prefix") or "").strip()
+            if output_prefix:
+                cli_args.append(output_prefix)
+            cols = arguments.get("cols")
+            if cols is not None and str(cols).strip():
+                cli_args.extend(["--cols", str(int(cols))])
+            return cli_args, None
+
+        return self._build_generic_cli_invocation(arguments)
+
+    def _build_generic_cli_invocation(self, arguments: dict[str, Any]) -> tuple[list[str], str | None]:
+        raw_args = arguments.get("args", [])
+        if raw_args is None:
+            raw_args = []
+        if not isinstance(raw_args, list):
+            raise ValueError("args must be a list of strings")
+        cli_args = [str(item) for item in raw_args]
+
+        stdin_payload: str | None = None
+        if "stdin_json" in arguments and arguments.get("stdin_json") is not None:
+            stdin_payload = json.dumps(arguments.get("stdin_json"), ensure_ascii=False)
+        elif "stdin" in arguments and arguments.get("stdin") is not None:
+            stdin_payload = str(arguments.get("stdin"))
+        return cli_args, stdin_payload
 
     def pptx_extract_text_tool(self, skill: SkillRecord, arguments: dict[str, Any] | None = None) -> ToolResult:
         args = arguments if isinstance(arguments, dict) else {}
@@ -480,6 +627,19 @@ class SkillRuntime:
                 raw=value,
             )
         return ToolResult.from_value(value)
+
+    def _tool_result_from_cli_output(self, stdout: str, *, stderr: str = "") -> ToolResult:
+        text = str(stdout or "").strip()
+        if not text:
+            if stderr:
+                return ToolResult.from_value({"stdout": "", "stderr": stderr})
+            return ToolResult.from_value({"ok": True})
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            payload = {"stdout": text, "stderr": stderr}
+            return ToolResult(ok=True, content=text, structured_data=payload, raw=payload)
+        return self._tool_result_from_script_output(parsed, stderr=stderr)
 
     def build_tool_bridge(self, base_bridge: Any, resolved: ResolvedSkillSet) -> "SkillAwareToolBridge":
         return SkillAwareToolBridge(base_bridge=base_bridge, runtime=self, resolved=resolved)
