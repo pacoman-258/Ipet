@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pickle
 import threading
 import time
@@ -44,6 +45,10 @@ class AgentRunState(TypedDict, total=False):
     system_prompt: str
     active_skill_ids: list[str]
     skill_prompt_text: str
+    execution_phase: str
+    discovered_skill_ids: list[str]
+    discovered_tool_names: list[str]
+    selected_skill_ids: list[str]
     expression_mode: bool
     expression_output_format: str
     available_expressions: list[str]
@@ -269,6 +274,70 @@ def _continuation_recheck_prompt(user_text: str, remaining_steps: int) -> str:
     return "\n".join(lines)
 
 
+def _result_is_effectively_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set)):
+        return len(value) == 0 or all(_result_is_effectively_empty(item) for item in value)
+    if isinstance(value, dict):
+        if not value:
+            return True
+        meaningful = {key: item for key, item in value.items() if key not in {"ok", "kind", "source", "source_type"}}
+        if not meaningful:
+            return True
+        return all(_result_is_effectively_empty(item) for item in meaningful.values())
+    return False
+
+
+def _execution_had_no_effect(execution: ToolExecution) -> bool:
+    if not execution.ok:
+        return True
+    payload = _parse_execution_payload(execution)
+    if payload.get("ok") is False:
+        return True
+    if "result" in payload and _result_is_effectively_empty(payload.get("result")):
+        return True
+    if "result_preview" in payload and not str(payload.get("result_preview") or "").strip():
+        return True
+    summary = str(execution.summary or "").strip().lower()
+    if not summary:
+        return True
+    return any(marker in summary for marker in ("no result", "no results", "no match", "no matches", "not found", "empty"))
+
+
+def _tool_reflection_prompt(executions: list[ToolExecution]) -> str:
+    ineffective: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for execution in executions:
+        if not _execution_had_no_effect(execution):
+            continue
+        signature = _tool_call_signature(execution.name, execution.arguments)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        ineffective.append(
+            {
+                "name": execution.name,
+                "arguments": execution.arguments,
+                "ok": execution.ok,
+                "summary": execution.summary,
+            }
+        )
+    if not ineffective:
+        return ""
+    lines = [
+        "Some previous tool attempts did not produce useful progress.",
+        "Do not repeat an ineffective tool call in the same form.",
+        "If you use the same tool again, change the parameters materially and address why the previous attempt failed, or switch to a different tool.",
+        "Ineffective attempts:",
+    ]
+    for item in ineffective[-5:]:
+        lines.append(json.dumps(item, ensure_ascii=False))
+    return "\n".join(lines)
+
+
 def _append_trace(state: AgentRunState, event: str, **payload: Any) -> list[dict[str, Any]]:
     trace = list(state.get("trace") or [])
     trace.append({"event": event, "ts": time.time(), **payload})
@@ -295,6 +364,97 @@ def _route_action_message(state: AgentRunState, intent: ToolIntent | None) -> st
     if intent is None:
         return ""
     return f"I will call {intent.name} next."
+
+
+def _normalize_name_list(raw_items: Any) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items or []:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        items.append(value)
+    return items
+
+
+def _default_execution_phase(state: AgentRunState) -> str:
+    if str(state.get("chat_mode") or "").strip().lower() != "react":
+        return ""
+    if str(state.get("route_kind") or "").strip() == "complex_task":
+        return "agent_loop"
+    selected_skill_ids = _normalize_name_list(state.get("selected_skill_ids") or [])
+    if selected_skill_ids:
+        return "skill_execution"
+    return "skill_selection"
+
+
+def _parse_execution_payload(execution: ToolExecution) -> dict[str, Any]:
+    try:
+        payload = json.loads(str(execution.payload or ""))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _skill_id_from_tool_name(tool_name: str) -> str:
+    name = str(tool_name or "").strip()
+    if not name.startswith("skill."):
+        return ""
+    parts = name.split(".")
+    if len(parts) < 3:
+        return ""
+    return str(parts[1] or "").strip()
+
+
+def _state_updates_from_executions(
+    state: AgentRunState,
+    tool_calls: list[ToolIntent],
+    executions: list[ToolExecution],
+) -> dict[str, Any]:
+    execution_phase = str(state.get("execution_phase") or _default_execution_phase(state)).strip()
+    discovered_skill_ids = _normalize_name_list(state.get("discovered_skill_ids") or [])
+    discovered_tool_names = _normalize_name_list(state.get("discovered_tool_names") or [])
+    selected_skill_ids = _normalize_name_list(state.get("selected_skill_ids") or [])
+
+    for intent in tool_calls:
+        skill_id = _skill_id_from_tool_name(intent.name)
+        if skill_id and skill_id not in selected_skill_ids:
+            selected_skill_ids.append(skill_id)
+
+    for execution in executions:
+        if not execution.ok:
+            continue
+        payload = _parse_execution_payload(execution)
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        if execution.name == "system.skill_search":
+            matches = result.get("matches") if isinstance(result.get("matches"), list) else []
+            for item in matches:
+                if not isinstance(item, dict):
+                    continue
+                skill_id = str(item.get("id") or "").strip()
+                if skill_id and skill_id not in discovered_skill_ids:
+                    discovered_skill_ids.append(skill_id)
+        elif execution.name == "system.tool_search":
+            matches = result.get("matches") if isinstance(result.get("matches"), list) else []
+            for item in matches:
+                if not isinstance(item, dict):
+                    continue
+                tool_name = str(item.get("name") or "").strip()
+                if tool_name and tool_name not in discovered_tool_names:
+                    discovered_tool_names.append(tool_name)
+        elif execution.name == "system.agent_loop":
+            execution_phase = "agent_loop"
+
+    if execution_phase != "agent_loop" and selected_skill_ids:
+        execution_phase = "skill_execution"
+
+    return {
+        "execution_phase": execution_phase,
+        "discovered_skill_ids": discovered_skill_ids,
+        "discovered_tool_names": discovered_tool_names,
+        "selected_skill_ids": selected_skill_ids,
+    }
 
 
 class AgentGraphRuntime:
@@ -428,18 +588,23 @@ class AgentGraphRuntime:
             "approval_decision": dict(state.get("approval_decision") or {}),
             "final_messages": list(state.get("final_messages") or []),
             "needs_additional_approval": bool(state.get("needs_additional_approval", False)),
+            "execution_phase": str(state.get("execution_phase") or _default_execution_phase(state)),
+            "discovered_skill_ids": _normalize_name_list(state.get("discovered_skill_ids") or []),
+            "discovered_tool_names": _normalize_name_list(state.get("discovered_tool_names") or []),
+            "selected_skill_ids": _normalize_name_list(state.get("selected_skill_ids") or []),
             "trace": _append_trace(
                 state,
                 "prepare_context",
                 session_id=str(state.get("session_id") or ""),
                 turn_id=str(state.get("turn_id") or ""),
+                execution_phase=str(state.get("execution_phase") or _default_execution_phase(state)),
             ),
         }
 
     async def _decide_or_respond(self, state: AgentRunState) -> AgentRunState:
         route_kind = str(state.get("route_kind") or "").strip()
         route_thought_summary = str(state.get("route_thought_summary") or "").strip()
-        if route_kind == "direct_answer":
+        if route_kind == "direct_answer" and str(state.get("chat_mode") or "").strip().lower() != "react":
             return {
                 "decision": {
                     "needs_tool": False,
@@ -590,6 +755,7 @@ class AgentGraphRuntime:
         current_results = [item.to_dict() for item in executions]
         all_tool_results = list(state.get("tool_results") or []) + current_results
         all_executions = _deserialize_tool_executions(all_tool_results)
+        state_updates = _state_updates_from_executions(state, tool_calls, executions)
         remaining_steps = max(0, int(state.get("max_reasoning_steps") or 1) - int(state.get("reasoning_step") or 1))
         followup_messages = list(state.get("decision_messages") or state.get("working_messages") or []) + [
             {
@@ -601,17 +767,25 @@ class AgentGraphRuntime:
                 ),
             }
         ]
+        reflection_prompt = _tool_reflection_prompt(all_executions)
+        if reflection_prompt:
+            followup_messages.append({"role": "system", "content": reflection_prompt})
         return {
             "tool_results": all_tool_results,
             "followup_messages": followup_messages,
             "executed_call_signatures": sorted(executed_signatures),
             "approval_request": {},
             "needs_additional_approval": False,
+            "execution_phase": str(state_updates.get("execution_phase") or state.get("execution_phase") or ""),
+            "discovered_skill_ids": list(state_updates.get("discovered_skill_ids") or []),
+            "discovered_tool_names": list(state_updates.get("discovered_tool_names") or []),
+            "selected_skill_ids": list(state_updates.get("selected_skill_ids") or []),
             "trace": _append_trace(
                 state,
                 "execute_tools",
                 tool_count=len(tool_calls),
                 execution_count=len(executions),
+                execution_phase=str(state_updates.get("execution_phase") or state.get("execution_phase") or ""),
             ),
         }
 

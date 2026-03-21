@@ -50,6 +50,24 @@ def _write_skill(root: Path, *, name: str = "Repo Guide", description: str = "Gu
     return skill_dir
 
 
+def _write_script_skill(root: Path, *, name: str, description: str, script_name: str = "run_task") -> Path:
+    skill_dir = _write_skill(root, name=name, description=description)
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir.joinpath(f"{script_name}.py").write_text(
+        "\n".join(
+            [
+                '"""Run helper script."""',
+                "",
+                'if __name__ == "__main__":',
+                "    print('{\"ok\": true}')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
 class _FakeRuntime:
     def __init__(self) -> None:
         self.start_state = None
@@ -342,6 +360,151 @@ class SkillsApiTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(invocations, [{"topic": "chat modes"}])
 
+    def test_build_runtime_tool_bridge_skill_mode_exposes_allowlisted_mcp_tools(self) -> None:
+        skill_tool = Tool(
+            name="skill.repo-guide.suggest_tests",
+            description="Suggest tests",
+            input_schema={"type": "object", "properties": {}},
+            invoke=lambda arguments: {"ok": True, "arguments": arguments},
+        )
+        resolved = SimpleNamespace(
+            skill_ids=("repo-guide",),
+            prompt_text="Skill prompt",
+            tool_allowlist=("tavily-mcp.",),
+            resource_tools=(),
+            adapter_tools=(),
+            script_tools=(skill_tool,),
+        )
+        fake_bridge = _FakeBridge(
+            [
+                Tool(
+                    name="tavily-mcp.search",
+                    description="Search the web",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                ),
+                Tool(
+                    name="read_file",
+                    description="Read a file",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                ),
+            ]
+        )
+
+        with mock.patch.object(backend_app, "_resolve_request_skills", return_value=resolved), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge",
+            return_value=fake_bridge,
+        ):
+            bridge = backend_app._build_runtime_tool_bridge(
+                {
+                    "chat_mode": "skill",
+                    "active_skill_ids": ["repo-guide"],
+                }
+            )
+
+        tool_names = [tool.name for tool in bridge.list_registered_tools()]
+        self.assertIn("skill.repo-guide.suggest_tests", tool_names)
+        self.assertIn("tavily-mcp.search", tool_names)
+        self.assertNotIn("read_file", tool_names)
+
+    def test_chat_stream_react_skill_route_starts_in_skill_execution(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        resolved = SimpleNamespace(
+            skill_ids=("daily-hotspots",),
+            prompt_text="Skill prompt",
+            tool_allowlist=("tavily-mcp.",),
+            resource_tools=(),
+            adapter_tools=(),
+            script_tools=(),
+        )
+        route = SimpleNamespace(
+            route_kind="skill_task",
+            thought_summary="Use the skill",
+            skill_ids=["daily-hotspots"],
+            tool_candidates=[],
+            tool_call=None,
+            search_needed=False,
+            search_query="",
+        )
+
+        with mock.patch.object(backend_app, "_resolve_request_skills", return_value=resolved), mock.patch.object(
+            backend_app,
+            "_get_agent_graph_runtime",
+            return_value=runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ), mock.patch.object(
+            backend_app,
+            "classify_route",
+            new=mock.AsyncMock(return_value=route),
+        ):
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "collect today's hotspots and save them",
+                    "model": "demo",
+                    "system_prompt": "ROLEPLAY_PROMPT",
+                    "expression_mode": False,
+                    "chat_mode": "react",
+                    "router_enabled": True,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(runtime.start_state["execution_phase"], backend_app.PHASE_SKILL_EXECUTION)
+        self.assertEqual(runtime.start_state["selected_skill_ids"], ["daily-hotspots"])
+        self.assertEqual(runtime.start_state["decision_messages"][0]["role"], "system")
+        self.assertIn("Skill prompt", runtime.start_state["decision_messages"][0]["content"])
+        self.assertNotIn("ROLEPLAY_PROMPT", runtime.start_state["decision_messages"][0]["content"])
+        self.assertIn("ROLEPLAY_PROMPT", runtime.start_state["prompt_messages"][0]["content"])
+        self.assertIn("Skill prompt", runtime.start_state["prompt_messages"][0]["content"])
+
+    def test_chat_stream_allows_reasoning_steps_above_previous_cap(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        with mock.patch.object(
+            backend_app,
+            "_get_agent_graph_runtime",
+            return_value=runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ):
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "hello",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "chat_mode": "react",
+                    "router_enabled": False,
+                    "max_reasoning_steps": 25,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(runtime.start_state["max_reasoning_steps"], 25)
+
     def test_chat_stream_router_disabled_skips_classifier(self) -> None:
         runtime = _FakeRuntime()
 
@@ -469,6 +632,97 @@ class SkillsApiTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Skill", resp.json()["detail"])
+
+    def test_build_runtime_tool_bridge_react_skill_selection_exposes_system_search_and_default_skill_tools(self) -> None:
+        with _workspace_tempdir() as root:
+            _write_script_skill(root / "skills" / "builtin" / "repo-guide", name="Repo Guide", description="Repo helper")
+            _write_script_skill(root / "third_party_skills" / "daily-hotspots", name="Daily Hotspots", description="Collect daily hotspots")
+            manager = SkillManager(root)
+            fake_bridge = _FakeBridge(
+                [
+                    Tool(
+                        name="read_file",
+                        description="Read a file",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _args: {"ok": True},
+                    )
+                ]
+            )
+            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide"]}}}
+            with mock.patch.object(backend_app, "_get_skill_manager", side_effect=lambda force_reload=False: manager), mock.patch.object(
+                backend_app,
+                "_load_settings_config",
+                return_value=settings,
+            ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge):
+                bridge = backend_app._build_runtime_tool_bridge(
+                    {
+                        "chat_mode": "react",
+                        "execution_phase": backend_app.PHASE_SKILL_SELECTION,
+                        "active_skill_ids": ["repo-guide"],
+                        "discovered_skill_ids": [],
+                        "discovered_tool_names": [],
+                        "selected_skill_ids": [],
+                    }
+                )
+                tool_names = [tool.name for tool in bridge.list_registered_tools()]
+                search_result = bridge.call_tool("system.skill_search", {"query": "hotspots"})
+
+        self.assertIn("skill.repo-guide.run_task", tool_names)
+        self.assertIn("system.skill_search", tool_names)
+        self.assertIn("system.agent_loop", tool_names)
+        self.assertNotIn("read_file", tool_names)
+        self.assertTrue(search_result.ok)
+        self.assertIn("daily-hotspots", search_result.content)
+        self.assertNotIn("repo-guide", search_result.content)
+
+    def test_build_runtime_tool_bridge_agent_loop_only_exposes_discovered_tools_after_search(self) -> None:
+        fake_bridge = _FakeBridge(
+            [
+                Tool(
+                    name="read_file",
+                    description="Read a file",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                ),
+                Tool(
+                    name="browser.navigate",
+                    description="Navigate a page",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                ),
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge):
+            search_bridge = backend_app._build_runtime_tool_bridge(
+                {
+                    "chat_mode": "react",
+                    "execution_phase": backend_app.PHASE_AGENT_LOOP,
+                    "active_skill_ids": [],
+                    "discovered_skill_ids": [],
+                    "discovered_tool_names": [],
+                    "selected_skill_ids": [],
+                }
+            )
+            initial_names = [tool.name for tool in search_bridge.list_registered_tools()]
+            search_result = search_bridge.call_tool("system.tool_search", {"query": "read"})
+            discovered_bridge = backend_app._build_runtime_tool_bridge(
+                {
+                    "chat_mode": "react",
+                    "execution_phase": backend_app.PHASE_AGENT_LOOP,
+                    "active_skill_ids": [],
+                    "discovered_skill_ids": [],
+                    "discovered_tool_names": ["read_file"],
+                    "selected_skill_ids": [],
+                }
+            )
+            discovered_names = [tool.name for tool in discovered_bridge.list_registered_tools()]
+
+        self.assertEqual(initial_names, ["system.tool_search"])
+        self.assertTrue(search_result.ok)
+        self.assertIn("read_file", search_result.content)
+        self.assertIn("system.tool_search", discovered_names)
+        self.assertIn("read_file", discovered_names)
+        self.assertNotIn("browser.navigate", discovered_names)
 
 
 if __name__ == "__main__":

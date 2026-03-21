@@ -194,6 +194,7 @@ def _tool_catalog_prompt(tools: list[dict[str, Any]]) -> str:
         "Do not treat one successful tool call as task completion if the request clearly contains multiple unfinished steps.",
         "For browser automation or multi-step tasks, keep needs_tool=true until the requested sequence is actually completed or cannot be continued usefully.",
         "If part of the request is still unfinished, return only the next concrete tool step instead of jumping to a final answer.",
+        "If a previous tool call failed or produced no useful progress, do not repeat it in the same form. Change the parameters materially or switch tools.",
         "Output JSON only with these keys:",
         '{"needs_tool":true,"thought_summary":"brief summary","action_message":"what you plan to do","tool_calls":[{"name":"read_file","arguments":{"path":"story.txt"}}]}',
         "Available tools:",
@@ -311,20 +312,24 @@ def _router_prompt_react(tools: list[dict[str, Any]], skill_summaries: list[dict
         "Return JSON only.",
         'Allowed route_kind values: "skill_task", "complex_task", "simple_tool_task", "direct_answer".',
         'Return fields: {"route_kind":"","thought_summary":"","skill_ids":[],"tool_candidates":[],"tool_call":{"name":"","arguments":{}}}.',
-        "Use skill_task when one or more available skills are the clearest fit.",
-        "Use complex_task when the main model should perform full ReAct with a few preferred tools.",
-        "Use simple_tool_task only for a single obvious tool call with object arguments.",
-        "Use direct_answer when no tools or skills are needed.",
-        "tool_candidates are soft hints only.",
+        "Use skill_task when one or more visible skills are the clearest fit.",
+        "Use complex_task when the request should fall back to the general agent loop.",
+        "Use direct_answer only for pure conversational replies or simple explanations that do not require doing any work.",
+        "If the user is asking you to perform a workflow, gather current information, search, save a file, follow a skill, or complete multiple steps, do not return direct_answer.",
+        "When visible default skills are not enough, prefer complex_task so the execution model can use skill_search or agent_loop.",
+        "Do not select simple_tool_task in react mode unless a single explicit system tool call is truly required.",
     ]
     tool_names = sorted(_tool_names(tools))
     if tool_names:
-        lines.append("Available tools:")
+        lines.append("Available system capabilities:")
         lines.extend([f"- {name}" for name in tool_names])
     skill_lines = _skill_summary_lines(skill_summaries)
     if skill_lines:
-        lines.append("Available skills:")
+        lines.append("Visible default skills:")
         lines.extend(skill_lines)
+    else:
+        lines.append("Visible default skills: none")
+    lines.append("Use skill_task for default skills. Use complex_task when hidden skills or later tool discovery will likely be needed.")
     return "\n".join(lines)
 
 
@@ -401,9 +406,7 @@ def _route_from_assistant_message(
     tool_candidates = _normalize_tool_candidates(payload.get("tool_candidates"), allowed_tool_names)
     tool_call = _route_tool_call_payload(payload.get("tool_call"), allowed_tool_names)
     if route_kind == "skill_task" and not skill_ids:
-        route_kind = "direct_answer"
-    if route_kind == "complex_task" and not tool_candidates:
-        route_kind = "direct_answer"
+        route_kind = "complex_task" if chat_mode == "react" else "direct_answer"
     if route_kind == "simple_tool_task" and tool_call is None:
         route_kind = "direct_answer"
     return RouteDecision(

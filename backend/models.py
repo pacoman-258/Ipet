@@ -14,7 +14,7 @@ class ChatStreamRequest(BaseModel):
     tool_mode: str = Field(default="mcp_local_phase2")
     react_enabled: bool = Field(default=True)
     react_visibility: str = Field(default="inline")
-    max_reasoning_steps: int = Field(default=10, ge=1, le=12)
+    max_reasoning_steps: int = Field(default=10, ge=1)
     llm_provider: str = Field(default="ollama")
     api_base_url: str = Field(default="")
     api_key: str = Field(default="")

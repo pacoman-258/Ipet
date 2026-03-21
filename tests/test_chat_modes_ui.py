@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "index.html"
+SETTINGS_HTML = ROOT / "settings.html"
 
 
 class ChatModesUiTests(unittest.TestCase):
@@ -26,6 +27,11 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn("Skill模式至少需要启用一个技能", source)
         self.assertIn('currentChatMode === "chat"', source)
         self.assertIn("聊天模式不使用 Skills", source)
+
+    def test_settings_reasoning_steps_input_is_not_hard_capped_to_12(self) -> None:
+        source = SETTINGS_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="chat-max-reasoning-steps"', source)
+        self.assertNotIn('max="12"', source)
 
     def test_index_contains_shell_action_buttons(self) -> None:
         source = INDEX_HTML.read_text(encoding="utf-8")

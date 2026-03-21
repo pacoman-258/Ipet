@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import importlib.util
 import json
 import shutil
@@ -65,15 +66,89 @@ def _sample_payload() -> dict[str, object]:
                 "summary": "视频与娱乐内容占比较高。",
             },
             {
+                "platform": "抖音",
+                "items": [
+                    {"rank": 1, "title": "抖音热点 1"},
+                    {"rank": 2, "title": "抖音热点 2", "summary": "讨论持续升温"},
+                ],
+                "summary": ["短视频和社会话题并行。"],
+                "source_note": "Douyin results from fallback extraction.",
+            },
+            {
                 "platform": "微博",
                 "status": "approximate",
                 "items": [{"title": "微博热点 1"}],
                 "summary": ["当前仅获得近似结果。"],
                 "source_note": "Approximate ranking from fallback search.",
             },
+            {
+                "platform": "小红书",
+                "status": "partial",
+                "items": [{"title": "小红书热点 1"}],
+                "summary": ["生活方式与消费话题更突出。"],
+                "source_note": "Partial results from search extraction.",
+            },
         ],
         "overall_summary": ["娱乐与社区讨论并行升温。", "跨平台关注点集中在即时事件与情绪表达。"],
         "sources_note": "Bilibili used direct hot tool; other platforms used search or fallback extraction.",
+    }
+
+
+def _sample_content_payload() -> dict[str, object]:
+    return {
+        "generated_at": "2026-03-21T09:30:45+08:00",
+        "content": "\n".join(
+            [
+                "2026年3月21日热搜",
+                "生成时间：2026-03-21 09:30:45 +0800",
+                "",
+                "【百度贴吧】",
+                "1. 吧友热议话题 A",
+                "",
+                "【Bilibili】",
+                "1. 热门视频 A",
+                "",
+                "【抖音】",
+                "1. 短视频热点 A",
+                "",
+                "【微博】",
+                "1. 微博热点 A",
+                "",
+                "【小红书】",
+                "1. 小红书热点 A",
+                "",
+                "【全局总结】",
+                "- 今天的热点以视频、社区讨论和实时事件为主。",
+            ]
+        ),
+    }
+
+
+def _incomplete_structured_payload() -> dict[str, object]:
+    return {
+        "generated_at": "2026-03-21T09:30:45+08:00",
+        "platforms": [
+            {
+                "platform": "Bilibili",
+                "items": [{"rank": 1, "title": "只采集了 B 站热点"}],
+                "summary": ["内容不完整。"],
+            }
+        ],
+    }
+
+
+def _incomplete_content_payload() -> dict[str, object]:
+    return {
+        "generated_at": "2026-03-21T09:30:45+08:00",
+        "content": "\n".join(
+            [
+                "2026年3月21日热搜",
+                "生成时间：2026-03-21 09:30:45 +0800",
+                "",
+                "【Bilibili】",
+                "1. 只采集了 B 站热点",
+            ]
+        ),
     }
 
 
@@ -124,7 +199,7 @@ class DailyHotspotsSkillTests(unittest.TestCase):
             output_path.write_text("old content", encoding="utf-8")
 
             result = self.module.save_report(_sample_payload(), repo_root=root)
-            content = output_path.read_text(encoding="utf-8")
+            content = output_path.read_text(encoding="utf-8-sig")
 
             self.assertEqual(result["output_path"], str(output_path))
             self.assertNotEqual(content, "old content")
@@ -140,6 +215,45 @@ class DailyHotspotsSkillTests(unittest.TestCase):
             result = self.module.save_report(_sample_payload(), repo_root=root)
 
             self.assertEqual(Path(result["output_dir"]), first / "热搜")
+
+    def test_writes_preformatted_content_when_content_field_is_provided(self) -> None:
+        with _workspace_tempdir() as root:
+            preferred = root / "fileplay"
+            _write_config(root, [str(preferred)])
+
+            result = self.module.save_report(_sample_content_payload(), repo_root=root)
+            content = Path(result["output_path"]).read_text(encoding="utf-8-sig")
+
+            self.assertIn("2026年3月21日热搜", content)
+            self.assertIn("【Bilibili】", content)
+            self.assertIn("热门视频 A", content)
+            self.assertIn("【全局总结】", content)
+
+    def test_rejects_incomplete_structured_report(self) -> None:
+        with _workspace_tempdir() as root:
+            preferred = root / "fileplay"
+            _write_config(root, [str(preferred)])
+
+            with self.assertRaisesRegex(ValueError, "missing required platforms"):
+                self.module.save_report(_incomplete_structured_payload(), repo_root=root)
+
+    def test_rejects_incomplete_preformatted_content(self) -> None:
+        with _workspace_tempdir() as root:
+            preferred = root / "fileplay"
+            _write_config(root, [str(preferred)])
+
+            with self.assertRaisesRegex(ValueError, "missing required platforms"):
+                self.module.save_report(_incomplete_content_payload(), repo_root=root)
+
+    def test_writes_utf8_bom_for_windows_friendly_text_files(self) -> None:
+        with _workspace_tempdir() as root:
+            preferred = root / "fileplay"
+            _write_config(root, [str(preferred)])
+
+            result = self.module.save_report(_sample_payload(), repo_root=root)
+            raw = Path(result["output_path"]).read_bytes()
+
+            self.assertTrue(raw.startswith(codecs.BOM_UTF8))
 
 
 if __name__ == "__main__":

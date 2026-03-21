@@ -82,6 +82,12 @@ CHAT_MODE_CHAT = "chat"
 CHAT_MODE_SKILL = "skill"
 CHAT_MODE_VALUES = {CHAT_MODE_REACT, CHAT_MODE_CHAT, CHAT_MODE_SKILL}
 CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
+PHASE_SKILL_SELECTION = "skill_selection"
+PHASE_SKILL_EXECUTION = "skill_execution"
+PHASE_AGENT_LOOP = "agent_loop"
+SYSTEM_TOOL_SKILL_SEARCH = "system.skill_search"
+SYSTEM_TOOL_TOOL_SEARCH = "system.tool_search"
+SYSTEM_TOOL_AGENT_LOOP = "system.agent_loop"
 EXPR_PROTOCOL_PROMPT = (
     "Output must be strict NDJSON. One JSON object per line with no extra commentary. "
     "Only fields expr and text are allowed. expr is an expression name string (or empty), "
@@ -349,9 +355,11 @@ def _skill_summaries_for_route(
         if not candidate_ids:
             candidate_ids = list(available.keys())
     else:
+        chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+        skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
         candidate_ids = _canonicalize_skill_ids(requested_skill_ids, manager=manager)
         if not candidate_ids:
-            candidate_ids = list(available.keys())
+            candidate_ids = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"), manager=manager)
     items: list[dict[str, str]] = []
     for skill_id in candidate_ids:
         record = available.get(skill_id)
@@ -368,13 +376,29 @@ def _skill_summaries_for_route(
 
 
 def _build_router_tool_schemas(chat_mode: str, active_skill_ids: list[str]) -> list[dict[str, Any]]:
-    bridge = _build_runtime_tool_bridge({"chat_mode": chat_mode, "active_skill_ids": list(active_skill_ids)})
-    if bridge is None or not hasattr(bridge, "list_tools"):
-        return []
-    try:
-        return list(bridge.list_tools() or [])
-    except Exception:
-        return []
+    normalized_mode = _normalize_chat_mode(chat_mode)
+    if normalized_mode == CHAT_MODE_CHAT:
+        bridge = _build_runtime_tool_bridge({"chat_mode": chat_mode, "active_skill_ids": list(active_skill_ids)})
+        if bridge is None or not hasattr(bridge, "list_tools"):
+            return []
+        try:
+            return list(bridge.list_tools() or [])
+        except Exception:
+            return []
+    if normalized_mode == CHAT_MODE_REACT:
+        bridge = _RegistryToolBridge(
+            _build_system_tools(
+                {
+                    "execution_phase": PHASE_SKILL_SELECTION,
+                    "active_skill_ids": list(active_skill_ids),
+                    "discovered_skill_ids": [],
+                    "discovered_tool_names": [],
+                }
+            ),
+            missing_message="router system tool unavailable",
+        )
+        return bridge.list_tools()
+    return []
 
 
 def _pick_tavily_tool_name(tools: list[dict[str, Any]]) -> str:
@@ -476,6 +500,291 @@ class _FilteredToolBridge:
         return getattr(self.base_bridge, name)
 
 
+class _CompositeToolBridge:
+    def __init__(self, *bridges: Any) -> None:
+        self.bridges = [bridge for bridge in bridges if bridge is not None]
+
+    def list_registered_tools(self) -> list[Tool]:
+        out: list[Tool] = []
+        seen: set[str] = set()
+        for bridge in self.bridges:
+            if bridge is None or not hasattr(bridge, "list_registered_tools"):
+                continue
+            try:
+                tools = list(bridge.list_registered_tools() or [])
+            except Exception:
+                continue
+            for tool in tools:
+                name = str(getattr(tool, "name", "") or "").strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                out.append(tool)
+        return out
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        if any(hasattr(bridge, "list_registered_tools") for bridge in self.bridges):
+            return [tool.to_llm_schema() for tool in self.list_registered_tools()]
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for bridge in self.bridges:
+            if bridge is None or not hasattr(bridge, "list_tools"):
+                continue
+            try:
+                schemas = list(bridge.list_tools() or [])
+            except Exception:
+                continue
+            for schema in schemas:
+                name = _tool_name_from_schema(schema)
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                out.append(schema)
+        return out
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        target = str(tool_name or "").strip()
+        for bridge in self.bridges:
+            if bridge is None:
+                continue
+            names: set[str] = set()
+            if hasattr(bridge, "list_registered_tools"):
+                try:
+                    names = {str(getattr(tool, "name", "") or "").strip() for tool in bridge.list_registered_tools() or []}
+                except Exception:
+                    names = set()
+            elif hasattr(bridge, "list_tools"):
+                try:
+                    names = {_tool_name_from_schema(schema) for schema in bridge.list_tools() or []}
+                except Exception:
+                    names = set()
+            if target in names and hasattr(bridge, "call_tool"):
+                return bridge.call_tool(target, arguments)
+        return ToolResult.from_error(f"tool not available: {target}")
+
+
+def _tool_name_from_schema(schema: dict[str, Any]) -> str:
+    if not isinstance(schema, dict):
+        return ""
+    function = schema.get("function")
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "").strip()
+
+
+def _tool_name_matches_pattern(tool_name: str, pattern: str) -> bool:
+    name = str(tool_name or "").strip()
+    matcher = str(pattern or "").strip()
+    if not name or not matcher:
+        return False
+    if matcher.endswith("*"):
+        return name.startswith(matcher[:-1])
+    if matcher.endswith("."):
+        return name.startswith(matcher)
+    return name == matcher or name.startswith(f"{matcher}.")
+
+
+def _tokenize_search_query(text: str) -> list[str]:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return []
+    return [part for part in normalized.replace("_", " ").replace("-", " ").split() if part]
+
+
+def _score_search_text(query: str, *fields: str) -> int:
+    haystack = " ".join(str(item or "").strip().lower() for item in fields if str(item or "").strip())
+    if not haystack:
+        return 0
+    tokens = _tokenize_search_query(query)
+    if not tokens:
+        return 1
+    score = 0
+    for token in tokens:
+        if token == haystack:
+            score += 12
+            continue
+        if token in haystack:
+            score += 4
+        if haystack.startswith(token):
+            score += 2
+    return score
+
+
+def _search_skill_catalog(query: str, *, excluded_ids: set[str], limit: int = 5) -> list[dict[str, Any]]:
+    manager = _get_skill_manager()
+    scored: list[tuple[int, str, dict[str, Any]]] = []
+    for record in manager.list_skills():
+        skill_id = str(getattr(record, "skill_id", "") or "").strip()
+        if not skill_id or skill_id in excluded_ids or not bool(getattr(record, "ok", False)):
+            continue
+        name = str(getattr(record, "display_name", "") or getattr(record, "name", "") or skill_id)
+        description = str(getattr(record, "short_description", "") or getattr(record, "description", "") or "")
+        score = _score_search_text(query, skill_id, name, description)
+        if score <= 0:
+            continue
+        scored.append(
+            (
+                score,
+                skill_id,
+                {
+                    "id": skill_id,
+                    "name": name,
+                    "description": description,
+                    "source": str(getattr(record, "source_type", "") or ""),
+                    "default_active": False,
+                },
+            )
+        )
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in scored[: max(1, int(limit or 5))]]
+
+
+def _list_non_skill_tools() -> list[Tool]:
+    bridge = _get_mcp_bridge()
+    if bridge is None or not hasattr(bridge, "list_registered_tools"):
+        return []
+    try:
+        tools = list(bridge.list_registered_tools() or [])
+    except Exception:
+        return []
+    out: list[Tool] = []
+    for tool in tools:
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name or name.startswith("skill."):
+            continue
+        out.append(tool)
+    return out
+
+
+def _search_tool_catalog(query: str, *, excluded_names: set[str], limit: int = 8) -> list[dict[str, Any]]:
+    scored: list[tuple[int, str, dict[str, Any]]] = []
+    for tool in _list_non_skill_tools():
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name or name in excluded_names:
+            continue
+        description = str(getattr(tool, "description", "") or "")
+        source = str(getattr(tool, "source", "") or "")
+        score = _score_search_text(query, name, description, source)
+        if score <= 0:
+            continue
+        scored.append((score, name, {"name": name, "description": description, "source": source}))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in scored[: max(1, int(limit or 8))]]
+
+
+def _build_system_tools(state: dict[str, Any]) -> list[Tool]:
+    active_skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
+    discovered_skill_ids = _normalize_skill_ids(state.get("discovered_skill_ids"))
+    discovered_tool_names = {
+        str(item or "").strip()
+        for item in (state.get("discovered_tool_names") or [])
+        if str(item or "").strip()
+    }
+    excluded_skill_ids = set(active_skill_ids) | set(discovered_skill_ids)
+    phase = str(state.get("execution_phase") or "").strip().lower()
+    if phase == PHASE_AGENT_LOOP:
+        return [
+            Tool(
+                name=SYSTEM_TOOL_TOOL_SEARCH,
+                description="Search hidden tool capabilities by keyword before deciding which tool to call.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Keywords describing the capability you need."},
+                        "limit": {"type": "integer", "description": "Maximum number of results to return.", "default": 8},
+                    },
+                    "required": ["query"],
+                },
+                invoke=lambda arguments, excluded=discovered_tool_names: {
+                    "kind": "tool_search",
+                    "matches": _search_tool_catalog(
+                        str((arguments or {}).get("query") or ""),
+                        excluded_names=set(excluded),
+                        limit=int((arguments or {}).get("limit") or 8),
+                    ),
+                },
+                source="system",
+            )
+        ]
+    return [
+        Tool(
+            name=SYSTEM_TOOL_SKILL_SEARCH,
+            description="Search installed skills that are not currently exposed by default for this turn.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keywords describing the skill you need."},
+                    "limit": {"type": "integer", "description": "Maximum number of results to return.", "default": 5},
+                },
+                "required": ["query"],
+            },
+            invoke=lambda arguments, excluded=excluded_skill_ids: {
+                "kind": "skill_search",
+                "matches": _search_skill_catalog(
+                    str((arguments or {}).get("query") or ""),
+                    excluded_ids=set(excluded),
+                    limit=int((arguments or {}).get("limit") or 5),
+                ),
+            },
+            source="system",
+        ),
+        Tool(
+            name=SYSTEM_TOOL_AGENT_LOOP,
+            description="Fallback to the general agent loop when no current skill can solve the task.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Restate the task to continue in the general agent loop."},
+                    "preferred_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional soft hints for what kind of tools may help.",
+                    },
+                    "max_steps": {"type": "integer", "description": "Optional step budget hint for the fallback loop."},
+                },
+                "required": ["task"],
+            },
+            invoke=lambda arguments: {
+                "kind": "agent_loop",
+                "task": str((arguments or {}).get("task") or ""),
+                "preferred_tools": [str(item).strip() for item in ((arguments or {}).get("preferred_tools") or []) if str(item).strip()],
+                "max_steps": int((arguments or {}).get("max_steps") or 0),
+            },
+            source="system",
+        ),
+    ]
+
+
+def _build_skill_only_bridge(skill_ids: list[str], *, missing_message: str) -> Any:
+    settings = _load_settings_config()
+    resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=CHAT_MODE_REACT)
+    return _RegistryToolBridge(
+        list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
+        missing_message=missing_message,
+    )
+
+
+def _build_allowlisted_bridge(patterns: list[str] | tuple[str, ...], *, missing_message: str) -> Any:
+    normalized = [str(item or "").strip() for item in patterns if str(item or "").strip()]
+    if not normalized:
+        return None
+    return _FilteredToolBridge(
+        _get_mcp_bridge(),
+        allow_predicate=lambda name, allowed=tuple(normalized): any(_tool_name_matches_pattern(str(name or ""), pattern) for pattern in allowed),
+        missing_message=missing_message,
+    )
+
+
+def _build_tool_name_bridge(tool_names: set[str], *, missing_message: str) -> Any:
+    if not tool_names:
+        return None
+    return _FilteredToolBridge(
+        _get_mcp_bridge(),
+        allow_predicate=lambda name, allowed=set(tool_names): str(name or "").strip() in allowed,
+        missing_message=missing_message,
+    )
+
+
 def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     merged = _deep_merge(_default_settings_config(), config if isinstance(config, dict) else {})
     merged["model_path"] = _normalize_model_path(merged.get("model_path", ""))
@@ -512,7 +821,7 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     chat["react_enabled"] = bool(chat.get("react_enabled", True))
     chat["react_visibility"] = "inline"
     try:
-        chat["max_reasoning_steps"] = max(1, min(12, int(chat.get("max_reasoning_steps", 10))))
+        chat["max_reasoning_steps"] = max(1, int(chat.get("max_reasoning_steps", 10)))
     except Exception:
         chat["max_reasoning_steps"] = 10
     chat["system_prompt"] = str(chat.get("system_prompt") or "")
@@ -851,26 +1160,55 @@ def _build_runtime_tool_bridge(state: dict[str, Any]) -> Any:
         return _FilteredToolBridge(
             _get_mcp_bridge(),
             allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
-            missing_message="tool not available in 聊天模式",
+            missing_message="tool not available in ????",
         )
 
     skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
     if chat_mode == CHAT_MODE_SKILL:
         settings = _load_settings_config()
         resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
-        return _RegistryToolBridge(
+        skill_bridge = _RegistryToolBridge(
             list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
-            missing_message="tool not available in Skill模式",
+            missing_message="tool not available in Skill??",
         )
+        allowlisted_bridge = _build_allowlisted_bridge(
+            list(resolved.tool_allowlist),
+            missing_message="tool not available in Skill??",
+        )
+        return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
 
-    if not skill_ids:
-        return _get_mcp_bridge()
-    settings = _load_settings_config()
-    resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
-    base_bridge = _get_mcp_bridge()
-    if not resolved.tool_allowlist and not resolved.resource_tools and not resolved.adapter_tools and not resolved.script_tools:
-        return base_bridge
-    return _get_skill_runtime().build_tool_bridge(base_bridge, resolved)
+    phase = str(state.get("execution_phase") or PHASE_SKILL_SELECTION).strip().lower()
+    discovered_skill_ids = _normalize_skill_ids(state.get("discovered_skill_ids"))
+    selected_skill_ids = _normalize_skill_ids(state.get("selected_skill_ids"))
+    if phase == PHASE_SKILL_SELECTION and selected_skill_ids:
+        phase = PHASE_SKILL_EXECUTION
+    discovered_tool_names = {
+        str(item or "").strip()
+        for item in (state.get("discovered_tool_names") or [])
+        if str(item or "").strip()
+    }
+    system_bridge = _RegistryToolBridge(_build_system_tools(state), missing_message="system tool unavailable")
+
+    if phase == PHASE_AGENT_LOOP:
+        discovered_bridge = _build_tool_name_bridge(discovered_tool_names, missing_message="tool not available in agent loop")
+        return _CompositeToolBridge(system_bridge, discovered_bridge)
+
+    if phase == PHASE_SKILL_EXECUTION and selected_skill_ids:
+        settings = _load_settings_config()
+        resolved = _resolve_request_skills(selected_skill_ids, settings=settings, chat_mode=chat_mode)
+        skill_bridge = _RegistryToolBridge(
+            list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
+            missing_message="skill tool not available in active skill execution",
+        )
+        allowlisted_bridge = _build_allowlisted_bridge(
+            list(resolved.tool_allowlist),
+            missing_message="tool not available in active skill execution",
+        )
+        return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
+
+    visible_skill_ids = _canonicalize_skill_ids(skill_ids + discovered_skill_ids, manager=_get_skill_manager())
+    skill_bridge = _build_skill_only_bridge(visible_skill_ids, missing_message="tool not available in skill selection")
+    return _CompositeToolBridge(skill_bridge, system_bridge)
 
 
 def _agent_graph_dependencies() -> GraphDependencies:
@@ -1266,6 +1604,23 @@ def _build_system_prompt(
     return f"{base}\n\n{protocol_prompt}" if base else protocol_prompt
 
 
+def _build_decision_messages(base_messages: list[dict[str, Any]], skill_prompt: str) -> list[dict[str, Any]]:
+    prompt = str(skill_prompt or "").strip()
+    if not prompt:
+        return list(base_messages)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Follow the active skill instructions below while deciding the next tool step. "
+                "Do not mark the task complete until that workflow is actually finished.\n\n"
+                f"{prompt}"
+            ),
+        },
+        *list(base_messages),
+    ]
+
+
 def _parse_ndjson_line(line: str) -> dict[str, str | None] | None:
     raw = (line or "").strip()
     if not raw or raw.startswith("```"):
@@ -1643,7 +1998,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
     history = SESSION_STORE.get(session_id, [])
     history = _trim_messages(history, req.memory_window)
     working = history + [{"role": "user", "content": text}]
-    max_reasoning_steps = max(1, min(12, int(req.max_reasoning_steps or 10)))
+    max_reasoning_steps = max(1, int(req.max_reasoning_steps or 10))
     router_used = False
     route_kind = ""
     route_thought_summary = ""
@@ -1683,12 +2038,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 route_tool_call = route.tool_call.to_dict()
 
             if chat_mode == CHAT_MODE_REACT:
-                if route_kind == "skill_task" and route_skill_ids:
-                    resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
-                elif route_kind == "complex_task" and route_tool_candidates:
-                    guidance = _route_guidance_message(route_tool_candidates)
-                    if guidance:
-                        decision_messages = list(history) + [{"role": "system", "content": guidance}, {"role": "user", "content": text}]
+                decision_messages = list(working)
             elif chat_mode == CHAT_MODE_CHAT:
                 if route_search_needed and route_search_query:
                     search_tool_name = _pick_tavily_tool_name(route_tools)
@@ -1721,8 +2071,15 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
             route_search_query = ""
             decision_messages = list(working)
 
+    decision_resolved_skills = resolved_skills
+    if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids:
+        decision_resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
+    elif chat_mode == CHAT_MODE_SKILL:
+        decision_resolved_skills = resolved_skills
+    skill_prompt_text = decision_resolved_skills.prompt_text if chat_mode != CHAT_MODE_CHAT else ""
+    decision_messages = _build_decision_messages(working, skill_prompt_text)
+
     async def event_gen():
-        skill_prompt_text = resolved_skills.prompt_text if chat_mode != CHAT_MODE_CHAT else ""
         sys_prompt = _build_system_prompt(
             req.system_prompt,
             skill_prompt_text,
@@ -1789,6 +2146,18 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                     "working_messages": working,
                     "decision_messages": decision_messages,
                     "prompt_messages": prompt_msgs,
+                    "execution_phase": (
+                        PHASE_AGENT_LOOP
+                        if chat_mode == CHAT_MODE_REACT and route_kind == "complex_task"
+                        else PHASE_SKILL_EXECUTION
+                        if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids
+                        else PHASE_SKILL_SELECTION
+                        if chat_mode == CHAT_MODE_REACT
+                        else ""
+                    ),
+                    "discovered_skill_ids": [],
+                    "discovered_tool_names": [],
+                    "selected_skill_ids": list(route_skill_ids) if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" else [],
                 }
             )
             if outcome.thought_summary:
