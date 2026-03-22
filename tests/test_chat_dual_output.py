@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+import shutil
+from uuid import uuid4
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
 from backend.agent_orchestrator import TurnDecision
+from backend.chat_topics import TopicStore
 
 
 class ChatDualOutputTests(unittest.TestCase):
@@ -14,6 +18,9 @@ class ChatDualOutputTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        self.topic_tmp = Path(__file__).resolve().parent / ".tmp_chat_dual_output" / f"tmp_{uuid4().hex}"
+        self.topic_tmp.mkdir(parents=True, exist_ok=True)
+        backend_app._CHAT_TOPIC_STORE = TopicStore(self.topic_tmp / "chat_topics")
         self.client = TestClient(backend_app.app)
 
     def tearDown(self) -> None:
@@ -21,6 +28,7 @@ class ChatDualOutputTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        shutil.rmtree(self.topic_tmp, ignore_errors=True)
 
     def test_ndjson_segments_and_display_text_are_split(self) -> None:
         async def fake_decide_turn(**_kwargs):

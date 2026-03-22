@@ -4,6 +4,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 import shutil
+from uuid import uuid4
 from types import SimpleNamespace
 from unittest import mock
 from uuid import uuid4
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import backend.app as backend_app
 from backend.agent_graph import GraphTurnOutcome
+from backend.chat_topics import TopicStore
 from backend.skills.manager import SkillManager
 from backend.tool_runtime import Tool
 
@@ -109,6 +111,9 @@ class SkillsApiTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        self.topic_tmp = TEST_TMP_ROOT / f"topic_store_{uuid4().hex}"
+        self.topic_tmp.mkdir(parents=True, exist_ok=True)
+        backend_app._CHAT_TOPIC_STORE = TopicStore(self.topic_tmp / "chat_topics")
         self.client = TestClient(backend_app.app)
 
     def tearDown(self) -> None:
@@ -116,6 +121,7 @@ class SkillsApiTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        shutil.rmtree(self.topic_tmp, ignore_errors=True)
 
     def test_list_skills_endpoint_returns_skills_and_default_active_ids(self) -> None:
         with _workspace_tempdir() as root:

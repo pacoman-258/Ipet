@@ -31,6 +31,8 @@
     chatVoice: $("chat-voice"),
     chatSessionId: $("chat-session-id"),
     chatMemoryWindow: $("chat-memory-window"),
+    chatTopicHistoryEnabled: $("chat-topic-history-enabled"),
+    chatTopicHistorySummaryInterval: $("chat-topic-history-summary-interval"),
     chatTtsProvider: $("chat-tts-provider"),
     chatRatePct: $("chat-rate-pct"),
     chatRateLabel: $("chat-rate-label"),
@@ -752,6 +754,8 @@
     els.chatVoice.value = config.chat.voice || "";
     els.chatSessionId.value = config.chat.session_id || "default";
     els.chatMemoryWindow.value = Number(config.chat.memory_window || 10);
+    els.chatTopicHistoryEnabled.checked = config.chat?.topic_history?.enabled !== false;
+    els.chatTopicHistorySummaryInterval.value = Number(config.chat?.topic_history?.summary_interval_assistant_turns || 10);
     els.chatTtsProvider.value = config.chat.tts_provider || "edge_tts";
     els.chatRatePct.value = Number(config.chat.rate_pct || 0);
     els.chatTtsProviderUrl.value = config.chat.tts_provider_url || "";
@@ -805,6 +809,14 @@
     next.chat.voice = els.chatVoice.value.trim();
     next.chat.session_id = els.chatSessionId.value.trim() || "default";
     next.chat.memory_window = Number(els.chatMemoryWindow.value || 10);
+    next.chat.topic_history = {
+      ...(next.chat.topic_history || {}),
+      enabled: !!els.chatTopicHistoryEnabled.checked,
+      summary_interval_assistant_turns: (() => {
+        const interval = Number(els.chatTopicHistorySummaryInterval.value);
+        return Number.isFinite(interval) && interval > 0 ? interval : 10;
+      })(),
+    };
     next.chat.tts_provider = els.chatTtsProvider.value;
     next.chat.rate_pct = Number(els.chatRatePct.value || 0);
     next.chat.tts_provider_url = els.chatTtsProviderUrl.value.trim();

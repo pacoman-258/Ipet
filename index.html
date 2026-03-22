@@ -379,6 +379,19 @@
       box-shadow: 0 18px 28px rgba(130, 123, 194, 0.28);
     }
 
+    .shell-nav-button:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: 0 10px 18px rgba(130, 123, 194, 0.12);
+    }
+
+    .shell-nav-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+      box-shadow: 0 10px 18px rgba(137, 119, 185, 0.08);
+    }
+
     #shell-stage {
       grid-column: 2;
       grid-row: 2;
@@ -570,6 +583,110 @@
       display: block;
     }
 
+    #chat-history-drawer {
+      position: absolute;
+      top: 102px;
+      left: 12px;
+      width: min(300px, calc(100% - 24px));
+      max-height: min(420px, calc(100% - 186px));
+      display: none;
+      overflow: auto;
+      z-index: 35;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(241, 245, 252, 0.96));
+      border: 1px solid rgba(205, 217, 236, 0.98);
+      box-shadow: 0 18px 36px rgba(77, 95, 124, 0.16);
+      color: #4f5f79;
+    }
+
+    #chat-history-drawer.open {
+      display: block;
+    }
+
+    .chat-history-head {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(205, 217, 236, 0.9);
+    }
+
+    .chat-history-head strong {
+      display: block;
+      font-size: 13px;
+      color: #425371;
+    }
+
+    .chat-history-head span {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #6d7d97;
+    }
+
+    .chat-history-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px 10px;
+    }
+
+    #chat-history-status {
+      padding: 0 14px 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #6d7d97;
+    }
+
+    #chat-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 14px 14px;
+    }
+
+    .chat-history-item {
+      width: 100%;
+      border: 1px solid rgba(212, 225, 241, 0.9);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: left;
+      color: #4f5f79;
+      cursor: pointer;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+      box-shadow: 0 10px 20px rgba(92, 112, 141, 0.08);
+    }
+
+    .chat-history-item:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 24px rgba(92, 112, 141, 0.12);
+    }
+
+    .chat-history-item.is-active {
+      border-color: rgba(92, 141, 255, 0.44);
+      background: linear-gradient(180deg, rgba(241, 247, 255, 0.98), rgba(233, 242, 255, 0.94));
+    }
+
+    .chat-history-item h4 {
+      margin: 0;
+      font-size: 13px;
+      color: #3f4f6b;
+    }
+
+    .chat-history-item p {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #6d7d97;
+    }
+
+    .chat-history-meta {
+      font-size: 11px;
+      color: #8190a8;
+    }
+
     .chat-skills-head {
       padding: 14px 14px 10px;
       border-bottom: 1px solid rgba(238, 203, 221, 0.88);
@@ -620,6 +737,109 @@
       flex-direction: column;
       gap: 10px;
       padding: 0 14px 14px;
+    }
+
+    #chat-history-drawer {
+      position: absolute;
+      top: 102px;
+      left: 12px;
+      width: min(296px, calc(100% - 24px));
+      max-height: min(420px, calc(100% - 186px));
+      display: none;
+      overflow: auto;
+      z-index: 35;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(251, 253, 255, 0.98), rgba(242, 247, 252, 0.96));
+      border: 1px solid rgba(205, 219, 235, 0.96);
+      box-shadow: 0 18px 36px rgba(70, 92, 128, 0.16);
+      color: #4d5b71;
+    }
+
+    #chat-history-drawer.open {
+      display: block;
+    }
+
+    .chat-history-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(210, 223, 239, 0.9);
+    }
+
+    .chat-history-head strong {
+      display: block;
+      font-size: 13px;
+      color: #42526a;
+    }
+
+    .chat-history-head span {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #73839b;
+    }
+
+    #chat-history-close {
+      border: none;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #4d5b71;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 8px 16px rgba(75, 94, 121, 0.1);
+      cursor: pointer;
+    }
+
+    #chat-history-status {
+      padding: 0 14px 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #73839b;
+    }
+
+    #chat-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 14px 14px;
+    }
+
+    .chat-history-item {
+      border: 1px solid rgba(212, 225, 241, 0.88);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 10px 18px rgba(49, 76, 111, 0.08);
+    }
+
+    .chat-history-item.is-active {
+      border-color: rgba(84, 126, 223, 0.42);
+      box-shadow: 0 12px 22px rgba(70, 119, 233, 0.16);
+    }
+
+    .chat-history-item strong {
+      font-size: 13px;
+      color: #42526a;
+    }
+
+    .chat-history-preview {
+      font-size: 12px;
+      line-height: 1.55;
+      color: #55657d;
+    }
+
+    .chat-history-meta {
+      font-size: 11px;
+      color: #7d8ca3;
     }
 
     .chat-skill-card {
@@ -930,7 +1150,9 @@
     #chat-mode-bar,
     #chat-input-wrap,
     #chat-skills-drawer,
+    #chat-history-drawer,
     .chat-skill-card,
+    .chat-history-item,
     .msg,
     #chat-input,
     #chat-send,
@@ -1031,14 +1253,26 @@
       box-shadow: 0 20px 38px rgba(15, 23, 42, 0.14);
     }
 
-    .chat-skill-card {
+    #chat-history-drawer {
+      top: 110px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, #f8fbff, #eef4fa);
+      border: 1px solid rgba(210, 220, 232, 0.95);
+      box-shadow: 0 20px 38px rgba(15, 23, 42, 0.14);
+    }
+
+    .chat-skill-card,
+    .chat-history-item {
       background: #ffffff;
       border: 1px solid rgba(212, 225, 241, 0.88);
     }
 
     .chat-skill-meta,
+    .chat-history-meta,
     #chat-skills-status,
-    .chat-skills-head span {
+    #chat-history-status,
+    .chat-skills-head span,
+    .chat-history-head span {
       color: var(--panel-muted);
     }
   </style>
@@ -1069,11 +1303,17 @@
         </svg>
         <span>Settings</span>
       </button>
+      <button id="nav-history" class="shell-nav-button" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2.75a9.25 9.25 0 1 0 8.83 12h-1.62a7.75 7.75 0 1 1-1.78-8.07H15.5a.75.75 0 0 0 0 1.5H21a.75.75 0 0 0 .75-.75V2a.75.75 0 0 0-1.5 0v2.58A9.2 9.2 0 0 0 12 2.75Zm-.75 4.5a.75.75 0 0 1 1.5 0v4.19l2.96 1.7a.75.75 0 1 1-.74 1.3l-3.34-1.91a.75.75 0 0 1-.38-.65Z" />
+        </svg>
+        <span>Chat History</span>
+      </button>
       <button id="nav-chat" class="shell-nav-button" type="button" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16.5H9.5l-4.8 3.6a.5.5 0 0 1-.8-.4v-3.2H4A1.5 1.5 0 0 1 2.5 15V6A1.5 1.5 0 0 1 4 4.5Zm2.5 4a1 1 0 1 0 0 2h11a1 1 0 1 0 0-2Zm0 3.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2Z" />
+          <path d="M12 3.25a.75.75 0 0 1 .75.75v7.25H20a.75.75 0 0 1 0 1.5h-7.25V20a.75.75 0 0 1-1.5 0v-7.25H4a.75.75 0 0 1 0-1.5h7.25V4a.75.75 0 0 1 .75-.75Z" />
         </svg>
-        <span>Chat</span>
+        <span>New Chat</span>
       </button>
     </aside>
     <div id="shell-stage" aria-hidden="true"></div>
@@ -1093,6 +1333,17 @@
       <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct模式</button>
       <button class="chat-mode-btn" data-chat-mode="chat">聊天模式</button>
       <button class="chat-mode-btn" data-chat-mode="skill">Skill模式</button>
+    </div>
+    <div id="chat-history-drawer">
+      <div class="chat-history-head">
+        <strong>Topic History</strong>
+        <span id="chat-history-current">当前话题：未创建</span>
+      </div>
+      <div class="chat-history-actions">
+        <button id="chat-history-refresh" class="chat-skill-action">刷新列表</button>
+      </div>
+      <div id="chat-history-status">正在加载话题列表...</div>
+      <div id="chat-history-list"></div>
     </div>
     <div id="chat-skills-drawer">
       <div class="chat-skills-head">
@@ -1169,6 +1420,10 @@
             enabled: true,
             default_active_ids: [],
           },
+          topic_history: {
+            enabled: true,
+            summary_interval_assistant_turns: 10,
+          },
           system_prompt: "",
           pet_display_name: "机魂",
         },
@@ -1182,11 +1437,17 @@
       const errorEl = document.getElementById("error");
       const canvas = document.getElementById("canvas");
       const navSettingsButtonEl = document.getElementById("nav-settings");
+      const navHistoryButtonEl = document.getElementById("nav-history");
       const navChatButtonEl = document.getElementById("nav-chat");
       const windowMinimizeEl = document.getElementById("window-minimize");
       const windowCloseEl = document.getElementById("window-close");
       const chatPanelEl = document.getElementById("chat-panel");
       const chatCloseEl = document.getElementById("chat-close");
+      const chatHistoryDrawerEl = document.getElementById("chat-history-drawer");
+      const chatHistoryCurrentEl = document.getElementById("chat-history-current");
+      const chatHistoryRefreshEl = document.getElementById("chat-history-refresh");
+      const chatHistoryStatusEl = document.getElementById("chat-history-status");
+      const chatHistoryListEl = document.getElementById("chat-history-list");
       const chatSkillsToggleEl = document.getElementById("chat-skills-toggle");
       const chatModeButtons = Array.from(document.querySelectorAll(".chat-mode-btn"));
       const chatSkillsDrawerEl = document.getElementById("chat-skills-drawer");
@@ -1236,6 +1497,11 @@
       let chatSkillDefaultIds = [];
       let chatSelectedSkillIds = [];
       let chatSkillsLoaded = false;
+      let topicHistoryItems = [];
+      let topicHistoryLoaded = false;
+      let topicHistoryLoading = false;
+      let currentTopicId = String(state.chat.session_id || "default").trim() || "default";
+      let currentTopicMeta = null;
       let currentChatMode = "react";
 
       let dragging = false;
@@ -1329,8 +1595,16 @@
 
       function updateShellButtons() {
         const chatOpen = chatPanelEl.classList.contains("open");
-        navChatButtonEl.classList.toggle("is-active", chatOpen);
-        navChatButtonEl.setAttribute("aria-pressed", String(chatOpen));
+        const historyOpen = chatOpen && chatHistoryDrawerEl.classList.contains("open");
+        navChatButtonEl.classList.toggle("is-active", chatOpen && !historyOpen);
+        navChatButtonEl.setAttribute("aria-pressed", String(chatOpen && !historyOpen));
+        if (navHistoryButtonEl) {
+          const enabled = topicHistoryEnabled();
+          navHistoryButtonEl.disabled = !enabled;
+          navHistoryButtonEl.classList.toggle("is-active", historyOpen);
+          navHistoryButtonEl.setAttribute("aria-pressed", String(historyOpen));
+          navHistoryButtonEl.title = enabled ? "\u67e5\u770b\u5386\u53f2\u8bdd\u9898" : "\u5f53\u524d\u672a\u542f\u7528\u8bdd\u9898\u4fdd\u5b58";
+        }
       }
 
       function callQtBridge(methodName) {
@@ -1487,6 +1761,267 @@
         }
       }
 
+      function topicHistoryEnabled() {
+        return state.chat?.topic_history?.enabled !== false;
+      }
+
+      function setChatHistoryStatus(message) {
+        if (chatHistoryStatusEl) {
+          chatHistoryStatusEl.textContent = String(message || "");
+        }
+      }
+
+      function normalizeTopicRecord(raw) {
+        if (!raw || typeof raw !== "object") {
+          return null;
+        }
+        const topic_id = String(raw.topic_id || raw.session_id || raw.id || "").trim();
+        if (!topic_id) {
+          return null;
+        }
+        return {
+          topic_id,
+          title: String(raw.title || "新话题").trim() || "新话题",
+          preview: String(raw.preview || "").trim(),
+          updated_at: String(raw.updated_at || raw.created_at || "").trim(),
+          created_at: String(raw.created_at || "").trim(),
+          persisted: raw.persisted !== false,
+          assistant_turn_count: Number(raw.assistant_turn_count || 0) || 0,
+        };
+      }
+
+      function currentTopicLabel() {
+        return currentTopicMeta?.title || currentTopicId || "未创建";
+      }
+
+      function syncTopicIndicator() {
+        if (chatHistoryCurrentEl) {
+          chatHistoryCurrentEl.textContent = `当前话题：${currentTopicLabel()}`;
+        }
+      }
+
+      function replaceChatMessages(messages) {
+        if (!chatMessagesEl) {
+          return;
+        }
+        chatMessagesEl.innerHTML = "";
+        for (const item of Array.isArray(messages) ? messages : []) {
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+          const role = String(item.role || "").trim();
+          if (role !== "user" && role !== "assistant") {
+            continue;
+          }
+          appendMessage(role === "assistant" ? "pet" : "user", String(item.content || ""), {
+            speakerName: role === "user" ? "你" : speakerNameForRole("pet"),
+          });
+        }
+      }
+
+      function renderTopicHistoryList() {
+        if (!chatHistoryListEl) {
+          return;
+        }
+        chatHistoryListEl.innerHTML = "";
+        if (!topicHistoryEnabled()) {
+          setChatHistoryStatus("当前未启用话题保存。你仍然可以点击 New Chat 创建临时会话。");
+          syncTopicIndicator();
+          return;
+        }
+        if (!topicHistoryItems.length) {
+          setChatHistoryStatus(topicHistoryLoading ? "正在加载话题列表..." : "还没有可切换的历史话题。");
+          syncTopicIndicator();
+          return;
+        }
+        setChatHistoryStatus(`共找到 ${topicHistoryItems.length} 个已保存话题。`);
+        syncTopicIndicator();
+        for (const item of topicHistoryItems) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "chat-history-item";
+          if (item.topic_id === currentTopicId) {
+            button.classList.add("is-active");
+          }
+          const titleEl = document.createElement("strong");
+          titleEl.textContent = item.title;
+          const previewEl = document.createElement("div");
+          previewEl.className = "chat-history-preview";
+          previewEl.textContent = item.preview || "暂无摘要，打开后继续聊聊吧。";
+          const metaEl = document.createElement("div");
+          metaEl.className = "chat-history-meta";
+          metaEl.textContent = `${item.updated_at || item.created_at || "未知时间"} | AI ${item.assistant_turn_count} 轮`;
+          button.appendChild(titleEl);
+          button.appendChild(previewEl);
+          button.appendChild(metaEl);
+          button.addEventListener("click", async () => {
+            await selectTopic(item.topic_id);
+          });
+          chatHistoryListEl.appendChild(button);
+        }
+      }
+
+      async function loadTopicHistory(force = false) {
+        if (!topicHistoryEnabled()) {
+          topicHistoryItems = [];
+          topicHistoryLoaded = false;
+          renderTopicHistoryList();
+          return [];
+        }
+        if (topicHistoryLoaded && !force) {
+          renderTopicHistoryList();
+          return topicHistoryItems;
+        }
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          setChatHistoryStatus("后端地址未配置，无法加载历史话题。");
+          return [];
+        }
+        topicHistoryLoading = true;
+        setChatHistoryStatus("正在加载话题列表...");
+        try {
+          const resp = await fetch(`${backend}/api/chat/topics`);
+          const payload = await resp.json();
+          if (!resp.ok) {
+            throw new Error(payload.detail || `HTTP ${resp.status}`);
+          }
+          if (payload.enabled === false) {
+            state.chat.topic_history = {
+              ...(state.chat.topic_history || {}),
+              enabled: false,
+            };
+          }
+          topicHistoryItems = (Array.isArray(payload.topics) ? payload.topics : [])
+            .map(normalizeTopicRecord)
+            .filter(Boolean);
+          topicHistoryLoaded = true;
+          currentTopicMeta = topicHistoryItems.find((item) => item.topic_id === currentTopicId) || currentTopicMeta;
+          renderTopicHistoryList();
+          updateShellButtons();
+          return topicHistoryItems;
+        } catch (error) {
+          topicHistoryLoaded = false;
+          topicHistoryItems = [];
+          setChatHistoryStatus(`历史话题加载失败：${error?.message || String(error)}`);
+          renderTopicHistoryList();
+          return [];
+        } finally {
+          topicHistoryLoading = false;
+        }
+      }
+
+      async function createNewTopic(shouldOpen = true) {
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          const fallbackId = `topic-${Date.now()}`;
+          currentTopicId = fallbackId;
+          state.chat.session_id = fallbackId;
+          currentTopicMeta = normalizeTopicRecord({ topic_id: fallbackId, title: "临时会话", persisted: false });
+          replaceChatMessages([]);
+          topicHistoryLoaded = false;
+          if (shouldOpen) {
+            openChat();
+          }
+          renderTopicHistoryList();
+          updateShellButtons();
+          return currentTopicMeta;
+        }
+        try {
+          const resp = await fetch(`${backend}/api/chat/topics`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          const payload = await resp.json();
+          if (!resp.ok) {
+            throw new Error(payload.detail || `HTTP ${resp.status}`);
+          }
+          const topic = normalizeTopicRecord(payload.topic || { topic_id: payload.topic_id, persisted: payload.persisted });
+          if (topic) {
+            currentTopicId = topic.topic_id;
+            state.chat.session_id = topic.topic_id;
+            currentTopicMeta = topic;
+          }
+          replaceChatMessages([]);
+          toggleChatSkillsDrawer(false);
+          toggleChatHistoryDrawer(false);
+          topicHistoryLoaded = false;
+          if (topicHistoryEnabled()) {
+            await loadTopicHistory(true);
+          } else {
+            renderTopicHistoryList();
+          }
+          if (shouldOpen) {
+            openChat();
+          }
+          return topic;
+        } catch (error) {
+          appendMessage("error", `创建新话题失败: ${error?.message || String(error)}`, { speakerName: "系统" });
+          return null;
+        }
+      }
+
+      async function loadTopicDetail(topicId) {
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          throw new Error("后端地址未配置");
+        }
+        const resp = await fetch(`${backend}/api/chat/topics/${encodeURIComponent(topicId)}`);
+        const payload = await resp.json();
+        if (!resp.ok) {
+          throw new Error(payload.detail || `HTTP ${resp.status}`);
+        }
+        return payload;
+      }
+
+      async function selectTopic(topicId) {
+        try {
+          const payload = await loadTopicDetail(topicId);
+          const meta = normalizeTopicRecord(payload.meta || { topic_id: topicId });
+          currentTopicId = String(topicId || "").trim() || currentTopicId;
+          state.chat.session_id = currentTopicId;
+          currentTopicMeta = meta;
+          replaceChatMessages(Array.isArray(payload.messages) ? payload.messages : []);
+          toggleChatHistoryDrawer(false);
+          openChat();
+          renderTopicHistoryList();
+          updateShellButtons();
+        } catch (error) {
+          appendMessage("error", `读取历史话题失败: ${error?.message || String(error)}`, { speakerName: "系统" });
+        }
+      }
+
+      async function ensureTopicReady() {
+        if (currentTopicId && currentTopicId !== "default") {
+          state.chat.session_id = currentTopicId;
+          return currentTopicId;
+        }
+        if (chatMessagesEl.childElementCount > 0) {
+          return state.chat.session_id || currentTopicId || "default";
+        }
+        const topic = await createNewTopic(false);
+        return topic?.topic_id || state.chat.session_id || currentTopicId || "default";
+      }
+
+      function toggleChatHistoryDrawer(forceOpen = null) {
+        if (!chatHistoryDrawerEl) {
+          return;
+        }
+        if (!topicHistoryEnabled()) {
+          chatHistoryDrawerEl.classList.remove("open");
+          updateShellButtons();
+          renderTopicHistoryList();
+          return;
+        }
+        const shouldOpen = forceOpen === null ? !chatHistoryDrawerEl.classList.contains("open") : !!forceOpen;
+        chatHistoryDrawerEl.classList.toggle("open", shouldOpen);
+        if (shouldOpen) {
+          chatSkillsDrawerEl.classList.remove("open");
+          loadTopicHistory(false);
+        }
+        updateShellButtons();
+      }
+
       function normalizeSkillRecord(raw) {
         if (!raw || typeof raw !== "object") {
           return null;
@@ -1598,15 +2133,18 @@
 
       function toggleChatSkillsDrawer(forceOpen = null) {
         if (currentChatMode === "chat") {
-          setChatSkillsStatus("当前是聊天模式，只允许联网搜索工具，不使用 Skills。");
+          setChatSkillsStatus("\u5f53\u524d\u662f\u804a\u5929\u6a21\u5f0f\uff0c\u53ea\u5141\u8bb8\u8054\u7f51\u641c\u7d22\u5de5\u5177\uff0c\u4e0d\u4f7f\u7528 Skills\u3002");
           chatSkillsDrawerEl.classList.remove("open");
+          updateShellButtons();
           return;
         }
         const shouldOpen = forceOpen === null ? !chatSkillsDrawerEl.classList.contains("open") : !!forceOpen;
         chatSkillsDrawerEl.classList.toggle("open", shouldOpen);
         if (shouldOpen) {
+          chatHistoryDrawerEl.classList.remove("open");
           loadChatSkills(false);
         }
+        updateShellButtons();
       }
 
       function resetChatSkillsToDefault() {
@@ -1746,11 +2284,13 @@
         chatPanelEl.classList.add("open");
         updateShellButtons();
         loadChatSkills(false);
+        renderTopicHistoryList();
         chatInputEl.focus();
       }
 
       function closeChat() {
         chatPanelEl.classList.remove("open");
+        chatHistoryDrawerEl.classList.remove("open");
         updateShellButtons();
         toggleChatSkillsDrawer(false);
         saveChatPanelState();
@@ -2260,6 +2800,20 @@
                 currentChatMode = normalizeChatMode(payload.chat_mode);
                 applyChatModeUI();
               }
+              if (payload.topic_id) {
+                currentTopicId = String(payload.topic_id || "").trim() || currentTopicId;
+                state.chat.session_id = currentTopicId;
+                currentTopicMeta = topicHistoryItems.find((item) => item.topic_id === currentTopicId) || currentTopicMeta;
+                syncTopicIndicator();
+              }
+              if (payload.topic_history_enabled !== undefined) {
+                state.chat.topic_history = {
+                  ...(state.chat.topic_history || {}),
+                  enabled: !!payload.topic_history_enabled,
+                };
+                renderTopicHistoryList();
+                updateShellButtons();
+              }
             } else if (eventName === "phase") {
               const phase = String(payload.phase || "");
               const text = String(payload.text || "");
@@ -2309,14 +2863,21 @@
               feedSpeakBuffer(payload.delta || "");
             } else if (eventName === "done") {
               full = payload.text || full;
+              if (payload.topic_id) {
+                currentTopicId = String(payload.topic_id || "").trim() || currentTopicId;
+                state.chat.session_id = currentTopicId;
+              }
               if (pendingThought) {
                 pendingThought.el.remove();
                 pendingThought = null;
               }
               if (receivedStructuredSegment && !receivedDisplaySegment && !full) {
-                full = "(语音输出已完成)";
+                full = "(\u8bed\u97f3\u8f93\u51fa\u5df2\u5b8c\u6210)";
               }
-              updateMessageText(ensureFinalMessage(), full || "(空响应)");
+              updateMessageText(ensureFinalMessage(), full || "(\u7a7a\u54cd\u5e94)");
+              if (topicHistoryEnabled()) {
+                await loadTopicHistory(true);
+              }
             } else if (eventName === "error") {
               throw new Error(payload.message || "chat stream error");
             }
@@ -2385,6 +2946,7 @@
         if (!userText) {
           return;
         }
+        await ensureTopicReady();
         if (currentChatMode === "skill") {
           await loadChatSkills(false);
           if (!activeChatSkillIds().length) {
@@ -2679,6 +3241,11 @@
         }
         if (incoming.chat && typeof incoming.chat === "object") {
           Object.assign(state.chat, incoming.chat);
+          state.chat.topic_history = {
+            ...(state.chat.topic_history || {}),
+            enabled: state.chat?.topic_history?.enabled !== false,
+            summary_interval_assistant_turns: Number(state.chat?.topic_history?.summary_interval_assistant_turns || 10),
+          };
           const configuredDefaults = Array.isArray(incoming.chat.skills?.default_active_ids)
             ? incoming.chat.skills.default_active_ids
             : [];
@@ -2687,7 +3254,14 @@
             chatSelectedSkillIds = chatSkillDefaultIds.slice();
           }
           chatSkillsLoaded = false;
+          currentTopicId = String(state.chat.session_id || currentTopicId || "default").trim() || "default";
+          currentTopicMeta = topicHistoryItems.find((item) => item.topic_id === currentTopicId) || currentTopicMeta;
+          if (!topicHistoryEnabled()) {
+            chatHistoryDrawerEl.classList.remove("open");
+          }
+          renderTopicHistoryList();
           applyChatModeUI();
+          updateShellButtons();
         }
         syncPetDisplayName();
         state.background_enabled = !!state.background_enabled;
@@ -2756,12 +3330,12 @@
         navSettingsButtonEl.addEventListener("click", () => {
           openSettingsPage();
         });
-        navChatButtonEl.addEventListener("click", () => {
-          if (chatPanelEl.classList.contains("open")) {
-            closeChat();
-          } else {
-            openChat();
-          }
+        navHistoryButtonEl.addEventListener("click", () => {
+          openChat();
+          toggleChatHistoryDrawer();
+        });
+        navChatButtonEl.addEventListener("click", async () => {
+          await createNewTopic(true);
         });
         windowMinimizeEl.addEventListener("click", () => {
           callQtBridge("minimizeWindow");
@@ -2774,6 +3348,7 @@
         }
         chatCloseEl.addEventListener("click", () => closeChat());
         chatSkillsToggleEl.addEventListener("click", () => toggleChatSkillsDrawer());
+        chatHistoryRefreshEl.addEventListener("click", () => loadTopicHistory(true));
         chatSkillsRefreshEl.addEventListener("click", () => loadChatSkills(true));
         chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
         updateShellButtons();

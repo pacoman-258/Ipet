@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
+from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
 from .agent_orchestrator import (
     classify_route,
     execute_tool_calls,
@@ -34,7 +35,7 @@ from .models import (
     SkillImportLocalRequest,
     TTSRequest,
 )
-from .ollama_client import OLLAMA_BASE_URL, is_ollama_alive, list_models
+from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive, list_models
 from .skills import ResolvedSkillSet, SkillAwareToolBridge, SkillManager, SkillRuntime
 from .tool_runtime import Tool, ToolRegistry, ToolResult
 from .tooling.security import normalize_file_allowlist
@@ -67,6 +68,7 @@ RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
 RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
 RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
 AGENT_GRAPH_CHECKPOINT_PATH = ROOT_DIR / "backend" / "agent_graph_state.pkl"
+CHAT_TOPICS_ROOT = ROOT_DIR / "data" / "chat_topics"
 SESSION_STORE: dict[str, list[dict[str, str]]] = {}
 PENDING_CHAT_TURNS: dict[str, dict[str, Any]] = {}
 EXPR_OUTPUT_FORMAT = "ndjson_v1"
@@ -153,6 +155,7 @@ _MCP_BRIDGE: MCPBridge | None = None
 _MCP_CONFIG_SNAPSHOT = ""
 _AGENT_GRAPH_RUNTIME: AgentGraphRuntime | None = None
 _SKILL_MANAGER: SkillManager | None = None
+_CHAT_TOPIC_STORE: TopicStore | None = None
 
 
 def _settings_static_headers() -> dict[str, str]:
@@ -275,6 +278,10 @@ def _default_settings_config() -> dict[str, Any]:
                 "enabled": True,
                 "default_active_ids": [],
             },
+            "topic_history": {
+                "enabled": True,
+                "summary_interval_assistant_turns": 10,
+            },
             "system_prompt": "",
         },
     }
@@ -338,6 +345,236 @@ def _resolve_router_request_config(req: ChatStreamRequest, settings_config: dict
         "api_key": api_key,
         "model": model,
     }
+
+
+def _topic_history_config(settings_config: dict[str, Any]) -> dict[str, Any]:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    topic_history_cfg = chat_cfg.get("topic_history", {}) if isinstance(chat_cfg, dict) else {}
+    if not isinstance(topic_history_cfg, dict):
+        topic_history_cfg = {}
+    try:
+        interval = max(1, int(topic_history_cfg.get("summary_interval_assistant_turns", 10)))
+    except Exception:
+        interval = 10
+    return {
+        "enabled": bool(topic_history_cfg.get("enabled", True)),
+        "summary_interval_assistant_turns": interval,
+        "major_summary_group_size": 3,
+    }
+
+
+def _resolve_summary_request_config(
+    settings_config: dict[str, Any],
+    *,
+    llm_provider: str,
+    api_base_url: str,
+    api_key: str,
+    model: str,
+) -> dict[str, str]:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    main_provider = str(llm_provider or chat_cfg.get("llm_provider") or "ollama").strip() or "ollama"
+    main_base_url = str(api_base_url or chat_cfg.get("api_base_url") or "").strip()
+    main_api_key = str(api_key or chat_cfg.get("api_key") or "")
+    main_model = str(model or chat_cfg.get("model") or "qwen3:8b").strip() or "qwen3:8b"
+    return {
+        "llm_provider": str(chat_cfg.get("router_llm_provider") or main_provider).strip() or main_provider,
+        "api_base_url": str(chat_cfg.get("router_api_base_url") or main_base_url).strip(),
+        "api_key": str(chat_cfg.get("router_api_key") or main_api_key),
+        "model": str(chat_cfg.get("router_model") or main_model).strip() or main_model,
+    }
+
+
+def _topic_summary_source_text(messages: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        speaker = "User" if role == "user" else "Assistant"
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines).strip()
+
+
+def _topic_summary_blocks_text(blocks: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for index, block in enumerate(blocks, start=1):
+        if not isinstance(block, dict):
+            continue
+        start_turn = int(block.get("start_assistant_turn") or 0)
+        end_turn = int(block.get("end_assistant_turn") or 0)
+        content = str(block.get("content") or "").strip()
+        if not content:
+            continue
+        lines.append(f"Mini Summary {index} | assistant turns {start_turn}-{end_turn}:\n{content}")
+    return "\n\n".join(lines).strip()
+
+
+def _extract_message_content(message: dict[str, Any]) -> str:
+    content = message.get("content") if isinstance(message, dict) else ""
+    if isinstance(content, str):
+        return _sanitize_ai_text(content).strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    parts.append(text)
+        return _sanitize_ai_text("\n".join(parts)).strip()
+    return _sanitize_ai_text(str(content or "")).strip()
+
+
+async def _generate_topic_summary_text(
+    *,
+    kind: str,
+    settings_config: dict[str, Any],
+    llm_provider: str,
+    api_base_url: str,
+    api_key: str,
+    model: str,
+    source_text: str,
+    start_assistant_turn: int,
+    end_assistant_turn: int,
+) -> str:
+    config = _resolve_summary_request_config(
+        settings_config,
+        llm_provider=llm_provider,
+        api_base_url=api_base_url,
+        api_key=api_key,
+        model=model,
+    )
+    if kind == "major":
+        system_prompt = (
+            "You write long-horizon conversation summaries for a desktop assistant. "
+            "Preserve stable user preferences, completed decisions, open tasks, constraints, rejected approaches, and important facts. "
+            "Return plain text only."
+        )
+        user_prompt = (
+            f"Write one major summary covering assistant turns {start_assistant_turn}-{end_assistant_turn}. "
+            "Compress the supplied mini summaries into one durable context block.\n\n"
+            f"{source_text}"
+        )
+    else:
+        system_prompt = (
+            "You write concise rolling conversation summaries for a desktop assistant. "
+            "Preserve facts, user preferences, decisions, constraints, open tasks, and unresolved questions. "
+            "Return plain text only."
+        )
+        user_prompt = (
+            f"Write one mini summary covering assistant turns {start_assistant_turn}-{end_assistant_turn}. "
+            "Summarize the conversation transcript below.\n\n"
+            f"{source_text}"
+        )
+    message = await provider_chat_once(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        model=config["model"],
+        provider=config["llm_provider"],
+        base_url=config["api_base_url"],
+        api_key=config["api_key"],
+    )
+    summary_text = _extract_message_content(message)
+    if not summary_text:
+        raise ValueError(f"empty {kind} summary response")
+    return summary_text
+
+
+async def _maybe_update_topic_summaries(
+    *,
+    topic_id: str,
+    settings_config: dict[str, Any],
+    llm_provider: str,
+    api_base_url: str,
+    api_key: str,
+    model: str,
+) -> None:
+    topic_cfg = _topic_history_config(settings_config)
+    if not topic_cfg["enabled"]:
+        return
+    store = _get_chat_topic_store()
+    interval = int(topic_cfg["summary_interval_assistant_turns"] or 10)
+    major_group_size = int(topic_cfg.get("major_summary_group_size") or 3)
+    while True:
+        candidate = store.get_pending_mini_summary(topic_id, interval)
+        if candidate is None:
+            break
+        source_text = _topic_summary_source_text(list(candidate.get("messages") or []))
+        if not source_text:
+            break
+        try:
+            summary_text = await _generate_topic_summary_text(
+                kind="mini",
+                settings_config=settings_config,
+                llm_provider=llm_provider,
+                api_base_url=api_base_url,
+                api_key=api_key,
+                model=model,
+                source_text=source_text,
+                start_assistant_turn=int(candidate.get("start_assistant_turn") or 0),
+                end_assistant_turn=int(candidate.get("end_assistant_turn") or 0),
+            )
+        except Exception:
+            break
+        store.apply_mini_summary(topic_id, candidate, summary_text)
+    while True:
+        major_candidate = store.get_pending_major_summary(topic_id, major_group_size)
+        if major_candidate is None:
+            break
+        source_text = _topic_summary_blocks_text(list(major_candidate.get("blocks") or []))
+        if not source_text:
+            break
+        try:
+            summary_text = await _generate_topic_summary_text(
+                kind="major",
+                settings_config=settings_config,
+                llm_provider=llm_provider,
+                api_base_url=api_base_url,
+                api_key=api_key,
+                model=model,
+                source_text=source_text,
+                start_assistant_turn=int(major_candidate.get("start_assistant_turn") or 0),
+                end_assistant_turn=int(major_candidate.get("end_assistant_turn") or 0),
+            )
+        except Exception:
+            break
+        store.apply_major_summary(topic_id, major_candidate, summary_text)
+
+
+async def _finalize_chat_exchange(
+    *,
+    session_id: str,
+    user_text: str,
+    assistant_text: str,
+    working_messages: list[dict[str, str]],
+    memory_window: int,
+    settings_config: dict[str, Any],
+    llm_provider: str,
+    api_base_url: str,
+    api_key: str,
+    model: str,
+) -> None:
+    topic_cfg = _topic_history_config(settings_config)
+    if topic_cfg["enabled"]:
+        topic_id = normalize_topic_id(session_id)
+        store = _get_chat_topic_store()
+        store.append_exchange(topic_id, user_text=user_text, assistant_text=assistant_text)
+        await _maybe_update_topic_summaries(
+            topic_id=topic_id,
+            settings_config=settings_config,
+            llm_provider=llm_provider,
+            api_base_url=api_base_url,
+            api_key=api_key,
+            model=model,
+        )
+        SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
+        return
+    updated = list(working_messages) + [{"role": "assistant", "content": assistant_text}]
+    SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
 
 
 def _skill_summaries_for_route(
@@ -831,6 +1068,15 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     skills_cfg["enabled"] = bool(skills_cfg.get("enabled", True))
     skills_cfg["default_active_ids"] = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"))
     chat["skills"] = skills_cfg
+    topic_history_cfg = chat.get("topic_history", {})
+    if not isinstance(topic_history_cfg, dict):
+        topic_history_cfg = {}
+    topic_history_cfg["enabled"] = bool(topic_history_cfg.get("enabled", True))
+    try:
+        topic_history_cfg["summary_interval_assistant_turns"] = max(1, int(topic_history_cfg.get("summary_interval_assistant_turns", 10)))
+    except Exception:
+        topic_history_cfg["summary_interval_assistant_turns"] = 10
+    chat["topic_history"] = topic_history_cfg
 
     window = merged.get("window", {})
     if not isinstance(window, dict):
@@ -1127,6 +1373,13 @@ def _get_skill_manager(force_reload: bool = False) -> SkillManager:
     return _SKILL_MANAGER
 
 
+def _get_chat_topic_store(force_reload: bool = False) -> TopicStore:
+    global _CHAT_TOPIC_STORE
+    if force_reload or _CHAT_TOPIC_STORE is None:
+        _CHAT_TOPIC_STORE = TopicStore(CHAT_TOPICS_ROOT)
+    return _CHAT_TOPIC_STORE
+
+
 def _get_skill_runtime(force_reload: bool = False) -> SkillRuntime:
     return SkillRuntime(_get_skill_manager(force_reload=force_reload))
 
@@ -1160,7 +1413,7 @@ def _build_runtime_tool_bridge(state: dict[str, Any]) -> Any:
         return _FilteredToolBridge(
             _get_mcp_bridge(),
             allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
-            missing_message="tool not available in ????",
+            missing_message="tool not available in chat mode",
         )
 
     skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
@@ -1169,11 +1422,11 @@ def _build_runtime_tool_bridge(state: dict[str, Any]) -> Any:
         resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
         skill_bridge = _RegistryToolBridge(
             list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
-            missing_message="tool not available in Skill??",
+            missing_message="tool not available in skill mode",
         )
         allowlisted_bridge = _build_allowlisted_bridge(
             list(resolved.tool_allowlist),
-            missing_message="tool not available in Skill??",
+            missing_message="tool not available in skill mode",
         )
         return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
 
@@ -1232,9 +1485,10 @@ def _get_agent_graph_runtime(force_reload: bool = False) -> AgentGraphRuntime:
 
 
 def _reset_agent_graph_runtime() -> None:
-    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER
+    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER, _CHAT_TOPIC_STORE
     _AGENT_GRAPH_RUNTIME = None
     _SKILL_MANAGER = None
+    _CHAT_TOPIC_STORE = None
     PENDING_CHAT_TURNS.clear()
     try:
         AGENT_GRAPH_CHECKPOINT_PATH.unlink()
@@ -1695,7 +1949,7 @@ def _skills_response_payload() -> dict[str, Any]:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
@@ -1979,24 +2233,32 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text cannot be empty")
-    session_id = req.session_id or "default"
+    raw_session_id = str(req.session_id or "").strip()
     chat_mode = _normalize_chat_mode(req.chat_mode)
     settings_config = _load_settings_config()
+    topic_history_cfg = _topic_history_config(settings_config)
+    session_id = normalize_topic_id(raw_session_id or "default") if topic_history_cfg["enabled"] else (raw_session_id or "default")
     router_cfg = _resolve_router_request_config(req, settings_config)
     resolved_skills = _resolve_request_skills(req.skill_ids, settings=settings_config, chat_mode=chat_mode)
     tooling_cfg = _load_runtime_tooling_config()
     tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
     if chat_mode == CHAT_MODE_CHAT:
         if not tools_enabled:
-            raise HTTPException(status_code=400, detail="?????????????? tavily-mcp?")
+            raise HTTPException(status_code=400, detail="chat mode requires tavily-mcp tools to be enabled")
         if not _has_chat_mode_tavily_tools():
-            raise HTTPException(status_code=400, detail="?????? tavily-mcp????????? tavily-mcp ???")
+            raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
     if chat_mode == CHAT_MODE_SKILL and not router_cfg["enabled"] and not resolved_skills.skill_ids:
-        raise HTTPException(status_code=400, detail="Skill?????????????")
+        raise HTTPException(status_code=400, detail="Skill mode requires at least one active skill")
 
     pet_display_name = _extract_pet_display_name(req.system_prompt)
-    history = SESSION_STORE.get(session_id, [])
-    history = _trim_messages(history, req.memory_window)
+    if topic_history_cfg["enabled"]:
+        store = _get_chat_topic_store()
+        store.ensure_topic(session_id, persisted=True, title=DEFAULT_TOPIC_TITLE)
+        history = store.build_model_messages(session_id)
+        SESSION_STORE[session_id] = store.load_full_messages(session_id)
+    else:
+        history = SESSION_STORE.get(session_id, [])
+        history = _trim_messages(history, req.memory_window)
     working = history + [{"role": "user", "content": text}]
     max_reasoning_steps = max(1, int(req.max_reasoning_steps or 10))
     router_used = False
@@ -2043,19 +2305,19 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 if route_search_needed and route_search_query:
                     search_tool_name = _pick_tavily_tool_name(route_tools)
                     if not search_tool_name:
-                        raise HTTPException(status_code=400, detail="?????? tavily-mcp????????? tavily-mcp ???")
+                        raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
                     route_kind = "simple_tool_task"
                     route_tool_call = {
                         "name": search_tool_name,
                         "arguments": {"query": route_search_query},
-                        "action_message": f"?????????{route_search_query}",
+                        "action_message": f"Search the web for {route_search_query}",
                     }
                 else:
                     route_kind = "direct_answer"
             elif chat_mode == CHAT_MODE_SKILL:
                 resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
                 if not resolved_skills.skill_ids:
-                    raise HTTPException(status_code=400, detail="Skill???? API ?????????????? skill ??????")
+                    raise HTTPException(status_code=400, detail="Skill route did not resolve to an installed skill")
                 route_kind = "skill_task"
                 route_skill_ids = list(resolved_skills.skill_ids)
         except HTTPException:
@@ -2094,6 +2356,8 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
             "meta",
             {
                 "session_id": session_id,
+                "topic_id": session_id,
+                "topic_history_enabled": bool(topic_history_cfg["enabled"]),
                 "model": req.model,
                 "llm_provider": req.llm_provider,
                 "tool_mode": req.tool_mode,
@@ -2254,9 +2518,19 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
             return
 
         full_answer = _sanitize_ai_text(full_answer)
-        updated = working + [{"role": "assistant", "content": full_answer}]
-        SESSION_STORE[session_id] = _trim_messages(updated, req.memory_window)
-        yield _sse("done", {"text": full_answer})
+        await _finalize_chat_exchange(
+            session_id=session_id,
+            user_text=text,
+            assistant_text=full_answer,
+            working_messages=working,
+            memory_window=int(req.memory_window),
+            settings_config=settings_config,
+            llm_provider=str(req.llm_provider or "ollama"),
+            api_base_url=str(req.api_base_url or ""),
+            api_key=str(req.api_key or ""),
+            model=str(req.model or "qwen3:8b"),
+        )
+        yield _sse("done", {"text": full_answer, "topic_id": session_id})
         if cleanup_turn_id:
             _get_agent_graph_runtime().delete_turn(cleanup_turn_id)
 
@@ -2376,15 +2650,83 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
             return
 
         full_answer = _sanitize_ai_text(full_answer)
-        updated = list(state.get("working_messages") or []) + [{"role": "assistant", "content": full_answer}]
         session_id = str(state.get("session_id") or "default")
         memory_window = int(state.get("memory_window") or 10)
-        SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
-        yield _sse("done", {"text": full_answer})
+        settings_config = _load_settings_config()
+        await _finalize_chat_exchange(
+            session_id=session_id,
+            user_text=str(state.get("user_text") or ""),
+            assistant_text=full_answer,
+            working_messages=list(state.get("working_messages") or []),
+            memory_window=memory_window,
+            settings_config=settings_config,
+            llm_provider=str(state.get("llm_provider") or "ollama"),
+            api_base_url=str(state.get("api_base_url") or ""),
+            api_key=str(state.get("api_key") or ""),
+            model=str(state.get("model") or "qwen3:8b"),
+        )
+        yield _sse("done", {"text": full_answer, "topic_id": session_id})
         if cleanup_turn_id:
             runtime.delete_turn(cleanup_turn_id)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.post("/api/chat/topics")
+async def create_chat_topic(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    settings_config = _load_settings_config()
+    topic_cfg = _topic_history_config(settings_config)
+    requested_topic_id = ""
+    requested_title = DEFAULT_TOPIC_TITLE
+    if isinstance(payload, dict):
+        requested_topic_id = str(payload.get("topic_id") or payload.get("session_id") or "").strip()
+        requested_title = str(payload.get("title") or DEFAULT_TOPIC_TITLE).strip() or DEFAULT_TOPIC_TITLE
+    if topic_cfg["enabled"]:
+        meta = _get_chat_topic_store().create_topic(
+            topic_id=requested_topic_id or None,
+            persisted=True,
+            title=requested_title,
+        )
+    else:
+        meta = _get_chat_topic_store().create_topic(
+            topic_id=requested_topic_id or None,
+            persisted=False,
+            title=requested_title,
+        )
+    topic_id = str(meta.get("topic_id") or "")
+    if topic_id:
+        SESSION_STORE.setdefault(topic_id, [])
+    return {
+        "ok": True,
+        "topic": meta,
+        "topic_id": topic_id,
+        "persisted": bool(meta.get("persisted", False)),
+    }
+
+
+@app.get("/api/chat/topics")
+async def list_chat_topics() -> dict[str, Any]:
+    settings_config = _load_settings_config()
+    topic_cfg = _topic_history_config(settings_config)
+    topics = _get_chat_topic_store().list_topics()
+    return {
+        "ok": True,
+        "enabled": bool(topic_cfg["enabled"]),
+        "topics": topics,
+    }
+
+
+@app.get("/api/chat/topics/{topic_id}")
+async def get_chat_topic(topic_id: str) -> dict[str, Any]:
+    detail = _get_chat_topic_store().get_topic_detail(normalize_topic_id(topic_id))
+    if detail is None:
+        raise HTTPException(status_code=404, detail="topic not found")
+    return {
+        "ok": True,
+        "meta": detail.get("meta") or {},
+        "messages": detail.get("messages") or [],
+        "summary": detail.get("summary") or {},
+    }
 
 
 @app.post("/api/models")

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
+import shutil
+from uuid import uuid4
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
 from backend.agent_orchestrator import ToolExecution, ToolIntent, TurnDecision
+from backend.chat_topics import TopicStore
 
 
 class ChatSegmentedFlowTests(unittest.TestCase):
@@ -15,6 +19,9 @@ class ChatSegmentedFlowTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        self.topic_tmp = Path(__file__).resolve().parent / ".tmp_chat_segmented_flow" / f"tmp_{uuid4().hex}"
+        self.topic_tmp.mkdir(parents=True, exist_ok=True)
+        backend_app._CHAT_TOPIC_STORE = TopicStore(self.topic_tmp / "chat_topics")
         self.client = TestClient(backend_app.app)
 
     def tearDown(self) -> None:
@@ -22,6 +29,7 @@ class ChatSegmentedFlowTests(unittest.TestCase):
         backend_app.SESSION_STORE.clear()
         backend_app.PENDING_CHAT_TURNS.clear()
         backend_app._reset_agent_graph_runtime()
+        shutil.rmtree(self.topic_tmp, ignore_errors=True)
 
     def _pending_turn_id(self) -> str:
         runtime = backend_app._get_agent_graph_runtime()
