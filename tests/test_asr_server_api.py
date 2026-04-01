@@ -49,6 +49,18 @@ class ASRServerApiTests(unittest.TestCase):
         self.assertEqual(resp.json()["asr"], True)
         self.assertEqual(resp.json()["message"], "")
 
+    def test_health_reports_macos_disabled_message_by_default(self) -> None:
+        with mock.patch.object(asr_server, "_is_macos", return_value=True), mock.patch.object(
+            asr_server,
+            "_load_settings_config",
+            return_value={},
+        ):
+            resp = self.client.get("/api/health")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["asr"])
+        self.assertIn("macOS", resp.json()["message"])
+
     def test_asr_server_websocket_streams_ready_partial_and_final(self) -> None:
         settings = {"chat": {"asr": {"enabled": True, "provider": "funasr", "push_to_talk_key": "Alt", "interim_results": True}}}
         with mock.patch.object(asr_server, "_load_settings_config", return_value=settings):

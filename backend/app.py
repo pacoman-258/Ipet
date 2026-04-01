@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import re
+import sys
 
 import httpx
 import subprocess
@@ -208,6 +209,27 @@ _TURN_TOOL_BRIDGE_CACHE: dict[str, Any] = {}
 LOGGER = logging.getLogger(__name__)
 
 
+def _is_macos() -> bool:
+    return str(sys.platform or "").strip().lower() == "darwin"
+
+
+def _default_asr_enabled() -> bool:
+    return not _is_macos()
+
+
+def _default_asr_config() -> dict[str, Any]:
+    config = json.loads(json.dumps(DEFAULT_ASR_CONFIG))
+    config["enabled"] = _default_asr_enabled()
+    config["api_base_url"] = str(config.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL
+    return config
+
+
+def _asr_disabled_message() -> str:
+    if _is_macos():
+        return "ASR is disabled by default on macOS v1. Chat and settings remain available."
+    return "ASR is disabled in settings."
+
+
 @dataclass(frozen=True)
 class ChatRequestContext:
     raw_config: dict[str, Any]
@@ -316,6 +338,7 @@ def _find_default_model() -> str:
 
 
 def _default_settings_config() -> dict[str, Any]:
+    default_asr_config = _default_asr_config()
     return {
         "model_path": _find_default_model(),
         "window": {
@@ -368,7 +391,7 @@ def _default_settings_config() -> dict[str, Any]:
                 "enabled": True,
                 "summary_interval_assistant_turns": 10,
             },
-            "asr": json.loads(json.dumps(DEFAULT_ASR_CONFIG)),
+            "asr": json.loads(json.dumps(default_asr_config)),
             "system_prompt": "",
         },
     }
@@ -451,16 +474,17 @@ def _topic_history_config(settings_config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _asr_config(settings_config: dict[str, Any]) -> dict[str, Any]:
+    default_asr_config = _default_asr_config()
     chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
     asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
     if not isinstance(asr_cfg, dict):
         asr_cfg = {}
     return {
-        "enabled": bool(asr_cfg.get("enabled", DEFAULT_ASR_CONFIG["enabled"])),
+        "enabled": bool(asr_cfg.get("enabled", default_asr_config["enabled"])),
         "provider": str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER,
-        "api_base_url": str(asr_cfg.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL,
+        "api_base_url": str(asr_cfg.get("api_base_url") or default_asr_config["api_base_url"]).strip() or DEFAULT_ASR_API_BASE_URL,
         "push_to_talk_key": normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key")),
-        "interim_results": bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"])),
+        "interim_results": bool(asr_cfg.get("interim_results", default_asr_config["interim_results"])),
     }
 
 
@@ -1400,12 +1424,13 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     asr_cfg = chat.get("asr", {})
     if not isinstance(asr_cfg, dict):
         asr_cfg = {}
-    asr_cfg["enabled"] = bool(asr_cfg.get("enabled", DEFAULT_ASR_CONFIG["enabled"]))
+    default_asr_config = _default_asr_config()
+    asr_cfg["enabled"] = bool(asr_cfg.get("enabled", default_asr_config["enabled"]))
     provider = str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER
     asr_cfg["provider"] = provider if provider == DEFAULT_ASR_PROVIDER else DEFAULT_ASR_PROVIDER
-    asr_cfg["api_base_url"] = str(asr_cfg.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL
+    asr_cfg["api_base_url"] = str(asr_cfg.get("api_base_url") or default_asr_config["api_base_url"]).strip() or DEFAULT_ASR_API_BASE_URL
     asr_cfg["push_to_talk_key"] = normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key"))
-    asr_cfg["interim_results"] = bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"]))
+    asr_cfg["interim_results"] = bool(asr_cfg.get("interim_results", default_asr_config["interim_results"]))
     chat["asr"] = asr_cfg
 
     window = merged.get("window", {})
@@ -2858,6 +2883,8 @@ async def health() -> dict[str, Any]:
         else:
             asr_message = _get_asr_service().readiness_message()
             asr_ok = not asr_message
+    elif _is_macos():
+        asr_message = _asr_disabled_message()
     return {
         "ok": True,
         "ollama": ollama_ok,
@@ -3920,7 +3947,7 @@ async def warmup_asr() -> dict[str, Any]:
     settings_config = _load_settings_config()
     asr_cfg = _asr_config(settings_config)
     if not asr_cfg["enabled"]:
-        return {"ok": False, "started": False, "ready": False, "message": "ASR is disabled in settings."}
+        return {"ok": False, "started": False, "ready": False, "message": _asr_disabled_message()}
     started, message = _ensure_internal_asr_warmup_started()
     readiness_message = _get_asr_service().readiness_message()
     ready = not readiness_message
@@ -3938,7 +3965,7 @@ async def asr_stream(websocket: WebSocket) -> None:
     settings_config = _load_settings_config()
     asr_cfg = _asr_config(settings_config)
     if not asr_cfg["enabled"]:
-        await websocket.send_json({"type": "error", "message": "ASR is disabled in settings."})
+        await websocket.send_json({"type": "error", "message": _asr_disabled_message()})
         await websocket.close(code=1008)
         return
 

@@ -74,6 +74,13 @@ class ASRApiTests(unittest.TestCase):
         self.assertEqual(normalized["chat"]["asr"]["push_to_talk_key"], "Alt")
         self.assertTrue(normalized["chat"]["asr"]["interim_results"])
 
+    def test_normalize_settings_config_disables_asr_by_default_on_macos(self) -> None:
+        with mock.patch.object(backend_app, "_is_macos", return_value=True):
+            normalized = backend_app._normalize_settings_config({"chat": {"asr": {"push_to_talk_key": "BadKey"}}})
+
+        self.assertFalse(normalized["chat"]["asr"]["enabled"])
+        self.assertEqual(normalized["chat"]["asr"]["push_to_talk_key"], "Alt")
+
     def test_asr_warmup_endpoint_starts_background_loading(self) -> None:
         settings = {"chat": {"backend_url": "http://127.0.0.1:8009", "asr": {"enabled": True, "provider": "funasr", "api_base_url": "http://127.0.0.1:8009", "push_to_talk_key": "Ctrl", "interim_results": True}}}
         fake_service = mock.Mock()
@@ -95,6 +102,19 @@ class ASRApiTests(unittest.TestCase):
                 "message": "ASR 正在加载模型，请稍后再试。",
             },
         )
+
+
+    def test_asr_warmup_reports_macos_disabled_message(self) -> None:
+        with mock.patch.object(backend_app, "_is_macos", return_value=True), mock.patch.object(
+            backend_app,
+            "_load_settings_config",
+            return_value={},
+        ):
+            resp = self.client.post("/api/asr/warmup")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["ok"])
+        self.assertIn("macOS", resp.json()["message"])
 
 
 if __name__ == "__main__":

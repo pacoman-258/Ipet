@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,20 @@ app.add_middleware(
 _ASR_SERVICE: ASRService | None = None
 
 
+def _is_macos() -> bool:
+    return str(sys.platform or "").strip().lower() == "darwin"
+
+
+def _default_asr_enabled() -> bool:
+    return not _is_macos()
+
+
+def _asr_disabled_message() -> str:
+    if _is_macos():
+        return "ASR is disabled by default on macOS v1. Chat and settings remain available."
+    return "ASR is disabled in settings."
+
+
 def _load_settings_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         return {}
@@ -47,7 +62,7 @@ def _asr_config(settings_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(asr_cfg, dict):
         asr_cfg = {}
     return {
-        "enabled": bool(asr_cfg.get("enabled", DEFAULT_ASR_CONFIG["enabled"])),
+        "enabled": bool(asr_cfg.get("enabled", _default_asr_enabled())),
         "provider": str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER,
         "push_to_talk_key": normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key")),
         "interim_results": bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"])),
@@ -73,6 +88,8 @@ def _warm_asr_service_in_background() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    if not _asr_config(_load_settings_config())["enabled"]:
+        return
     service = _get_asr_service()
     if not service.available():
         return
@@ -88,6 +105,8 @@ async def health() -> dict[str, Any]:
     if asr_cfg["enabled"]:
         readiness_message = service.readiness_message()
         asr_ok = not readiness_message
+    elif _is_macos():
+        readiness_message = _asr_disabled_message()
     return {
         "ok": True,
         "asr": bool(asr_ok),
@@ -101,7 +120,7 @@ async def asr_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     asr_cfg = _asr_config(_load_settings_config())
     if not asr_cfg["enabled"]:
-        await websocket.send_json({"type": "error", "message": "ASR is disabled in settings."})
+        await websocket.send_json({"type": "error", "message": _asr_disabled_message()})
         await websocket.close(code=1008)
         return
 

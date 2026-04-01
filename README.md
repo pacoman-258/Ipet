@@ -31,6 +31,7 @@ For coding agents, see `AGENTS.md`.
 
 - Python 3.12+
 - Windows is the primary target environment in the current codebase
+- macOS v1 target: macOS 13+ on Apple Silicon, focused on desktop startup, settings, and chat availability
 - The currently verified development runtime is the project `.venv` on Python 3.12
 - Optional:
   - Ollama for local LLM inference
@@ -68,6 +69,14 @@ uv run --no-sync python main.py
 - When `chat.asr.enabled` is on, the desktop host also tries to launch `backend.asr_server:app` at `chat.asr.api_base_url`, defaulting to `http://127.0.0.1:8012`.
 - Topic history is keyed by topic id. The UI shows full transcripts while the model consumes the compressed context rebuilt from `summary.json`.
 - New chats start as drafts. Blank topics are not persisted until a real conversation is successfully completed.
+
+### macOS v1 Scope
+
+- The current macOS target is `macOS 13+` on Apple Silicon.
+- v1 aims to keep the desktop shell, settings page, backend, and normal chat usable.
+- ASR is disabled by default on macOS in v1.
+- `.app` packaging, code signing, notarization, the full microphone permission chain, and full ASR support are intentionally out of scope for this first pass.
+- Third-party MCP servers are not guaranteed to work on macOS in this phase.
 
 ## Feature Notes
 

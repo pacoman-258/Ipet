@@ -82,5 +82,27 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertEqual(resp.json()["message"], "ASR 正在加载模型，请稍后再试。")
 
 
+    def test_health_reports_macos_disabled_message_by_default(self) -> None:
+        backend_app._MCP_BRIDGE = None
+        with mock.patch.object(backend_app, "_is_macos", return_value=True), mock.patch.object(
+            backend_app,
+            "is_ollama_alive",
+            return_value=True,
+        ), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "third_party": {"enabled": True}},
+        ), mock.patch.object(
+            backend_app,
+            "_load_settings_config",
+            return_value={},
+        ):
+            resp = self.client.get("/api/health")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["asr"])
+        self.assertIn("macOS", resp.json()["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

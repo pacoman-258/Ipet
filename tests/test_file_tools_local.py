@@ -249,6 +249,25 @@ class LocalMCPServerTests(unittest.TestCase):
 
 
 class BackendLaunchSelectionTests(unittest.TestCase):
+    def test_qt_runtime_env_defaults_keep_windows_gpu_workarounds(self) -> None:
+        defaults = main._qt_runtime_env_defaults("win32")
+
+        self.assertEqual(defaults["QTWEBENGINE_DISABLE_SANDBOX"], "1")
+        self.assertEqual(defaults["QT_OPENGL"], "software")
+        self.assertIn("--use-gl=angle", defaults["QTWEBENGINE_CHROMIUM_FLAGS"])
+        self.assertIn("--disable-direct-composition", defaults["QTWEBENGINE_CHROMIUM_FLAGS"])
+
+    def test_qt_runtime_env_defaults_keep_macos_conservative(self) -> None:
+        defaults = main._qt_runtime_env_defaults("darwin")
+
+        self.assertEqual(defaults["QTWEBENGINE_DISABLE_SANDBOX"], "1")
+        self.assertNotIn("QT_OPENGL", defaults)
+        self.assertNotIn("QTWEBENGINE_CHROMIUM_FLAGS", defaults)
+
+    def test_default_asr_config_disables_macos_by_default(self) -> None:
+        self.assertFalse(main._default_asr_config("darwin")["enabled"])
+        self.assertTrue(main._default_asr_config("win32")["enabled"])
+
     def test_is_backend_healthy_requires_delete_route_support(self) -> None:
         health_resp = mock.Mock(status_code=200)
         openapi_resp = mock.Mock(status_code=200)

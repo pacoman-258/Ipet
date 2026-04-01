@@ -1975,9 +1975,17 @@
         return normalizeAsrConfig(state.chat?.asr || {});
       }
 
+      function isProbablyMacOS() {
+        const platform = String(navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+        return platform.includes("mac");
+      }
+
       function defaultAsrStatusText() {
         const config = asrConfig();
         if (!config.enabled) {
+          if (isProbablyMacOS()) {
+            return "[macOS] ASR 默认关闭，聊天仍可用";
+          }
           return "\u8bed\u97f3\u8f93\u5165\u5df2\u5173\u95ed";
         }
         return `\u6309\u4f4f ${config.push_to_talk_key} \u8bf4\u8bdd`;

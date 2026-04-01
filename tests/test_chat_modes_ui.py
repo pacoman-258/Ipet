@@ -67,6 +67,8 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('function candidateAsrBaseUrls()', source)
         self.assertIn('function buildAsrWarmupUrl(baseUrl = "")', source)
         self.assertIn('callQtBridge("startAsrWarmup")', source)
+        self.assertIn('function isProbablyMacOS()', source)
+        self.assertIn('[macOS] ASR 默认关闭，聊天仍可用', source)
         self.assertIn('function shouldRetryAsrAvailability(message)', source)
         self.assertIn('String(state.chat?.backend_url || "").trim()', source)
         self.assertIn('let sawSocketError = false;', source)

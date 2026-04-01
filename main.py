@@ -14,11 +14,36 @@ from urllib.parse import urlparse
 import requests
 
 
-os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
-os.environ.setdefault("QT_OPENGL", "software")
-os.environ.setdefault(
-    "QTWEBENGINE_CHROMIUM_FLAGS",
-    " ".join(
+def _platform_name(platform_name: str | None = None) -> str:
+    return str(platform_name or sys.platform).strip().lower()
+
+
+def _is_macos(platform_name: str | None = None) -> bool:
+    return _platform_name(platform_name) == "darwin"
+
+
+def _default_asr_enabled(platform_name: str | None = None) -> bool:
+    return not _is_macos(platform_name)
+
+
+def _default_asr_config(platform_name: str | None = None) -> dict[str, object]:
+    return {
+        "enabled": _default_asr_enabled(platform_name),
+        "provider": "funasr",
+        "api_base_url": "http://127.0.0.1:8012",
+        "push_to_talk_key": "Alt",
+        "interim_results": True,
+    }
+
+
+def _qt_runtime_env_defaults(platform_name: str | None = None) -> dict[str, str]:
+    defaults = {
+        "QTWEBENGINE_DISABLE_SANDBOX": "1",
+    }
+    if _is_macos(platform_name):
+        return defaults
+    defaults["QT_OPENGL"] = "software"
+    defaults["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
         [
             "--use-gl=angle",
             "--use-angle=swiftshader",
@@ -31,8 +56,19 @@ os.environ.setdefault(
             "--disable-features=UseSkiaRenderer,VizDisplayCompositor,CanvasOopRasterization",
             "--in-process-gpu",
         ]
-    ),
-)
+    )
+    return defaults
+
+
+def _apply_qt_runtime_env(env: dict[str, str] | None = None, platform_name: str | None = None) -> dict[str, str]:
+    target = env if env is not None else os.environ
+    defaults = _qt_runtime_env_defaults(platform_name)
+    for key, value in defaults.items():
+        target.setdefault(key, value)
+    return defaults
+
+
+_apply_qt_runtime_env()
 
 try:
     from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
@@ -96,13 +132,7 @@ CONFIG_PATH = ROOT_DIR / "pet_config.json"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
-DEFAULT_ASR_CONFIG = {
-    "enabled": True,
-    "provider": "funasr",
-    "api_base_url": DEFAULT_ASR_API_BASE_URL,
-    "push_to_talk_key": "Alt",
-    "interim_results": True,
-}
+DEFAULT_ASR_CONFIG = _default_asr_config()
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
 RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
