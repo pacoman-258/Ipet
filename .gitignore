@@ -27,8 +27,11 @@ Todo.txt
 tmp*/
 tests/.tmp_*/
 
-# Local models and downloaded assets
-model/
+# Model runtime assets
+model/*.zip
+model/**/*.zip
+model/**/*.autogen.model3.json
+model/**/Thumbs.db
 
 # Third-party MCP local installs
 third_party_mcp/jmmcp/
