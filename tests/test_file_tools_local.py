@@ -56,6 +56,7 @@ def _install_qt_stubs() -> None:
     qtwebchannel.QWebChannel = type("QWebChannel", (), {})
 
     qtwebenginecore = types.ModuleType("PySide6.QtWebEngineCore")
+    qtwebenginecore.QWebEnginePage = type("QWebEnginePage", (), {})
     qtwebenginecore.QWebEngineSettings = type("QWebEngineSettings", (), {})
 
     qtwebenginewidgets = types.ModuleType("PySide6.QtWebEngineWidgets")
@@ -245,6 +246,76 @@ class LocalMCPServerTests(unittest.TestCase):
         server = LocalMCPServer(file_allowlist=[str(main.ROOT_DIR)])
         names = {item["function"]["name"] for item in server.list_tools()}
         self.assertTrue({"delete_file", "copy_file", "stat_path", "search_files"}.issubset(names))
+
+
+class BackendLaunchSelectionTests(unittest.TestCase):
+    def test_is_backend_healthy_requires_delete_route_support(self) -> None:
+        health_resp = mock.Mock(status_code=200)
+        openapi_resp = mock.Mock(status_code=200)
+        openapi_resp.json.return_value = {
+            "paths": {
+                "/api/chat/topics": {"get": {}, "post": {}},
+                "/api/chat/topics/{topic_id}": {"get": {}},
+            }
+        }
+        with mock.patch.object(main.requests, "get", side_effect=[health_resp, openapi_resp]):
+            self.assertFalse(main.is_backend_healthy("http://127.0.0.1:8008"))
+
+    def test_pick_backend_launch_url_uses_next_free_local_port(self) -> None:
+        with mock.patch.object(main, "is_service_port_available", side_effect=[False, True]):
+            self.assertEqual(main.pick_backend_launch_url("http://127.0.0.1:8008"), "http://127.0.0.1:8009")
+
+    def test_ensure_backend_service_switches_away_from_stale_local_backend(self) -> None:
+        fake = types.SimpleNamespace(
+            config={"chat": {"backend_url": "http://127.0.0.1:8008"}},
+            backend_process=None,
+            backend_started_by_app=False,
+        )
+        proc = mock.Mock()
+        with mock.patch.object(main, "is_backend_healthy", side_effect=[False, False]):
+            with mock.patch.object(main, "is_backend_live", return_value=True):
+                with mock.patch.object(main, "pick_backend_launch_url", return_value="http://127.0.0.1:8009"):
+                    with mock.patch.object(main.subprocess, "Popen", return_value=proc) as popen_mock:
+                        with mock.patch.object(main.time, "sleep", return_value=None):
+                            main.DesktopPet.ensure_backend_service(fake)
+        self.assertEqual(fake.config["chat"]["backend_url"], "http://127.0.0.1:8009")
+        self.assertIs(fake.backend_process, proc)
+        self.assertTrue(fake.backend_started_by_app)
+        cmd = popen_mock.call_args.args[0]
+        self.assertIn("--port", cmd)
+        self.assertIn("8009", cmd)
+
+    def test_ensure_asr_service_reuses_local_backend_url(self) -> None:
+        fake = types.SimpleNamespace(
+            config={"chat": {"backend_url": "http://127.0.0.1:8009", "asr": {"enabled": True, "api_base_url": "http://127.0.0.1:8012"}}},
+            asr_process=None,
+            asr_started_by_app=False,
+        )
+
+        with mock.patch.object(main.subprocess, "Popen") as popen_mock:
+            main.DesktopPet.ensure_asr_service(fake)
+
+        self.assertEqual(fake.config["chat"]["asr"]["api_base_url"], "http://127.0.0.1:8009")
+        popen_mock.assert_not_called()
+
+    def test_request_asr_warmup_posts_to_backend_and_starts_monitor(self) -> None:
+        fake = types.SimpleNamespace(
+            config={"chat": {"backend_url": "http://127.0.0.1:8009", "asr": {"enabled": True, "api_base_url": "http://127.0.0.1:8009"}}},
+            ensure_backend_service=mock.Mock(),
+            ensure_asr_service=mock.Mock(),
+            _start_asr_warmup_progress_monitor=mock.Mock(),
+        )
+        response = mock.Mock()
+        response.headers = {"content-type": "application/json"}
+        response.json.return_value = {"ok": True, "started": True, "ready": False, "message": "ASR 正在加载模型，请稍后再试。"}
+
+        with mock.patch.object(main.requests, "post", return_value=response):
+            main.DesktopPet.request_asr_warmup(fake)
+
+        fake.ensure_backend_service.assert_called_once()
+        fake.ensure_asr_service.assert_called_once()
+        fake._start_asr_warmup_progress_monitor.assert_called_once_with("http://127.0.0.1:8009")
+
 
 
 class MainRuntimeCommandTests(unittest.TestCase):

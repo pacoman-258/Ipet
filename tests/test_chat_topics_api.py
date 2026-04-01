@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
+import shutil
 import unittest
 from pathlib import Path
-import shutil
 from uuid import uuid4
 from unittest import mock
 
@@ -53,24 +53,23 @@ class ChatTopicsApiTests(unittest.TestCase):
         backend_app._CHAT_TOPIC_STORE = self.original_store
         shutil.rmtree(self.tmp_root, ignore_errors=True)
 
-    def test_create_and_read_topic_endpoints(self) -> None:
+    def test_create_topic_endpoint_returns_unsaved_draft_until_first_exchange(self) -> None:
         settings = {"chat": {"topic_history": {"enabled": True, "summary_interval_assistant_turns": 10}}}
         with mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
             create_resp = self.client.post("/api/chat/topics", json={})
             self.assertEqual(create_resp.status_code, 200)
             payload = create_resp.json()
             topic_id = payload["topic_id"]
-            self.assertTrue(payload["persisted"])
+            self.assertFalse(payload["persisted"])
             self.assertEqual(payload["topic"]["title"], DEFAULT_TOPIC_TITLE)
 
             list_resp = self.client.get("/api/chat/topics")
             detail_resp = self.client.get(f"/api/chat/topics/{topic_id}")
 
         self.assertEqual(list_resp.status_code, 200)
-        self.assertEqual(detail_resp.status_code, 200)
-        self.assertEqual(len(list_resp.json()["topics"]), 1)
-        self.assertEqual(detail_resp.json()["meta"]["topic_id"], topic_id)
-        self.assertEqual(detail_resp.json()["messages"], [])
+        self.assertEqual(list_resp.json()["topics"], [])
+        self.assertEqual(detail_resp.status_code, 404)
+        self.assertFalse((self.tmp_root / "chat_topics" / topic_id).exists())
 
     def test_create_topic_returns_ephemeral_topic_when_history_disabled(self) -> None:
         settings = {"chat": {"topic_history": {"enabled": False, "summary_interval_assistant_turns": 10}}}
@@ -81,6 +80,73 @@ class ChatTopicsApiTests(unittest.TestCase):
         payload = resp.json()
         self.assertFalse(payload["persisted"])
         self.assertFalse((self.tmp_root / "chat_topics" / payload["topic_id"]).exists())
+
+    def test_delete_topic_endpoint_removes_persisted_topic(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        self.store.append_exchange("demo-topic", user_text="hello", assistant_text="world")
+        backend_app.SESSION_STORE["demo-topic"] = self.store.load_full_messages("demo-topic")
+
+        resp = self.client.delete("/api/chat/topics/demo-topic")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertTrue(payload["deleted"])
+        self.assertEqual(payload["topics"], [])
+        self.assertNotIn("demo-topic", backend_app.SESSION_STORE)
+        self.assertFalse((self.tmp_root / "chat_topics" / "demo-topic").exists())
+        self.assertEqual(self.client.get("/api/chat/topics/demo-topic").status_code, 404)
+
+    def test_delete_topic_post_fallback_endpoint_removes_persisted_topic(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        self.store.append_exchange("demo-topic", user_text="hello", assistant_text="world")
+
+        resp = self.client.post("/api/chat/topics/demo-topic/delete")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertTrue(payload["deleted"])
+        self.assertEqual(payload["topics"], [])
+        self.assertFalse((self.tmp_root / "chat_topics" / "demo-topic").exists())
+
+    def test_chat_stream_persists_draft_topic_after_first_exchange(self) -> None:
+        runtime = _FakeRuntime()
+        settings = {
+            "chat": {
+                "skills": {"enabled": True, "default_active_ids": []},
+                "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
+            }
+        }
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "fresh answer"}
+
+        with mock.patch.object(backend_app, "_load_settings_config", return_value=settings), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(backend_app, "_get_agent_graph_runtime", return_value=runtime), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ):
+            create_resp = self.client.post("/api/chat/topics", json={})
+            topic_id = create_resp.json()["topic_id"]
+            self.assertFalse((self.tmp_root / "chat_topics" / topic_id).exists())
+
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "session_id": topic_id,
+                    "text": "first turn",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "router_enabled": False,
+                },
+            )
+            topics_payload = self.client.get("/api/chat/topics").json()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(topics_payload["topics"]), 1)
+        detail = self.store.get_topic_detail(topic_id) or {}
+        self.assertEqual([item["content"] for item in detail["messages"]], ["first turn", "fresh answer"])
 
     def test_chat_stream_uses_topic_summary_context_instead_of_session_store(self) -> None:
         topic_id = "demo-topic"
@@ -180,7 +246,6 @@ class ChatTopicsApiTests(unittest.TestCase):
         self.assertEqual(fallback["api_base_url"], "http://main.local")
         self.assertEqual(fallback["api_key"], "main-key")
         self.assertEqual(fallback["model"], "main-model")
-
 
     def test_finalize_chat_exchange_rolls_up_mini_and_major_summaries(self) -> None:
         settings = {

@@ -33,6 +33,9 @@
     chatMemoryWindow: $("chat-memory-window"),
     chatTopicHistoryEnabled: $("chat-topic-history-enabled"),
     chatTopicHistorySummaryInterval: $("chat-topic-history-summary-interval"),
+    chatAsrEnabled: $("chat-asr-enabled"),
+    chatAsrPushToTalkKey: $("chat-asr-push-to-talk-key"),
+    chatAsrInterimResults: $("chat-asr-interim-results"),
     chatTtsProvider: $("chat-tts-provider"),
     chatRatePct: $("chat-rate-pct"),
     chatRateLabel: $("chat-rate-label"),
@@ -756,6 +759,9 @@
     els.chatMemoryWindow.value = Number(config.chat.memory_window || 10);
     els.chatTopicHistoryEnabled.checked = config.chat?.topic_history?.enabled !== false;
     els.chatTopicHistorySummaryInterval.value = Number(config.chat?.topic_history?.summary_interval_assistant_turns || 10);
+    els.chatAsrEnabled.checked = config.chat?.asr?.enabled !== false;
+    els.chatAsrPushToTalkKey.value = config.chat?.asr?.push_to_talk_key || "Alt";
+    els.chatAsrInterimResults.checked = config.chat?.asr?.interim_results !== false;
     els.chatTtsProvider.value = config.chat.tts_provider || "edge_tts";
     els.chatRatePct.value = Number(config.chat.rate_pct || 0);
     els.chatTtsProviderUrl.value = config.chat.tts_provider_url || "";
@@ -816,6 +822,13 @@
         const interval = Number(els.chatTopicHistorySummaryInterval.value);
         return Number.isFinite(interval) && interval > 0 ? interval : 10;
       })(),
+    };
+    next.chat.asr = {
+      ...(next.chat.asr || {}),
+      enabled: !!els.chatAsrEnabled.checked,
+      provider: "funasr",
+      push_to_talk_key: els.chatAsrPushToTalkKey.value || "Alt",
+      interim_results: !!els.chatAsrInterimResults.checked,
     };
     next.chat.tts_provider = els.chatTtsProvider.value;
     next.chat.rate_pct = Number(els.chatRatePct.value || 0);

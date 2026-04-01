@@ -1,24 +1,44 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import json
+import logging
 import mimetypes
+import re
+
+import httpx
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
+from .asr import (
+    ASRError,
+    ASRService,
+    DEFAULT_ASR_API_BASE_URL,
+    DEFAULT_ASR_CONFIG,
+    DEFAULT_ASR_LANGUAGE,
+    DEFAULT_ASR_PROVIDER,
+    DEFAULT_PUSH_TO_TALK_KEY,
+    asr_available,
+    normalize_push_to_talk_key,
+)
 from .agent_orchestrator import (
+    _compact_text,
+    build_execution_plan,
     classify_route,
-    execute_tool_calls,
     decide_turn,
+    plan_capabilities,
+    search_capabilities,
+    execute_tool_calls,
     stream_final_reply,
 )
 from .mcp_bridge import MCPBridge
@@ -36,7 +56,15 @@ from .models import (
     TTSRequest,
 )
 from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive, list_models
-from .skills import ResolvedSkillSet, SkillAwareToolBridge, SkillManager, SkillRuntime
+from .runtime_prompts import (
+    EXPR_PROTOCOL_PROMPT,
+    REACT_SKILL_VISIBILITY_NOTE,
+    build_decision_messages as _rt_build_decision_messages,
+    build_expression_protocol_prompt as _rt_build_expression_protocol_prompt,
+    build_system_prompt as _rt_build_system_prompt,
+    continuation_recheck_prompt as _rt_continuation_recheck_prompt,
+)
+from .skills import ResolvedSkillSet, SkillAwareToolBridge, SkillManager, SkillRuntime, tool_name_matches_pattern
 from .tool_runtime import Tool, ToolRegistry, ToolResult
 from .tooling.security import normalize_file_allowlist
 from .tts import (
@@ -87,14 +115,31 @@ CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
 PHASE_SKILL_SELECTION = "skill_selection"
 PHASE_SKILL_EXECUTION = "skill_execution"
 PHASE_AGENT_LOOP = "agent_loop"
-SYSTEM_TOOL_SKILL_SEARCH = "system.skill_search"
-SYSTEM_TOOL_TOOL_SEARCH = "system.tool_search"
 SYSTEM_TOOL_AGENT_LOOP = "system.agent_loop"
-EXPR_PROTOCOL_PROMPT = (
-    "Output must be strict NDJSON. One JSON object per line with no extra commentary. "
-    "Only fields expr and text are allowed. expr is an expression name string (or empty), "
-    "text is plain response content. Example: {\"expr\":\"happy\",\"text\":\"hello\"}"
-)
+REACT_SKILL_PROMPT_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+REACT_SKILL_PROMPT_DEPENDENCIES_RE = re.compile(r"^\s*Dependencies\s*:\s*$", re.IGNORECASE)
+REACT_SKILL_PROMPT_FILE_EXTENSIONS = {
+    "css",
+    "csv",
+    "docx",
+    "gif",
+    "html",
+    "jpeg",
+    "jpg",
+    "js",
+    "json",
+    "md",
+    "pdf",
+    "png",
+    "pptx",
+    "py",
+    "svg",
+    "toml",
+    "txt",
+    "xlsx",
+    "yaml",
+    "yml",
+}
 DEFAULT_TOOLING = {
     "enabled": True,
     "mode": "mcp_local_phase2",
@@ -156,6 +201,47 @@ _MCP_CONFIG_SNAPSHOT = ""
 _AGENT_GRAPH_RUNTIME: AgentGraphRuntime | None = None
 _SKILL_MANAGER: SkillManager | None = None
 _CHAT_TOPIC_STORE: TopicStore | None = None
+_ASR_SERVICE: ASRService | None = None
+_ASR_WARMUP_TASK: asyncio.Task[str] | None = None
+_TURN_TOOL_BRIDGE_CACHE: dict[str, Any] = {}
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChatRequestContext:
+    raw_config: dict[str, Any]
+    settings_config: dict[str, Any]
+    tooling_cfg: dict[str, Any]
+    topic_history_cfg: dict[str, Any]
+    router_cfg: dict[str, Any]
+    resolved_skills: ResolvedSkillSet
+    session_id: str
+    pet_display_name: str
+    history_messages: list[dict[str, Any]]
+    working_messages: list[dict[str, Any]]
+    topic_snapshot: Any | None = None
+
+
+@dataclass
+class PerfTracker:
+    started_at: float = field(default_factory=time.perf_counter)
+    timings_ms: dict[str, float] = field(default_factory=dict)
+
+    def add(self, name: str, elapsed_sec: float) -> None:
+        self.timings_ms[name] = round(float(self.timings_ms.get(name, 0.0)) + max(0.0, elapsed_sec) * 1000.0, 3)
+
+    def time_call(self, name: str, fn, /, *args, **kwargs):
+        started = time.perf_counter()
+        result = fn(*args, **kwargs)
+        self.add(name, time.perf_counter() - started)
+        return result
+
+    async def time_await(self, name: str, awaitable):
+        started = time.perf_counter()
+        result = await awaitable
+        self.add(name, time.perf_counter() - started)
+        return result
 
 
 def _settings_static_headers() -> dict[str, str]:
@@ -282,6 +368,7 @@ def _default_settings_config() -> dict[str, Any]:
                 "enabled": True,
                 "summary_interval_assistant_turns": 10,
             },
+            "asr": json.loads(json.dumps(DEFAULT_ASR_CONFIG)),
             "system_prompt": "",
         },
     }
@@ -361,6 +448,40 @@ def _topic_history_config(settings_config: dict[str, Any]) -> dict[str, Any]:
         "summary_interval_assistant_turns": interval,
         "major_summary_group_size": 3,
     }
+
+
+def _asr_config(settings_config: dict[str, Any]) -> dict[str, Any]:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
+    if not isinstance(asr_cfg, dict):
+        asr_cfg = {}
+    return {
+        "enabled": bool(asr_cfg.get("enabled", DEFAULT_ASR_CONFIG["enabled"])),
+        "provider": str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER,
+        "api_base_url": str(asr_cfg.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL,
+        "push_to_talk_key": normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key")),
+        "interim_results": bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"])),
+    }
+
+
+def _should_use_external_asr(settings_config: dict[str, Any], asr_cfg: dict[str, Any]) -> bool:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    backend_url = str(chat_cfg.get("backend_url") or DEFAULT_BACKEND_URL).strip().rstrip("/")
+    asr_url = str(asr_cfg.get("api_base_url") or "").strip().rstrip("/")
+    return bool(asr_url) and asr_url != backend_url
+
+
+async def _external_asr_health(asr_base_url: str) -> bool:
+    url = f"{str(asr_base_url or '').rstrip('/')}/api/health"
+    try:
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200:
+            return False
+        payload = resp.json()
+        return bool(payload.get("asr"))
+    except Exception:
+        return False
 
 
 def _resolve_summary_request_config(
@@ -571,7 +692,11 @@ async def _finalize_chat_exchange(
             api_key=api_key,
             model=model,
         )
-        SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
+        snapshot = store.get_runtime_snapshot(topic_id)
+        if snapshot is not None:
+            SESSION_STORE[topic_id] = [dict(item) for item in snapshot.full_messages]
+        else:
+            SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
         return
     updated = list(working_messages) + [{"role": "assistant", "content": assistant_text}]
     SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
@@ -612,10 +737,68 @@ def _skill_summaries_for_route(
     return items
 
 
-def _build_router_tool_schemas(chat_mode: str, active_skill_ids: list[str]) -> list[dict[str, Any]]:
+def _explicit_skill_request_detected(user_text: str) -> bool:
+    text = str(user_text or "").strip().lower()
+    if not text:
+        return False
+    cues = (
+        "用skill",
+        "按skill",
+        "skill里的",
+        "skill 里的",
+        "skill方式",
+        "skill 流程",
+        "skill流程",
+        "use skill",
+        "use the skill",
+        "follow the skill",
+        "技能方式",
+        "技能流程",
+        "按技能",
+        "用技能",
+    )
+    return any(marker in text for marker in cues)
+
+
+def _infer_forced_skill_ids_from_request(user_text: str, resolved_skills: ResolvedSkillSet) -> list[str]:
+    text = str(user_text or "").strip().lower()
+    if not text:
+        return []
+    matched: list[str] = []
+    for skill in tuple(getattr(resolved_skills, "skills", ()) or ()):
+        skill_id = str(getattr(skill, "skill_id", "") or "").strip()
+        labels = [
+            skill_id,
+            str(getattr(skill, "name", "") or "").strip(),
+            str(getattr(skill, "display_name", "") or "").strip(),
+            *[str(item or "").strip() for item in (getattr(skill, "aliases", ()) or ())],
+        ]
+        if any(label and len(label) >= 2 and label.lower() in text for label in labels):
+            matched.append(skill_id)
+    if matched:
+        return _canonicalize_skill_ids(matched, manager=_get_skill_manager())
+    if _explicit_skill_request_detected(text) and len(tuple(getattr(resolved_skills, "skill_ids", ()) or ())) == 1:
+        return list(getattr(resolved_skills, "skill_ids", ()) or ())
+    return []
+
+
+def _build_router_tool_schemas(
+    chat_mode: str,
+    active_skill_ids: list[str],
+    *,
+    settings_config: dict[str, Any] | None = None,
+    tooling_cfg: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     normalized_mode = _normalize_chat_mode(chat_mode)
     if normalized_mode == CHAT_MODE_CHAT:
-        bridge = _build_runtime_tool_bridge({"chat_mode": chat_mode, "active_skill_ids": list(active_skill_ids)})
+        bridge = _build_runtime_tool_bridge(
+            {
+                "chat_mode": chat_mode,
+                "active_skill_ids": list(active_skill_ids),
+                "settings_config": settings_config or {},
+                "tooling_config": tooling_cfg or {},
+            }
+        )
         if bridge is None or not hasattr(bridge, "list_tools"):
             return []
         try:
@@ -623,16 +806,37 @@ def _build_router_tool_schemas(chat_mode: str, active_skill_ids: list[str]) -> l
         except Exception:
             return []
     if normalized_mode == CHAT_MODE_REACT:
-        bridge = _RegistryToolBridge(
-            _build_system_tools(
-                {
-                    "execution_phase": PHASE_SKILL_SELECTION,
-                    "active_skill_ids": list(active_skill_ids),
-                    "discovered_skill_ids": [],
-                    "discovered_tool_names": [],
-                }
+        bridge = _CompositeToolBridge(
+            _RegistryToolBridge(
+                _build_system_tools(
+                    {
+                        "execution_phase": PHASE_SKILL_SELECTION,
+                        "active_skill_ids": list(active_skill_ids),
+                        "selection_origin": "none",
+                        "selected_skill_ids": [],
+                        "selected_tool_names": [],
+                        "planner_excluded_skill_ids": [],
+                        "planner_excluded_tool_names": [],
+                        "planner_retry_used": False,
+                    }
+                ),
+                missing_message="router system tool unavailable",
             ),
-            missing_message="router system tool unavailable",
+            _RegistryToolBridge(
+                _build_system_tools(
+                    {
+                        "execution_phase": PHASE_AGENT_LOOP,
+                        "active_skill_ids": list(active_skill_ids),
+                        "selection_origin": "none",
+                        "selected_skill_ids": [],
+                        "selected_tool_names": [],
+                        "planner_excluded_skill_ids": [],
+                        "planner_excluded_tool_names": [],
+                        "planner_retry_used": False,
+                    }
+                ),
+                missing_message="router system tool unavailable",
+            ),
         )
         return bridge.list_tools()
     return []
@@ -828,56 +1032,96 @@ def _tokenize_search_query(text: str) -> list[str]:
     return [part for part in normalized.replace("_", " ").replace("-", " ").split() if part]
 
 
-def _score_search_text(query: str, *fields: str) -> int:
-    haystack = " ".join(str(item or "").strip().lower() for item in fields if str(item or "").strip())
-    if not haystack:
-        return 0
-    tokens = _tokenize_search_query(query)
-    if not tokens:
-        return 1
-    score = 0
-    for token in tokens:
-        if token == haystack:
-            score += 12
+def _normalize_name_list(values: Any) -> list[str]:
+    items = values if isinstance(values, list) else []
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
             continue
-        if token in haystack:
-            score += 4
-        if haystack.startswith(token):
-            score += 2
-    return score
+        seen.add(value)
+        normalized.append(value)
+    return normalized
 
 
-def _search_skill_catalog(query: str, *, excluded_ids: set[str], limit: int = 5) -> list[dict[str, Any]]:
-    manager = _get_skill_manager()
-    scored: list[tuple[int, str, dict[str, Any]]] = []
-    for record in manager.list_skills():
-        skill_id = str(getattr(record, "skill_id", "") or "").strip()
-        if not skill_id or skill_id in excluded_ids or not bool(getattr(record, "ok", False)):
-            continue
-        name = str(getattr(record, "display_name", "") or getattr(record, "name", "") or skill_id)
-        description = str(getattr(record, "short_description", "") or getattr(record, "description", "") or "")
-        score = _score_search_text(query, skill_id, name, description)
-        if score <= 0:
-            continue
-        scored.append(
-            (
-                score,
-                skill_id,
-                {
-                    "id": skill_id,
-                    "name": name,
-                    "description": description,
-                    "source": str(getattr(record, "source_type", "") or ""),
-                    "default_active": False,
-                },
-            )
-        )
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [item[2] for item in scored[: max(1, int(limit or 5))]]
+def _extract_capability_search_query(arguments: dict[str, Any] | None) -> str:
+    payload = arguments if isinstance(arguments, dict) else {}
+    for key in ("query", "keyword", "keywords", "task", "intent", "capability"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
-def _list_non_skill_tools() -> list[Tool]:
-    bridge = _get_mcp_bridge()
+def _extract_capability_search_reason(arguments: dict[str, Any] | None) -> str:
+    payload = arguments if isinstance(arguments, dict) else {}
+    return str(payload.get("reason") or "").strip()
+
+
+def _normalized_capability_search_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _explicit_capability_inventory_scope(value: Any) -> str:
+    text = _normalized_capability_search_text(value)
+    if not text:
+        return ""
+    list_markers = (
+        "有没有",
+        "有哪些",
+        "可用",
+        "列出",
+        "枚举",
+        "list",
+        "show",
+        "available",
+        "what ",
+        "which ",
+    )
+    search_markers = ("搜索", "搜", "查", "查看")
+    skill_markers = ("skill", "skills", "技能")
+    mcp_markers = ("mcp", "mcps")
+    generic_markers = ("工具", "tool", "tools", "能力", "capability", "capabilities")
+    list_hit = any(marker in text for marker in list_markers)
+    search_hit = any(marker in text for marker in search_markers)
+    skill_hit = any(marker in text for marker in skill_markers)
+    mcp_hit = any(marker in text for marker in mcp_markers)
+    generic_hit = any(marker in text for marker in generic_markers)
+    if not (skill_hit or mcp_hit or generic_hit):
+        return ""
+    if not (list_hit or (search_hit and (skill_hit or mcp_hit))):
+        return ""
+    if skill_hit and not mcp_hit and not generic_hit:
+        return "skill"
+    if mcp_hit and not skill_hit and not generic_hit:
+        return "mcp"
+    if skill_hit and not mcp_hit:
+        return "skill"
+    if mcp_hit and not skill_hit:
+        return "mcp"
+    return "both"
+
+
+def _inventory_summary_text(scope: str, skill_catalog: list[dict[str, Any]], tool_catalog: list[dict[str, Any]]) -> str:
+    skill_count = len(skill_catalog)
+    tool_count = len(tool_catalog)
+    normalized_scope = str(scope or "both").strip().lower() or "both"
+    if normalized_scope == "skill":
+        if skill_count:
+            return f"I found {skill_count} planner-visible skill(s) in the current settings."
+        return "I checked the current settings and did not find any planner-visible skills."
+    if normalized_scope == "mcp":
+        if tool_count:
+            return f"I found {tool_count} runtime-available non-skill MCP tool(s)."
+        return "I checked the current runtime and did not find any available non-skill MCP tools."
+    if skill_count or tool_count:
+        return f"I listed the currently available capabilities: {skill_count} skill(s) and {tool_count} non-skill MCP tool(s)."
+    return "I checked the current environment and did not enumerate any planner-visible skills or non-skill MCP tools."
+
+
+def _list_non_skill_tools(tooling_cfg: dict[str, Any] | None = None) -> list[Tool]:
+    bridge = _get_mcp_bridge_for_tooling(tooling_cfg) if isinstance(tooling_cfg, dict) else _get_mcp_bridge()
     if bridge is None or not hasattr(bridge, "list_registered_tools"):
         return []
     try:
@@ -893,130 +1137,206 @@ def _list_non_skill_tools() -> list[Tool]:
     return out
 
 
-def _search_tool_catalog(query: str, *, excluded_names: set[str], limit: int = 8) -> list[dict[str, Any]]:
-    scored: list[tuple[int, str, dict[str, Any]]] = []
-    for tool in _list_non_skill_tools():
+def _build_capability_search_request(
+    arguments: dict[str, Any] | None,
+    *,
+    state_excluded_skill_ids: list[str],
+    state_excluded_tool_names: list[str],
+) -> dict[str, Any]:
+    payload = arguments if isinstance(arguments, dict) else {}
+    query = _extract_capability_search_query(payload)
+    inventory_scope = _explicit_capability_inventory_scope(query)
+    return {
+        "kind": "capability_search",
+        "task": query,
+        "query": query,
+        "reason": _extract_capability_search_reason(payload),
+        "mode": "inventory" if inventory_scope else "plan",
+        "inventory_scope": inventory_scope,
+        "exclude_skill_ids": _canonicalize_skill_ids(
+            _normalize_skill_ids(payload.get("exclude_skill_ids")) + list(state_excluded_skill_ids),
+            manager=_get_skill_manager(),
+        ),
+        "exclude_tool_names": _normalize_name_list(payload.get("exclude_tool_names")) + [
+            item
+            for item in state_excluded_tool_names
+            if item not in _normalize_name_list(payload.get("exclude_tool_names"))
+        ],
+    }
+
+
+def _capability_search_tool_name_list_for_skill(
+    resolved: ResolvedSkillSet,
+    *,
+    available_mcp_tools: list[Tool],
+) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for tool in [*list(resolved.resource_tools), *list(resolved.adapter_tools), *list(resolved.script_tools)]:
         name = str(getattr(tool, "name", "") or "").strip()
-        if not name or name in excluded_names:
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    for pattern in (resolved.tool_allowlist or []):
+        matcher = str(pattern or "").strip()
+        if not matcher:
             continue
-        description = str(getattr(tool, "description", "") or "")
-        source = str(getattr(tool, "source", "") or "")
-        score = _score_search_text(query, name, description, source)
-        if score <= 0:
+        for tool in available_mcp_tools:
+            tool_name = str(getattr(tool, "name", "") or "").strip()
+            if not tool_name or tool_name in seen:
+                continue
+            if tool_name_matches_pattern(tool_name, matcher):
+                seen.add(tool_name)
+                names.append(tool_name)
+    return names
+
+
+def _build_skill_capability_catalog(tooling_cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    manager = _get_skill_manager()
+    runtime = _get_skill_runtime()
+    available_mcp_tools = _list_non_skill_tools(tooling_cfg)
+    items: list[dict[str, Any]] = []
+    for record in manager.list_skills():
+        skill_id = str(getattr(record, "skill_id", "") or "").strip()
+        if not skill_id or not bool(getattr(record, "ok", False)):
             continue
-        scored.append((score, name, {"name": name, "description": description, "source": source}))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [item[2] for item in scored[: max(1, int(limit or 8))]]
+        resolved = runtime.resolve_active_skills([skill_id], default_active_ids=[], enabled=True)
+        tool_names = _capability_search_tool_name_list_for_skill(resolved, available_mcp_tools=available_mcp_tools)
+        items.append(
+            {
+                "skill_id": skill_id,
+                "display_name": str(getattr(record, "display_name", "") or getattr(record, "name", "") or skill_id).strip(),
+                "description": str(getattr(record, "short_description", "") or getattr(record, "description", "") or "").strip(),
+                "tool_names": tool_names,
+                "prompt_excerpt": _compact_text(str(getattr(record, "prompt_body", "") or "").strip(), 220),
+                "source": str(getattr(record, "source_type", "") or "").strip(),
+            }
+        )
+    return items
+
+
+def _build_mcp_capability_catalog(tooling_cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for tool in _list_non_skill_tools(tooling_cfg):
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name:
+            continue
+        items.append(
+            {
+                "name": name,
+                "description": str(getattr(tool, "description", "") or "").strip(),
+                "source": str(getattr(tool, "source", "") or "").strip(),
+            }
+        )
+    return items
+
+
+def _classify_mcp_task_type(tool_name: str) -> str:
+    name = str(tool_name or "").strip().lower()
+    leaf = name.split(".")[-1]
+    if name.startswith("playwright") or "browser_" in name or leaf.startswith("browser_"):
+        return "browser_automation"
+    if name.startswith("tavily") or any(token in name for token in ("search", "fetch", "crawl")):
+        return "web_search"
+    file_prefixes = (
+        "read",
+        "write",
+        "edit",
+        "list",
+        "move",
+        "copy",
+        "mkdir",
+        "glob",
+        "stat",
+        "delete",
+        "remove",
+    )
+    if any(leaf.startswith(prefix) for prefix in file_prefixes):
+        return "file_io"
+    return "general_mcp"
+
+
+def _build_mcp_task_type_catalog(tooling_cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for item in _build_mcp_capability_catalog(tooling_cfg):
+        enriched = dict(item)
+        enriched["task_type"] = _classify_mcp_task_type(str(item.get("name") or ""))
+        items.append(enriched)
+    return items
 
 
 def _build_system_tools(state: dict[str, Any]) -> list[Tool]:
-    active_skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
-    discovered_skill_ids = _normalize_skill_ids(state.get("discovered_skill_ids"))
-    discovered_tool_names = {
-        str(item or "").strip()
-        for item in (state.get("discovered_tool_names") or [])
-        if str(item or "").strip()
-    }
-    excluded_skill_ids = set(active_skill_ids) | set(discovered_skill_ids)
     phase = str(state.get("execution_phase") or "").strip().lower()
-    if phase == PHASE_AGENT_LOOP:
-        return [
+    tools: list[Tool] = []
+    if phase == PHASE_SKILL_SELECTION:
+        tools.append(
             Tool(
-                name=SYSTEM_TOOL_TOOL_SEARCH,
-                description="Search hidden tool capabilities by keyword before deciding which tool to call.",
+                name=SYSTEM_TOOL_AGENT_LOOP,
+                description="Fallback to the general agent loop when no current visible skill can solve the task.",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Keywords describing the capability you need."},
-                        "limit": {"type": "integer", "description": "Maximum number of results to return.", "default": 8},
+                        "task": {"type": "string", "description": "Restate the task to continue in the general agent loop."},
+                        "preferred_tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional soft hints for what kind of tools may help.",
+                        },
+                        "max_steps": {"type": "integer", "description": "Optional step budget hint for the fallback loop."},
                     },
-                    "required": ["query"],
+                    "required": ["task"],
                 },
-                invoke=lambda arguments, excluded=discovered_tool_names: {
-                    "kind": "tool_search",
-                    "matches": _search_tool_catalog(
-                        str((arguments or {}).get("query") or ""),
-                        excluded_names=set(excluded),
-                        limit=int((arguments or {}).get("limit") or 8),
-                    ),
+                invoke=lambda arguments: {
+                    "kind": "agent_loop",
+                    "task": str((arguments or {}).get("task") or ""),
+                    "preferred_tools": [str(item).strip() for item in ((arguments or {}).get("preferred_tools") or []) if str(item).strip()],
+                    "max_steps": int((arguments or {}).get("max_steps") or 0),
                 },
                 source="system",
             )
-        ]
-    return [
-        Tool(
-            name=SYSTEM_TOOL_SKILL_SEARCH,
-            description="Search installed skills that are not currently exposed by default for this turn.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Keywords describing the skill you need."},
-                    "limit": {"type": "integer", "description": "Maximum number of results to return.", "default": 5},
-                },
-                "required": ["query"],
-            },
-            invoke=lambda arguments, excluded=excluded_skill_ids: {
-                "kind": "skill_search",
-                "matches": _search_skill_catalog(
-                    str((arguments or {}).get("query") or ""),
-                    excluded_ids=set(excluded),
-                    limit=int((arguments or {}).get("limit") or 5),
-                ),
-            },
-            source="system",
-        ),
-        Tool(
-            name=SYSTEM_TOOL_AGENT_LOOP,
-            description="Fallback to the general agent loop when no current skill can solve the task.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Restate the task to continue in the general agent loop."},
-                    "preferred_tools": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional soft hints for what kind of tools may help.",
-                    },
-                    "max_steps": {"type": "integer", "description": "Optional step budget hint for the fallback loop."},
-                },
-                "required": ["task"],
-            },
-            invoke=lambda arguments: {
-                "kind": "agent_loop",
-                "task": str((arguments or {}).get("task") or ""),
-                "preferred_tools": [str(item).strip() for item in ((arguments or {}).get("preferred_tools") or []) if str(item).strip()],
-                "max_steps": int((arguments or {}).get("max_steps") or 0),
-            },
-            source="system",
-        ),
-    ]
+        )
+    return tools
 
 
-def _build_skill_only_bridge(skill_ids: list[str], *, missing_message: str) -> Any:
-    settings = _load_settings_config()
-    resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=CHAT_MODE_REACT)
+def _build_skill_only_bridge(
+    skill_ids: list[str],
+    *,
+    missing_message: str,
+    resolved: ResolvedSkillSet | None = None,
+    settings_config: dict[str, Any] | None = None,
+) -> Any:
+    active_resolved = resolved or _resolve_request_skills(
+        skill_ids,
+        settings=settings_config,
+        chat_mode=CHAT_MODE_REACT,
+    )
     return _RegistryToolBridge(
-        list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
+        list(active_resolved.resource_tools) + list(active_resolved.adapter_tools) + list(active_resolved.script_tools),
         missing_message=missing_message,
     )
 
 
-def _build_allowlisted_bridge(patterns: list[str] | tuple[str, ...], *, missing_message: str) -> Any:
+def _build_allowlisted_bridge(
+    patterns: list[str] | tuple[str, ...],
+    *,
+    missing_message: str,
+    base_bridge: Any | None = None,
+) -> Any:
     normalized = [str(item or "").strip() for item in patterns if str(item or "").strip()]
     if not normalized:
         return None
     return _FilteredToolBridge(
-        _get_mcp_bridge(),
+        base_bridge or _get_mcp_bridge(),
         allow_predicate=lambda name, allowed=tuple(normalized): any(_tool_name_matches_pattern(str(name or ""), pattern) for pattern in allowed),
         missing_message=missing_message,
     )
 
 
-def _build_tool_name_bridge(tool_names: set[str], *, missing_message: str) -> Any:
+def _build_tool_name_bridge(tool_names: set[str], *, missing_message: str, base_bridge: Any | None = None) -> Any:
     if not tool_names:
         return None
     return _FilteredToolBridge(
-        _get_mcp_bridge(),
+        base_bridge or _get_mcp_bridge(),
         allow_predicate=lambda name, allowed=set(tool_names): str(name or "").strip() in allowed,
         missing_message=missing_message,
     )
@@ -1077,6 +1397,16 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         topic_history_cfg["summary_interval_assistant_turns"] = 10
     chat["topic_history"] = topic_history_cfg
+    asr_cfg = chat.get("asr", {})
+    if not isinstance(asr_cfg, dict):
+        asr_cfg = {}
+    asr_cfg["enabled"] = bool(asr_cfg.get("enabled", DEFAULT_ASR_CONFIG["enabled"]))
+    provider = str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER
+    asr_cfg["provider"] = provider if provider == DEFAULT_ASR_PROVIDER else DEFAULT_ASR_PROVIDER
+    asr_cfg["api_base_url"] = str(asr_cfg.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL
+    asr_cfg["push_to_talk_key"] = normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key"))
+    asr_cfg["interim_results"] = bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"]))
+    chat["asr"] = asr_cfg
 
     window = merged.get("window", {})
     if not isinstance(window, dict):
@@ -1149,7 +1479,11 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_settings_config() -> dict[str, Any]:
-    return _normalize_settings_config(_load_full_config())
+    return _derive_settings_config(_load_full_config())
+
+
+def _derive_settings_config(raw_config: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_settings_config(raw_config if isinstance(raw_config, dict) else {})
 
 
 def _extract_motion_groups(model_json: dict[str, Any]) -> dict[str, Any]:
@@ -1322,7 +1656,10 @@ def _runtime_host_is_online(max_age_sec: float = RUNTIME_HOST_HEARTBEAT_MAX_AGE_
 
 
 def _load_runtime_tooling_config() -> dict[str, Any]:
-    data = _load_full_config()
+    return _derive_runtime_tooling_config(_load_full_config())
+
+
+def _derive_runtime_tooling_config(data: dict[str, Any]) -> dict[str, Any]:
     chat = data.get("chat", {}) if isinstance(data, dict) else {}
     tooling = chat.get("tooling", {}) if isinstance(chat, dict) else {}
     merged = _deep_merge(DEFAULT_TOOLING, tooling if isinstance(tooling, dict) else {})
@@ -1352,8 +1689,12 @@ def _tooling_snapshot(tooling_cfg: dict[str, Any]) -> str:
 
 
 def _get_mcp_bridge(force_reload: bool = False) -> MCPBridge:
-    global _MCP_BRIDGE, _MCP_CONFIG_SNAPSHOT
     tooling_cfg = _load_runtime_tooling_config()
+    return _get_mcp_bridge_for_tooling(tooling_cfg, force_reload=force_reload)
+
+
+def _get_mcp_bridge_for_tooling(tooling_cfg: dict[str, Any], force_reload: bool = False) -> MCPBridge:
+    global _MCP_BRIDGE, _MCP_CONFIG_SNAPSHOT
     snapshot = _tooling_snapshot(tooling_cfg)
     if force_reload or _MCP_BRIDGE is None or snapshot != _MCP_CONFIG_SNAPSHOT:
         if _MCP_BRIDGE is not None:
@@ -1378,6 +1719,26 @@ def _get_chat_topic_store(force_reload: bool = False) -> TopicStore:
     if force_reload or _CHAT_TOPIC_STORE is None:
         _CHAT_TOPIC_STORE = TopicStore(CHAT_TOPICS_ROOT)
     return _CHAT_TOPIC_STORE
+
+
+def _get_asr_service(force_reload: bool = False) -> ASRService:
+    global _ASR_SERVICE
+    if force_reload or _ASR_SERVICE is None:
+        _ASR_SERVICE = ASRService()
+    return _ASR_SERVICE
+
+
+def _ensure_internal_asr_warmup_started() -> tuple[bool, str]:
+    global _ASR_WARMUP_TASK
+    service = _get_asr_service()
+    readiness_message = service.readiness_message()
+    if not readiness_message:
+        return False, ""
+    if _ASR_WARMUP_TASK is not None and not _ASR_WARMUP_TASK.done():
+        return False, readiness_message
+    loop = asyncio.get_running_loop()
+    _ASR_WARMUP_TASK = loop.create_task(service.warmup())
+    return True, "ASR 正在加载模型，请稍后再试。"
 
 
 def _get_skill_runtime(force_reload: bool = False) -> SkillRuntime:
@@ -1407,70 +1768,543 @@ def _resolve_request_skills(
     )
 
 
+def _normalized_runtime_phase(state: dict[str, Any]) -> str:
+    phase = str(state.get("execution_phase") or PHASE_SKILL_SELECTION).strip().lower()
+    selected_skill_ids = _normalize_skill_ids(state.get("selected_skill_ids"))
+    if phase == PHASE_SKILL_SELECTION and selected_skill_ids:
+        phase = PHASE_SKILL_EXECUTION
+    return phase
+
+
+def _tool_bridge_cache_key(state: dict[str, Any]) -> str:
+    turn_id = str(state.get("turn_id") or "").strip()
+    if not turn_id:
+        return ""
+    payload = {
+        "turn_id": turn_id,
+        "chat_mode": _normalize_chat_mode(state.get("chat_mode")),
+        "execution_phase": _normalized_runtime_phase(state),
+        "active_skill_ids": _normalize_skill_ids(state.get("active_skill_ids")),
+        "selection_origin": str(state.get("selection_origin") or "none").strip().lower() or "none",
+        "selected_skill_ids": _normalize_skill_ids(state.get("selected_skill_ids")),
+        "selected_tool_names": _normalize_name_list(state.get("selected_tool_names")),
+        "planner_excluded_skill_ids": _normalize_skill_ids(state.get("planner_excluded_skill_ids")),
+        "planner_excluded_tool_names": _normalize_name_list(state.get("planner_excluded_tool_names")),
+        "planner_retry_used": bool(state.get("planner_retry_used", False)),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _cache_turn_tool_bridge(state: dict[str, Any], bridge: Any) -> Any:
+    cache_key = _tool_bridge_cache_key(state)
+    if cache_key:
+        _TURN_TOOL_BRIDGE_CACHE[cache_key] = bridge
+    return bridge
+
+
+def _get_cached_turn_tool_bridge(state: dict[str, Any]) -> Any | None:
+    cache_key = _tool_bridge_cache_key(state)
+    if not cache_key:
+        return None
+    return _TURN_TOOL_BRIDGE_CACHE.get(cache_key)
+
+
+def _clear_turn_tool_bridge_cache(turn_id: str) -> None:
+    target = str(turn_id or "").strip()
+    if not target:
+        return
+    for key in [key for key in _TURN_TOOL_BRIDGE_CACHE if f'"turn_id": "{target}"' in key]:
+        _TURN_TOOL_BRIDGE_CACHE.pop(key, None)
+
+
+def _build_bridge_from_resolved_skills(resolved: ResolvedSkillSet, *, missing_message: str, base_bridge: Any | None = None) -> Any:
+    skill_bridge = _RegistryToolBridge(
+        list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
+        missing_message=missing_message,
+    )
+    allowlisted_bridge = _build_allowlisted_bridge(
+        list(resolved.tool_allowlist),
+        missing_message=missing_message,
+        base_bridge=base_bridge,
+    )
+    return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
+
+
+def _prime_turn_tool_bridge_cache(
+    *,
+    turn_id: str,
+    chat_mode: str,
+    settings_config: dict[str, Any],
+    tooling_cfg: dict[str, Any],
+    active_skill_ids: list[str],
+    active_resolved_skills: ResolvedSkillSet,
+    selection_origin: str,
+    selected_skill_ids: list[str],
+    selected_resolved_skills: ResolvedSkillSet | None,
+) -> None:
+    normalized_mode = _normalize_chat_mode(chat_mode)
+    state_base = {
+        "turn_id": turn_id,
+        "chat_mode": normalized_mode,
+        "settings_config": settings_config,
+        "tooling_config": tooling_cfg,
+        "active_skill_ids": list(active_skill_ids),
+        "selection_origin": str(selection_origin or "none").strip().lower() or "none",
+        "selected_skill_ids": list(selected_skill_ids),
+        "selected_tool_names": [],
+        "planner_excluded_skill_ids": [],
+        "planner_excluded_tool_names": [],
+        "planner_retry_used": False,
+    }
+    base_mcp_bridge = _get_mcp_bridge_for_tooling(tooling_cfg)
+    if normalized_mode == CHAT_MODE_CHAT:
+        _cache_turn_tool_bridge(
+            {
+                **state_base,
+                "execution_phase": "",
+            },
+            _FilteredToolBridge(
+                base_mcp_bridge,
+                allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
+                missing_message="tool not available in chat mode",
+            ),
+        )
+        return
+    if normalized_mode == CHAT_MODE_SKILL:
+        _cache_turn_tool_bridge(
+            {
+                **state_base,
+                "execution_phase": "",
+            },
+            _build_bridge_from_resolved_skills(
+                active_resolved_skills,
+                missing_message="tool not available in skill mode",
+                base_bridge=base_mcp_bridge,
+            ),
+        )
+        return
+    system_bridge = _RegistryToolBridge(
+        _build_system_tools(
+            {
+                "execution_phase": PHASE_SKILL_SELECTION,
+                "active_skill_ids": list(active_skill_ids),
+                "selection_origin": "none",
+                "selected_skill_ids": [],
+                "selected_tool_names": [],
+                "planner_excluded_skill_ids": [],
+                "planner_excluded_tool_names": [],
+                "planner_retry_used": False,
+            }
+        ),
+        missing_message="system tool unavailable",
+    )
+    _cache_turn_tool_bridge(
+        {
+            **state_base,
+            "execution_phase": PHASE_SKILL_SELECTION,
+            "selection_origin": "none",
+            "selected_skill_ids": [],
+        },
+        _CompositeToolBridge(
+            _build_bridge_from_resolved_skills(
+                active_resolved_skills,
+                missing_message="tool not available in skill selection",
+                base_bridge=None,
+            ),
+            system_bridge,
+        ),
+    )
+    if selected_resolved_skills is not None and selected_skill_ids:
+        _cache_turn_tool_bridge(
+            {
+                **state_base,
+                "execution_phase": PHASE_SKILL_EXECUTION,
+                "selection_origin": str(selection_origin or "none").strip().lower() or "none",
+                "selected_skill_ids": list(selected_skill_ids),
+            },
+            _build_bridge_from_resolved_skills(
+                selected_resolved_skills,
+                missing_message="tool not available in active skill execution",
+                base_bridge=base_mcp_bridge,
+            ),
+        )
+
+
+def _resolve_capability_planner_config(state: dict[str, Any]) -> dict[str, str]:
+    settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else _load_settings_config()
+    return _resolve_summary_request_config(
+        settings_config,
+        llm_provider=str(state.get("llm_provider") or "ollama"),
+        api_base_url=str(state.get("api_base_url") or ""),
+        api_key=str(state.get("api_key") or ""),
+        model=str(state.get("model") or "qwen3:8b"),
+    )
+
+
+def _resolve_selected_skill_prompt_text(skill_ids: list[str], state: dict[str, Any]) -> str:
+    if not skill_ids:
+        return ""
+    settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else None
+    resolved = _resolve_request_skills(
+        skill_ids,
+        settings=settings_config,
+        chat_mode=_normalize_chat_mode(state.get("chat_mode")),
+    )
+    return str(getattr(resolved, "prompt_text", "") or "").strip()
+
+
+def _planner_exposed_skill_ids(state: dict[str, Any], *, manager: SkillManager | None = None) -> list[str]:
+    settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else _load_settings_config()
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    skills_cfg = chat_cfg.get("skills", {}) if isinstance(chat_cfg, dict) else {}
+    return _canonicalize_skill_ids(skills_cfg.get("default_active_ids"), manager=manager)
+
+
+def _build_capability_inventory_payload(
+    state: dict[str, Any],
+    request_payload: dict[str, Any],
+    *,
+    tooling_cfg: dict[str, Any],
+    manager: SkillManager,
+) -> dict[str, Any]:
+    scope = str(request_payload.get("inventory_scope") or "both").strip().lower() or "both"
+    planner_visible_skill_ids = set(_planner_exposed_skill_ids(state, manager=manager))
+    skill_catalog = [
+        item
+        for item in _build_skill_capability_catalog(tooling_cfg)
+        if str(item.get("skill_id") or "").strip() in planner_visible_skill_ids
+    ]
+    tool_catalog = list(_build_mcp_capability_catalog(tooling_cfg))
+    if scope == "skill":
+        tool_catalog = []
+    elif scope == "mcp":
+        skill_catalog = []
+    inventory_summary = _inventory_summary_text(scope, skill_catalog, tool_catalog)
+    return {
+        "mode": "inventory",
+        "selection_kind": "none",
+        "skill_ids": [],
+        "tool_names": [],
+        "query": str(request_payload.get("query") or ""),
+        "thought_summary": inventory_summary,
+        "reason": str(request_payload.get("reason") or "Explicit capability inventory request."),
+        "inventory_scope": scope,
+        "inventory_skill_ids": [str(item.get("skill_id") or "").strip() for item in skill_catalog if str(item.get("skill_id") or "").strip()],
+        "inventory_tool_names": [str(item.get("name") or "").strip() for item in tool_catalog if str(item.get("name") or "").strip()],
+        "inventory_summary": inventory_summary,
+        "inventory_skills": skill_catalog,
+        "inventory_tools": tool_catalog,
+    }
+
+
+async def _search_capabilities_for_state(state: dict[str, Any], arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    tooling_cfg = state.get("tooling_config") if isinstance(state.get("tooling_config"), dict) else _load_runtime_tooling_config()
+    manager = _get_skill_manager()
+    request_payload = _build_capability_search_request(
+        arguments,
+        state_excluded_skill_ids=[],
+        state_excluded_tool_names=[],
+    )
+    if str(request_payload.get("mode") or "").strip().lower() == "inventory":
+        return _build_capability_inventory_payload(
+            state,
+            request_payload,
+            tooling_cfg=tooling_cfg,
+            manager=manager,
+        )
+
+    planner_visible_skill_ids = set(_planner_exposed_skill_ids(state, manager=manager))
+    skill_catalog = [
+        item
+        for item in _build_skill_capability_catalog(tooling_cfg)
+        if str(item.get("skill_id") or "").strip() in planner_visible_skill_ids
+    ]
+    tool_catalog = list(_build_mcp_task_type_catalog(tooling_cfg))
+    planner_cfg = _resolve_capability_planner_config(state)
+    result = await search_capabilities(
+        messages=list(state.get("followup_messages") or state.get("decision_messages") or state.get("working_messages") or []),
+        model=planner_cfg["model"],
+        skill_catalog=skill_catalog,
+        tool_catalog=tool_catalog,
+        llm_provider=planner_cfg["llm_provider"],
+        api_base_url=planner_cfg["api_base_url"],
+        api_key=planner_cfg["api_key"],
+    )
+    payload = result.to_dict()
+    if not payload.get("query"):
+        payload["query"] = str(request_payload.get("query") or "")
+    return payload
+
+
+async def _build_execution_plan_for_state(state: dict[str, Any], searcher_result: dict[str, Any]) -> dict[str, Any]:
+    tooling_cfg = state.get("tooling_config") if isinstance(state.get("tooling_config"), dict) else _load_runtime_tooling_config()
+    mode = str(searcher_result.get("mode") or "task_types").strip().lower() or "task_types"
+    planner_cfg = _resolve_capability_planner_config(state)
+    resolved_skill_prompt = ""
+    tool_catalog: list[dict[str, Any]] = []
+    if mode == "skill":
+        skill_id = str(searcher_result.get("skill_id") or "").strip()
+        if skill_id:
+            resolved_skill_prompt = _resolve_selected_skill_prompt_text([skill_id], state)
+    else:
+        matched_tool_names = set(_normalize_name_list(searcher_result.get("matched_tool_names")))
+        tool_catalog = [
+            item
+            for item in _build_mcp_task_type_catalog(tooling_cfg)
+            if str(item.get("name") or "").strip() in matched_tool_names
+        ]
+    plan = await build_execution_plan(
+        messages=list(state.get("followup_messages") or state.get("decision_messages") or state.get("working_messages") or []),
+        model=planner_cfg["model"],
+        searcher_result=dict(searcher_result or {}),
+        resolved_skill_prompt=resolved_skill_prompt,
+        tool_catalog=tool_catalog,
+        llm_provider=planner_cfg["llm_provider"],
+        api_base_url=planner_cfg["api_base_url"],
+        api_key=planner_cfg["api_key"],
+    )
+    return plan.to_dict()
+
+
+async def _plan_capabilities_for_state(state: dict[str, Any], arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    tooling_cfg = state.get("tooling_config") if isinstance(state.get("tooling_config"), dict) else _load_runtime_tooling_config()
+    manager = _get_skill_manager()
+    request_payload = _build_capability_search_request(
+        arguments,
+        state_excluded_skill_ids=_normalize_skill_ids(state.get("planner_excluded_skill_ids")),
+        state_excluded_tool_names=_normalize_name_list(state.get("planner_excluded_tool_names")),
+    )
+    if str(request_payload.get("mode") or "").strip().lower() == "inventory":
+        return _build_capability_inventory_payload(
+            state,
+            request_payload,
+            tooling_cfg=tooling_cfg,
+            manager=manager,
+        )
+    excluded_skill_ids = _canonicalize_skill_ids(request_payload.get("exclude_skill_ids"), manager=manager)
+    planner_visible_skill_ids = _planner_exposed_skill_ids(state, manager=manager)
+    excluded_tool_names = _normalize_name_list(request_payload.get("exclude_tool_names"))
+    skill_catalog = [
+        item
+        for item in _build_skill_capability_catalog(tooling_cfg)
+        if (
+            str(item.get("skill_id") or "").strip() in set(planner_visible_skill_ids)
+            and str(item.get("skill_id") or "").strip() not in set(excluded_skill_ids)
+        )
+    ]
+    tool_catalog = [
+        item
+        for item in _build_mcp_capability_catalog(tooling_cfg)
+        if str(item.get("name") or "").strip() not in set(excluded_tool_names)
+    ]
+    planner_cfg = _resolve_capability_planner_config(state)
+    plan = await plan_capabilities(
+        messages=list(state.get("followup_messages") or state.get("decision_messages") or state.get("working_messages") or []),
+        model=planner_cfg["model"],
+        skill_catalog=skill_catalog,
+        tool_catalog=tool_catalog,
+        exclude_skill_ids=excluded_skill_ids,
+        exclude_tool_names=excluded_tool_names,
+        llm_provider=planner_cfg["llm_provider"],
+        api_base_url=planner_cfg["api_base_url"],
+        api_key=planner_cfg["api_key"],
+    )
+    payload = plan.to_dict()
+    if not payload.get("query"):
+        payload["query"] = str(request_payload.get("query") or "")
+    return payload
+
+
+def _log_perf_event(
+    event: str,
+    *,
+    session_id: str,
+    chat_mode: str,
+    router_used: bool,
+    route_kind: str,
+    topic_history_enabled: bool,
+    timings_ms: dict[str, float],
+    ok: bool,
+    error: str = "",
+) -> None:
+    payload = {
+        "event": event,
+        "session_id": session_id,
+        "chat_mode": chat_mode,
+        "router_used": bool(router_used),
+        "route_kind": route_kind,
+        "topic_history_enabled": bool(topic_history_enabled),
+        "ok": bool(ok),
+        "error": str(error or ""),
+        "timings_ms": {key: round(float(value), 3) for key, value in sorted(timings_ms.items())},
+    }
+    LOGGER.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _ensure_perf_keys(perf: PerfTracker, *keys: str) -> None:
+    for key in keys:
+        perf.timings_ms.setdefault(str(key), 0.0)
+
+
+def _exception_message(exc: Exception, fallback: str) -> str:
+    text = str(exc or "").strip()
+    if text:
+        return text
+    name = type(exc).__name__.strip()
+    return name or str(fallback or "internal error")
+
+
+def _build_chat_request_context(req: ChatStreamRequest, perf: PerfTracker) -> ChatRequestContext:
+    raw_config = perf.time_call("load_config", _load_full_config)
+    derive_started = time.perf_counter()
+    settings_config = _derive_settings_config(raw_config)
+    tooling_cfg = _derive_runtime_tooling_config(raw_config)
+    perf.add("derive_settings_tooling", time.perf_counter() - derive_started)
+    text = req.text.strip()
+    raw_session_id = str(req.session_id or "").strip()
+    chat_mode = _normalize_chat_mode(req.chat_mode)
+    topic_history_cfg = _topic_history_config(settings_config)
+    session_id = normalize_topic_id(raw_session_id or "default") if topic_history_cfg["enabled"] else (raw_session_id or "default")
+    router_cfg = _resolve_router_request_config(req, settings_config)
+    resolved_skills = perf.time_call(
+        "resolve_skills",
+        _resolve_request_skills,
+        req.skill_ids,
+        settings_config,
+        chat_mode=chat_mode,
+    )
+    topic_snapshot = None
+    if topic_history_cfg["enabled"]:
+        store = _get_chat_topic_store()
+        topic_snapshot = perf.time_call("load_topic_snapshot", store.get_runtime_snapshot, session_id)
+        if topic_snapshot is not None:
+            history_messages = [dict(item) for item in topic_snapshot.model_messages]
+            SESSION_STORE[session_id] = [dict(item) for item in topic_snapshot.full_messages]
+        else:
+            history_messages = _trim_messages(SESSION_STORE.get(session_id, []), req.memory_window)
+    else:
+        perf.add("load_topic_snapshot", 0.0)
+        history_messages = _trim_messages(SESSION_STORE.get(session_id, []), req.memory_window)
+    working_messages = list(history_messages) + [{"role": "user", "content": text}]
+    return ChatRequestContext(
+        raw_config=raw_config,
+        settings_config=settings_config,
+        tooling_cfg=tooling_cfg,
+        topic_history_cfg=topic_history_cfg,
+        router_cfg=router_cfg,
+        resolved_skills=resolved_skills,
+        session_id=session_id,
+        pet_display_name=_extract_pet_display_name(req.system_prompt),
+        history_messages=list(history_messages),
+        working_messages=working_messages,
+        topic_snapshot=topic_snapshot,
+    )
+
+
 def _build_runtime_tool_bridge(state: dict[str, Any]) -> Any:
+    cached = _get_cached_turn_tool_bridge(state)
+    if cached is not None:
+        return cached
+
     chat_mode = _normalize_chat_mode(state.get("chat_mode"))
+    settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else None
+    tooling_cfg = state.get("tooling_config") if isinstance(state.get("tooling_config"), dict) else None
+    base_mcp_bridge: Any | None = None
+
+    def _base_bridge() -> Any:
+        nonlocal base_mcp_bridge
+        if base_mcp_bridge is None:
+            base_mcp_bridge = _get_mcp_bridge_for_tooling(tooling_cfg) if tooling_cfg else _get_mcp_bridge()
+        return base_mcp_bridge
+
     if chat_mode == CHAT_MODE_CHAT:
-        return _FilteredToolBridge(
-            _get_mcp_bridge(),
-            allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
-            missing_message="tool not available in chat mode",
+        return _cache_turn_tool_bridge(
+            state,
+            _FilteredToolBridge(
+                _base_bridge(),
+                allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
+                missing_message="tool not available in chat mode",
+            ),
         )
 
     skill_ids = _normalize_skill_ids(state.get("active_skill_ids"))
     if chat_mode == CHAT_MODE_SKILL:
-        settings = _load_settings_config()
-        resolved = _resolve_request_skills(skill_ids, settings=settings, chat_mode=chat_mode)
-        skill_bridge = _RegistryToolBridge(
-            list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
-            missing_message="tool not available in skill mode",
+        resolved = _resolve_request_skills(skill_ids, settings=settings_config, chat_mode=chat_mode)
+        return _cache_turn_tool_bridge(
+            state,
+            _build_bridge_from_resolved_skills(
+                resolved,
+                missing_message="tool not available in skill mode",
+                base_bridge=_base_bridge(),
+            ),
         )
-        allowlisted_bridge = _build_allowlisted_bridge(
-            list(resolved.tool_allowlist),
-            missing_message="tool not available in skill mode",
-        )
-        return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
 
-    phase = str(state.get("execution_phase") or PHASE_SKILL_SELECTION).strip().lower()
-    discovered_skill_ids = _normalize_skill_ids(state.get("discovered_skill_ids"))
+    phase = _normalized_runtime_phase(state)
     selected_skill_ids = _normalize_skill_ids(state.get("selected_skill_ids"))
-    if phase == PHASE_SKILL_SELECTION and selected_skill_ids:
-        phase = PHASE_SKILL_EXECUTION
-    discovered_tool_names = {
-        str(item or "").strip()
-        for item in (state.get("discovered_tool_names") or [])
-        if str(item or "").strip()
-    }
-    system_bridge = _RegistryToolBridge(_build_system_tools(state), missing_message="system tool unavailable")
+    selected_tool_names = set(_normalize_name_list(state.get("selected_tool_names")))
+    system_tools = _build_system_tools(state)
+    system_bridge = _RegistryToolBridge(system_tools, missing_message="system tool unavailable")
 
     if phase == PHASE_AGENT_LOOP:
-        discovered_bridge = _build_tool_name_bridge(discovered_tool_names, missing_message="tool not available in agent loop")
-        return _CompositeToolBridge(system_bridge, discovered_bridge)
+        if selected_tool_names:
+            selected_bridge = _build_tool_name_bridge(
+                selected_tool_names,
+                missing_message="tool not available in planner-selected MCP handoff",
+                base_bridge=_base_bridge(),
+            )
+            return _cache_turn_tool_bridge(state, _CompositeToolBridge(selected_bridge, system_bridge))
+        runtime_tool_names = {
+            str(getattr(tool, "name", "") or "").strip()
+            for tool in _list_non_skill_tools(tooling_cfg)
+            if str(getattr(tool, "name", "") or "").strip()
+        }
+        runtime_bridge = _build_tool_name_bridge(
+            runtime_tool_names,
+            missing_message="tool not available in agent loop",
+            base_bridge=_base_bridge(),
+        )
+        if runtime_bridge is not None and system_tools:
+            return _cache_turn_tool_bridge(state, _CompositeToolBridge(runtime_bridge, system_bridge))
+        if runtime_bridge is not None:
+            return _cache_turn_tool_bridge(state, runtime_bridge)
+        return _cache_turn_tool_bridge(state, system_bridge)
 
     if phase == PHASE_SKILL_EXECUTION and selected_skill_ids:
-        settings = _load_settings_config()
-        resolved = _resolve_request_skills(selected_skill_ids, settings=settings, chat_mode=chat_mode)
-        skill_bridge = _RegistryToolBridge(
-            list(resolved.resource_tools) + list(resolved.adapter_tools) + list(resolved.script_tools),
-            missing_message="skill tool not available in active skill execution",
-        )
-        allowlisted_bridge = _build_allowlisted_bridge(
-            list(resolved.tool_allowlist),
+        resolved = _resolve_request_skills(selected_skill_ids, settings=settings_config, chat_mode=chat_mode)
+        skill_bridge = _build_bridge_from_resolved_skills(
+            resolved,
             missing_message="tool not available in active skill execution",
+            base_bridge=_base_bridge(),
         )
-        return _CompositeToolBridge(skill_bridge, allowlisted_bridge)
+        return _cache_turn_tool_bridge(
+            state,
+            _CompositeToolBridge(skill_bridge, system_bridge)
+            if str(state.get("selection_origin") or "none").strip().lower() == "planner"
+            else skill_bridge,
+        )
 
-    visible_skill_ids = _canonicalize_skill_ids(skill_ids + discovered_skill_ids, manager=_get_skill_manager())
-    skill_bridge = _build_skill_only_bridge(visible_skill_ids, missing_message="tool not available in skill selection")
-    return _CompositeToolBridge(skill_bridge, system_bridge)
+    visible_skill_ids = _canonicalize_skill_ids(skill_ids, manager=_get_skill_manager())
+    resolved_visible = _resolve_request_skills(visible_skill_ids, settings=settings_config, chat_mode=chat_mode)
+    skill_bridge = _build_skill_only_bridge(
+        visible_skill_ids,
+        missing_message="tool not available in skill selection",
+        resolved=resolved_visible,
+        settings_config=settings_config,
+    )
+    return _cache_turn_tool_bridge(state, _CompositeToolBridge(skill_bridge, system_bridge))
 
 
 def _agent_graph_dependencies() -> GraphDependencies:
     return GraphDependencies(
         decide_turn=decide_turn,
+        search_capabilities=_search_capabilities_for_state,
+        build_execution_plan=_build_execution_plan_for_state,
+        plan_capabilities=_plan_capabilities_for_state,
         execute_tool_calls=execute_tool_calls,
         get_mcp_bridge=_get_mcp_bridge,
         load_tooling_config=_load_runtime_tooling_config,
         build_tool_bridge=_build_runtime_tool_bridge,
+        resolve_skill_prompt_text=_resolve_selected_skill_prompt_text,
     )
 
 
@@ -1485,10 +2319,13 @@ def _get_agent_graph_runtime(force_reload: bool = False) -> AgentGraphRuntime:
 
 
 def _reset_agent_graph_runtime() -> None:
-    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER, _CHAT_TOPIC_STORE
+    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK
     _AGENT_GRAPH_RUNTIME = None
     _SKILL_MANAGER = None
     _CHAT_TOPIC_STORE = None
+    _ASR_SERVICE = None
+    _ASR_WARMUP_TASK = None
+    _TURN_TOOL_BRIDGE_CACHE.clear()
     PENDING_CHAT_TURNS.clear()
     try:
         AGENT_GRAPH_CHECKPOINT_PATH.unlink()
@@ -1496,9 +2333,9 @@ def _reset_agent_graph_runtime() -> None:
         pass
 
 
-def _has_chat_mode_tavily_tools() -> bool:
+def _has_chat_mode_tavily_tools(tooling_cfg: dict[str, Any] | None = None) -> bool:
     bridge = _FilteredToolBridge(
-        _get_mcp_bridge(),
+        _get_mcp_bridge_for_tooling(tooling_cfg) if isinstance(tooling_cfg, dict) else _get_mcp_bridge(),
         allow_predicate=lambda name: str(name or "").startswith(CHAT_MODE_TAVILY_TOOL_PREFIX),
         missing_message="tool not available in 聊天模式",
     )
@@ -1753,12 +2590,17 @@ def _extract_pet_display_name(system_prompt: str) -> str:
     return "桌宠"
 
 
-def _phase_payload(phase: str, text: str, speaker: str = "pet") -> dict[str, Any]:
-    return {
+def _phase_payload(phase: str, text: str, speaker: str = "pet", **extra: Any) -> dict[str, Any]:
+    payload = {
         "phase": str(phase or "").strip(),
         "text": _sanitize_ai_text(str(text or "")).strip(),
         "speaker": str(speaker or "pet"),
     }
+    for key, value in extra.items():
+        if value is None:
+            continue
+        payload[str(key)] = value
+    return payload
 
 
 def _store_pending_turn(turn_id: str, payload: dict[str, Any]) -> None:
@@ -1810,17 +2652,7 @@ def _filter_repeated_tool_calls(
 
 
 def _continuation_recheck_prompt(user_text: str, remaining_steps: int) -> str:
-    clean_text = _sanitize_ai_text(str(user_text or "")).strip()
-    lines = [
-        "Re-check whether the user's original request is truly finished.",
-        "Do not say the task is complete if any requested step is still unfinished.",
-        "If the user asked for a sequence of actions, and only part of the sequence has been completed, you must request the next tool step.",
-        f"Remaining approved tool steps available: {max(0, int(remaining_steps))}.",
-        "Return JSON only in the normal decision format.",
-    ]
-    if clean_text:
-        lines.append(f"Original user request: {clean_text}")
-    return "\n".join(lines)
+    return _rt_continuation_recheck_prompt(_sanitize_ai_text(str(user_text or "")).strip(), remaining_steps)
 
 
 def _sse(event: str, payload: dict[str, Any]) -> str:
@@ -1832,15 +2664,7 @@ def _sanitize_ai_text(text: str) -> str:
 
 
 def _build_expression_protocol_prompt(available_expressions: list[str] | None = None) -> str:
-    allowed = [str(item).strip() for item in (available_expressions or []) if str(item).strip()]
-    if allowed:
-        expr_list = ", ".join(json.dumps(item, ensure_ascii=False) for item in allowed)
-        return (
-            f"{EXPR_PROTOCOL_PROMPT} "
-            f"Available expr values are: {expr_list}. "
-            'If none fits, use "" for expr.'
-        )
-    return f'{EXPR_PROTOCOL_PROMPT} If no matching expression exists, use "" for expr.'
+    return _rt_build_expression_protocol_prompt(available_expressions)
 
 
 def _build_system_prompt(
@@ -1850,29 +2674,69 @@ def _build_system_prompt(
     output_format: str,
     available_expressions: list[str] | None = None,
 ) -> str:
-    parts = [str(user_prompt or "").strip(), str(skill_prompt or "").strip()]
-    base = "\n\n".join([item for item in parts if item])
-    if not expression_mode or output_format != EXPR_OUTPUT_FORMAT:
-        return base
-    protocol_prompt = _build_expression_protocol_prompt(available_expressions)
-    return f"{base}\n\n{protocol_prompt}" if base else protocol_prompt
+    return _rt_build_system_prompt(
+        user_prompt,
+        skill_prompt,
+        expression_mode,
+        output_format,
+        available_expressions,
+    )
+
+
+def _looks_like_hidden_tool_reference(value: str) -> bool:
+    normalized = str(value or "").strip().strip("`")
+    if not normalized or " " in normalized:
+        return False
+    lowered = normalized.lower()
+    if lowered.startswith(("http://", "https://")):
+        return False
+    if normalized.startswith("skill.") or normalized.endswith(".*"):
+        return True
+    if normalized.count(".") < 1:
+        return False
+    segments = [segment for segment in normalized.split(".") if segment]
+    if len(segments) < 2:
+        return False
+    if segments[-1].lower() in REACT_SKILL_PROMPT_FILE_EXTENSIONS:
+        return False
+    return all(re.fullmatch(r"[A-Za-z0-9_-]+", segment) for segment in segments)
+
+
+def _sanitize_skill_prompt_for_react_visibility(skill_prompt: str) -> str:
+    prompt = str(skill_prompt or "").strip()
+    if not prompt:
+        return ""
+
+    visible_lines: list[str] = []
+    dropping_dependencies = False
+    for raw_line in prompt.splitlines():
+        if REACT_SKILL_PROMPT_DEPENDENCIES_RE.match(raw_line):
+            dropping_dependencies = True
+            continue
+        if dropping_dependencies:
+            continue
+        visible_lines.append(raw_line)
+
+    sanitized = "\n".join(visible_lines).strip()
+    if not sanitized:
+        return ""
+
+    def _replace_inline_code(match: re.Match[str]) -> str:
+        token = str(match.group(1) or "").strip()
+        if not _looks_like_hidden_tool_reference(token):
+            return match.group(0)
+        if token.startswith("skill."):
+            return "`skill-local tool`"
+        return "`discovered MCP tool`"
+
+    sanitized = REACT_SKILL_PROMPT_INLINE_CODE_RE.sub(_replace_inline_code, sanitized).strip()
+    if not sanitized:
+        return ""
+    return f"{REACT_SKILL_VISIBILITY_NOTE}\n\n{sanitized}"
 
 
 def _build_decision_messages(base_messages: list[dict[str, Any]], skill_prompt: str) -> list[dict[str, Any]]:
-    prompt = str(skill_prompt or "").strip()
-    if not prompt:
-        return list(base_messages)
-    return [
-        {
-            "role": "system",
-            "content": (
-                "Follow the active skill instructions below while deciding the next tool step. "
-                "Do not mark the task complete until that workflow is actually finished.\n\n"
-                f"{prompt}"
-            ),
-        },
-        *list(base_messages),
-    ]
+    return _rt_build_decision_messages(base_messages, skill_prompt)
 
 
 def _parse_ndjson_line(line: str) -> dict[str, str | None] | None:
@@ -1949,7 +2813,7 @@ def _skills_response_payload() -> dict[str, Any]:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
@@ -1958,11 +2822,17 @@ async def on_shutdown() -> None:
         _MCP_BRIDGE = None
     _AGENT_GRAPH_RUNTIME = None
     _SKILL_MANAGER = None
+    _CHAT_TOPIC_STORE = None
+    _ASR_SERVICE = None
+    _ASR_WARMUP_TASK = None
+    _TURN_TOOL_BRIDGE_CACHE.clear()
 
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     ollama_ok = await is_ollama_alive(OLLAMA_BASE_URL)
+    settings_config = _load_settings_config()
+    asr_cfg = _asr_config(settings_config)
     tooling_cfg = _load_runtime_tooling_config()
     third_enabled = bool(tooling_cfg.get("third_party", {}).get("enabled", False))
     third_party_health: dict[str, Any] = {"enabled": third_enabled, "servers": [], "online": 0}
@@ -1977,10 +2847,23 @@ async def health() -> dict[str, Any]:
                 "online": 0,
                 "error": str(exc),
             }
+    asr_ok = False
+    asr_message = ""
+    if asr_cfg["enabled"]:
+        if _should_use_external_asr(settings_config, asr_cfg):
+            asr_ok = await _external_asr_health(asr_cfg["api_base_url"])
+            if not asr_ok:
+                asr_message = _get_asr_service().readiness_message()
+                asr_ok = not asr_message
+        else:
+            asr_message = _get_asr_service().readiness_message()
+            asr_ok = not asr_message
     return {
         "ok": True,
         "ollama": ollama_ok,
         "tts": tts_available(DEFAULT_PROVIDER),
+        "asr": bool(asr_ok),
+        "message": asr_message,
         "tools": bool(tooling_cfg.get("enabled", True)),
         "third_party_mcp": third_party_health,
     }
@@ -2230,36 +3113,11 @@ async def post_settings_preview_action(payload: dict[str, Any] = Body(...)) -> d
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
-    text = req.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text cannot be empty")
-    raw_session_id = str(req.session_id or "").strip()
     chat_mode = _normalize_chat_mode(req.chat_mode)
-    settings_config = _load_settings_config()
-    topic_history_cfg = _topic_history_config(settings_config)
-    session_id = normalize_topic_id(raw_session_id or "default") if topic_history_cfg["enabled"] else (raw_session_id or "default")
-    router_cfg = _resolve_router_request_config(req, settings_config)
-    resolved_skills = _resolve_request_skills(req.skill_ids, settings=settings_config, chat_mode=chat_mode)
-    tooling_cfg = _load_runtime_tooling_config()
-    tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
-    if chat_mode == CHAT_MODE_CHAT:
-        if not tools_enabled:
-            raise HTTPException(status_code=400, detail="chat mode requires tavily-mcp tools to be enabled")
-        if not _has_chat_mode_tavily_tools():
-            raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
-    if chat_mode == CHAT_MODE_SKILL and not router_cfg["enabled"] and not resolved_skills.skill_ids:
-        raise HTTPException(status_code=400, detail="Skill mode requires at least one active skill")
-
-    pet_display_name = _extract_pet_display_name(req.system_prompt)
-    if topic_history_cfg["enabled"]:
-        store = _get_chat_topic_store()
-        store.ensure_topic(session_id, persisted=True, title=DEFAULT_TOPIC_TITLE)
-        history = store.build_model_messages(session_id)
-        SESSION_STORE[session_id] = store.load_full_messages(session_id)
-    else:
-        history = SESSION_STORE.get(session_id, [])
-        history = _trim_messages(history, req.memory_window)
-    working = history + [{"role": "user", "content": text}]
+    perf = PerfTracker()
+    text = req.text.strip()
+    session_id = str(req.session_id or "").strip() or "default"
+    topic_history_enabled = False
     max_reasoning_steps = max(1, int(req.max_reasoning_steps or 10))
     router_used = False
     route_kind = ""
@@ -2269,95 +3127,215 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
     route_tool_call: dict[str, Any] = {}
     route_search_needed = False
     route_search_query = ""
-    decision_messages = list(working)
+    try:
+        if not text:
+            raise HTTPException(status_code=400, detail="text cannot be empty")
+        context = _build_chat_request_context(req, perf)
+        settings_config = context.settings_config
+        tooling_cfg = context.tooling_cfg
+        topic_history_cfg = context.topic_history_cfg
+        router_cfg = context.router_cfg
+        resolved_skills = context.resolved_skills
+        session_id = context.session_id
+        topic_history_enabled = bool(topic_history_cfg["enabled"])
+        pet_display_name = context.pet_display_name
+        tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
+        if chat_mode == CHAT_MODE_CHAT:
+            if not tools_enabled:
+                raise HTTPException(status_code=400, detail="chat mode requires tavily-mcp tools to be enabled")
+            if not _has_chat_mode_tavily_tools(tooling_cfg):
+                raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
+        if chat_mode == CHAT_MODE_SKILL and not router_cfg["enabled"] and not resolved_skills.skill_ids:
+            raise HTTPException(status_code=400, detail="Skill mode requires at least one active skill")
 
-    if router_cfg["enabled"]:
-        route_tools = _build_router_tool_schemas(chat_mode, list(resolved_skills.skill_ids))
-        route_skill_summaries = _skill_summaries_for_route(
-            chat_mode=chat_mode,
-            requested_skill_ids=req.skill_ids,
-            settings_config=settings_config,
-        )
-        try:
-            route = await classify_route(
-                chat_mode=chat_mode,
-                messages=working,
-                model=router_cfg["model"],
-                tools=route_tools,
-                skill_summaries=route_skill_summaries,
-                llm_provider=router_cfg["llm_provider"],
-                api_base_url=router_cfg["api_base_url"],
-                api_key=router_cfg["api_key"],
+        if router_cfg["enabled"]:
+            route_tools = _build_router_tool_schemas(
+                chat_mode,
+                list(resolved_skills.skill_ids),
+                settings_config=settings_config,
+                tooling_cfg=tooling_cfg,
             )
-            router_used = True
-            route_kind = str(route.route_kind or "")
-            route_thought_summary = str(route.thought_summary or "")
-            route_search_needed = bool(route.search_needed)
-            route_search_query = str(route.search_query or "")
-            route_tool_candidates = list(route.tool_candidates or [])
-            route_skill_ids = list(route.skill_ids or [])
-            if route.tool_call is not None:
-                route_tool_call = route.tool_call.to_dict()
+            route_skill_summaries = _skill_summaries_for_route(
+                chat_mode=chat_mode,
+                requested_skill_ids=req.skill_ids,
+                settings_config=settings_config,
+            )
+            try:
+                route = await perf.time_await(
+                    "router_classify",
+                    classify_route(
+                        chat_mode=chat_mode,
+                        messages=context.working_messages,
+                        model=router_cfg["model"],
+                        tools=route_tools,
+                        skill_summaries=route_skill_summaries,
+                        llm_provider=router_cfg["llm_provider"],
+                        api_base_url=router_cfg["api_base_url"],
+                        api_key=router_cfg["api_key"],
+                    ),
+                )
+                router_used = True
+                route_kind = str(route.route_kind or "")
+                route_thought_summary = str(route.thought_summary or "")
+                route_search_needed = bool(route.search_needed)
+                route_search_query = str(route.search_query or "")
+                route_tool_candidates = list(route.tool_candidates or [])
+                route_skill_ids = list(route.skill_ids or [])
+                if route.tool_call is not None:
+                    route_tool_call = route.tool_call.to_dict()
 
-            if chat_mode == CHAT_MODE_REACT:
-                decision_messages = list(working)
-            elif chat_mode == CHAT_MODE_CHAT:
-                if route_search_needed and route_search_query:
-                    search_tool_name = _pick_tavily_tool_name(route_tools)
-                    if not search_tool_name:
-                        raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
-                    route_kind = "simple_tool_task"
-                    route_tool_call = {
-                        "name": search_tool_name,
-                        "arguments": {"query": route_search_query},
-                        "action_message": f"Search the web for {route_search_query}",
-                    }
-                else:
-                    route_kind = "direct_answer"
-            elif chat_mode == CHAT_MODE_SKILL:
-                resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
-                if not resolved_skills.skill_ids:
-                    raise HTTPException(status_code=400, detail="Skill route did not resolve to an installed skill")
-                route_kind = "skill_task"
-                route_skill_ids = list(resolved_skills.skill_ids)
-        except HTTPException:
-            raise
-        except Exception:
-            router_used = False
-            route_kind = ""
-            route_thought_summary = ""
+                if chat_mode == CHAT_MODE_CHAT:
+                    if route_search_needed and route_search_query:
+                        search_tool_name = _pick_tavily_tool_name(route_tools)
+                        if not search_tool_name:
+                            raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
+                        route_kind = "simple_tool_task"
+                        route_tool_call = {
+                            "name": search_tool_name,
+                            "arguments": {"query": route_search_query},
+                            "action_message": f"Search the web for {route_search_query}",
+                        }
+                    else:
+                        route_kind = "direct_answer"
+                elif chat_mode == CHAT_MODE_SKILL:
+                    routed_skill_ids = _canonicalize_skill_ids(route_skill_ids, manager=_get_skill_manager())
+                    if routed_skill_ids != list(resolved_skills.skill_ids):
+                        resolved_skills = perf.time_call(
+                            "resolve_skills",
+                            _resolve_request_skills,
+                            routed_skill_ids,
+                            settings_config,
+                            chat_mode=chat_mode,
+                        )
+                    if not resolved_skills.skill_ids:
+                        raise HTTPException(status_code=400, detail="Skill route did not resolve to an installed skill")
+                    route_kind = "skill_task"
+                    route_skill_ids = list(resolved_skills.skill_ids)
+            except HTTPException:
+                raise
+            except Exception:
+                router_used = False
+                route_kind = ""
+                route_thought_summary = ""
+                route_skill_ids = []
+                route_tool_candidates = []
+                route_tool_call = {}
+                route_search_needed = False
+                route_search_query = ""
+
+        inventory_scope = _explicit_capability_inventory_scope(text)
+        if chat_mode == CHAT_MODE_REACT and inventory_scope and route_kind in {"", "direct_answer"}:
+            route_kind = "complex_task"
             route_skill_ids = []
             route_tool_candidates = []
             route_tool_call = {}
             route_search_needed = False
             route_search_query = ""
-            decision_messages = list(working)
+            route_thought_summary = "I should check the currently available capabilities before I answer."
 
-    decision_resolved_skills = resolved_skills
-    if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids:
-        decision_resolved_skills = _resolve_request_skills(route_skill_ids, settings=settings_config, chat_mode=chat_mode)
-    elif chat_mode == CHAT_MODE_SKILL:
+        forced_skill_ids = _infer_forced_skill_ids_from_request(text, resolved_skills)
+        if (
+            forced_skill_ids
+            and chat_mode == CHAT_MODE_REACT
+            and route_kind in {"", "direct_answer", "complex_task"}
+        ):
+            route_kind = "skill_task"
+            route_skill_ids = list(forced_skill_ids)
+            route_tool_candidates = []
+            route_tool_call = {}
+            route_search_needed = False
+            route_search_query = ""
+            route_thought_summary = "I should follow the matched skill workflow for this task."
+
         decision_resolved_skills = resolved_skills
-    skill_prompt_text = decision_resolved_skills.prompt_text if chat_mode != CHAT_MODE_CHAT else ""
-    decision_messages = _build_decision_messages(working, skill_prompt_text)
+        if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids:
+            if list(route_skill_ids) != list(resolved_skills.skill_ids):
+                decision_resolved_skills = perf.time_call(
+                    "resolve_skills",
+                    _resolve_request_skills,
+                    route_skill_ids,
+                    settings_config,
+                    chat_mode=chat_mode,
+                )
+        raw_skill_prompt_text = decision_resolved_skills.prompt_text if chat_mode != CHAT_MODE_CHAT else ""
+        skill_prompt_text = (
+            _sanitize_skill_prompt_for_react_visibility(raw_skill_prompt_text)
+            if chat_mode == CHAT_MODE_REACT
+            else raw_skill_prompt_text
+        )
+    except Exception as exc:
+        _ensure_perf_keys(
+            perf,
+            "load_config",
+            "derive_settings_tooling",
+            "resolve_skills",
+            "load_topic_snapshot",
+            "router_classify",
+            "build_messages",
+            "graph_start",
+            "finalize_exchange",
+        )
+        detail = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
+        _log_perf_event(
+            "chat_stream_perf",
+            session_id=session_id,
+            chat_mode=chat_mode,
+            router_used=router_used,
+            route_kind=route_kind,
+            topic_history_enabled=topic_history_enabled,
+            timings_ms=perf.timings_ms,
+            ok=False,
+            error=str(detail),
+        )
+        raise
+
+    build_started = time.perf_counter()
+    decision_messages = _build_decision_messages(context.working_messages, skill_prompt_text)
+    sys_prompt = _build_system_prompt(
+        req.system_prompt,
+        "",
+        bool(req.expression_mode),
+        str(req.expression_output_format or ""),
+        req.available_expressions,
+    )
+    prompt_msgs = (
+        [{"role": "system", "content": sys_prompt}] + list(context.working_messages)
+        if sys_prompt
+        else list(context.working_messages)
+    )
+    perf.add("build_messages", time.perf_counter() - build_started)
+    tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
+    selection_origin = "route" if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids else "none"
+    selected_skill_ids = list(route_skill_ids) if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" else []
+    execution_phase = (
+        PHASE_AGENT_LOOP
+        if chat_mode == CHAT_MODE_REACT and route_kind == "complex_task"
+        else PHASE_SKILL_EXECUTION
+        if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids
+        else PHASE_SKILL_SELECTION
+        if chat_mode == CHAT_MODE_REACT
+        else ""
+    )
+    turn_id = uuid4().hex
+    _prime_turn_tool_bridge_cache(
+        turn_id=turn_id,
+        chat_mode=chat_mode,
+        settings_config=settings_config,
+        tooling_cfg=tooling_cfg,
+        active_skill_ids=list(resolved_skills.skill_ids),
+        active_resolved_skills=resolved_skills,
+        selection_origin=selection_origin,
+        selected_skill_ids=selected_skill_ids,
+        selected_resolved_skills=decision_resolved_skills if selected_skill_ids else None,
+    )
 
     async def event_gen():
-        sys_prompt = _build_system_prompt(
-            req.system_prompt,
-            skill_prompt_text,
-            bool(req.expression_mode),
-            str(req.expression_output_format or ""),
-            req.available_expressions,
-        )
-        prompt_msgs = [{"role": "system", "content": sys_prompt}] + working if sys_prompt else list(working)
-        tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
-
         yield _sse(
             "meta",
             {
                 "session_id": session_id,
                 "topic_id": session_id,
-                "topic_history_enabled": bool(topic_history_cfg["enabled"]),
+                "topic_history_enabled": topic_history_enabled,
                 "model": req.model,
                 "llm_provider": req.llm_provider,
                 "tool_mode": req.tool_mode,
@@ -2376,57 +3354,89 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
 
         full_answer = ""
         cleanup_turn_id = ""
+        stream_ok = False
+        error_message = ""
+        pending_turn = False
+        runtime = _get_agent_graph_runtime()
         try:
-            outcome = await _get_agent_graph_runtime().start_turn(
-                {
-                    "turn_id": uuid4().hex,
-                    "session_id": session_id,
-                    "chat_mode": chat_mode,
-                    "router_used": router_used,
-                    "route_kind": route_kind,
-                    "route_thought_summary": route_thought_summary,
-                    "route_skill_ids": list(route_skill_ids),
-                    "route_tool_candidates": list(route_tool_candidates),
-                    "route_tool_call": dict(route_tool_call),
-                    "route_search_needed": route_search_needed,
-                    "route_search_query": route_search_query,
-                    "memory_window": int(req.memory_window),
-                    "model": req.model,
-                    "llm_provider": req.llm_provider,
-                    "api_base_url": req.api_base_url,
-                    "api_key": req.api_key,
-                    "system_prompt": req.system_prompt,
-                    "active_skill_ids": list(resolved_skills.skill_ids),
-                    "skill_prompt_text": skill_prompt_text,
-                    "expression_mode": bool(req.expression_mode),
-                    "expression_output_format": str(req.expression_output_format or ""),
-                    "available_expressions": list(req.available_expressions),
-                    "tools_enabled": tools_enabled,
-                    "react_enabled": bool(req.react_enabled),
-                    "max_reasoning_steps": max_reasoning_steps,
-                    "reasoning_step": 1,
-                    "user_text": text,
-                    "pet_display_name": pet_display_name,
-                    "working_messages": working,
-                    "decision_messages": decision_messages,
-                    "prompt_messages": prompt_msgs,
-                    "execution_phase": (
-                        PHASE_AGENT_LOOP
-                        if chat_mode == CHAT_MODE_REACT and route_kind == "complex_task"
-                        else PHASE_SKILL_EXECUTION
-                        if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids
-                        else PHASE_SKILL_SELECTION
-                        if chat_mode == CHAT_MODE_REACT
-                        else ""
-                    ),
-                    "discovered_skill_ids": [],
-                    "discovered_tool_names": [],
-                    "selected_skill_ids": list(route_skill_ids) if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" else [],
-                }
+            outcome = await perf.time_await(
+                "graph_start",
+                runtime.start_turn(
+                    {
+                        "turn_id": turn_id,
+                        "session_id": session_id,
+                        "chat_mode": chat_mode,
+                        "router_used": router_used,
+                        "route_kind": route_kind,
+                        "route_thought_summary": route_thought_summary,
+                        "route_skill_ids": list(route_skill_ids),
+                        "route_tool_candidates": list(route_tool_candidates),
+                        "route_tool_call": dict(route_tool_call),
+                        "route_search_needed": route_search_needed,
+                        "route_search_query": route_search_query,
+                        "memory_window": int(req.memory_window),
+                        "model": req.model,
+                        "llm_provider": req.llm_provider,
+                        "api_base_url": req.api_base_url,
+                        "api_key": req.api_key,
+                        "system_prompt": req.system_prompt,
+                        "active_skill_ids": list(resolved_skills.skill_ids),
+                        "skill_prompt_text": skill_prompt_text,
+                        "expression_mode": bool(req.expression_mode),
+                        "expression_output_format": str(req.expression_output_format or ""),
+                        "available_expressions": list(req.available_expressions),
+                        "tools_enabled": tools_enabled,
+                        "react_enabled": bool(req.react_enabled),
+                        "max_reasoning_steps": max_reasoning_steps,
+                        "reasoning_step": 1,
+                        "user_text": text,
+                        "pet_display_name": pet_display_name,
+                        "working_messages": list(context.working_messages),
+                        "decision_messages": decision_messages,
+                        "prompt_messages": prompt_msgs,
+                        "settings_config": settings_config,
+                        "tooling_config": tooling_cfg,
+                        "execution_phase": execution_phase,
+                        "selection_origin": selection_origin,
+                        "selected_skill_ids": selected_skill_ids,
+                        "selected_tool_names": [],
+                        "planner_excluded_skill_ids": [],
+                        "planner_excluded_tool_names": [],
+                        "planner_retry_used": False,
+                        "loop_round": 1,
+                        "last_expected_effect": "",
+                        "last_assessment": "",
+                        "last_inventory_result": {},
+                        "rejected_call_signatures": [],
+                        "no_progress_streak": 0,
+                        "phase_events": [],
+                    }
+                ),
             )
-            if outcome.thought_summary:
+            if outcome.phase_events:
+                for item in outcome.phase_events:
+                    yield _sse(
+                        "phase",
+                        _phase_payload(
+                            str(item.get("phase") or ""),
+                            str(item.get("text") or ""),
+                            speaker=str(item.get("speaker") or "pet"),
+                            loop_round=item.get("loop_round"),
+                            thought_role=item.get("thought_role"),
+                            plan_id=item.get("plan_id"),
+                            step_id=item.get("step_id"),
+                            step_index=item.get("step_index"),
+                            step_title=item.get("step_title"),
+                            step_status=item.get("step_status"),
+                            batch_id=item.get("batch_id"),
+                            batch_size=item.get("batch_size"),
+                        ),
+                    )
+            elif outcome.thought_summary:
                 yield _sse("phase", _phase_payload("thought", outcome.thought_summary))
             if outcome.is_pending and outcome.approval_request:
+                pending_turn = True
+                stream_ok = True
                 yield _sse(
                     "approval_required",
                     {
@@ -2513,26 +3523,57 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                         continue
                     full_answer += clean_delta
                     yield _sse("token", {"delta": clean_delta})
+            full_answer = _sanitize_ai_text(full_answer)
+            await perf.time_await(
+                "finalize_exchange",
+                _finalize_chat_exchange(
+                    session_id=session_id,
+                    user_text=text,
+                    assistant_text=full_answer,
+                    working_messages=list(context.working_messages),
+                    memory_window=int(req.memory_window),
+                    settings_config=settings_config,
+                    llm_provider=str(req.llm_provider or "ollama"),
+                    api_base_url=str(req.api_base_url or ""),
+                    api_key=str(req.api_key or ""),
+                    model=str(req.model or "qwen3:8b"),
+                ),
+            )
+            yield _sse("done", {"text": full_answer, "topic_id": session_id})
+            stream_ok = True
         except Exception as exc:
-            yield _sse("error", {"message": str(exc)})
+            message = _exception_message(exc, "chat stream failed")
+            error_message = f"{type(exc).__name__}: {message}"
+            yield _sse("error", {"message": message})
             return
-
-        full_answer = _sanitize_ai_text(full_answer)
-        await _finalize_chat_exchange(
-            session_id=session_id,
-            user_text=text,
-            assistant_text=full_answer,
-            working_messages=working,
-            memory_window=int(req.memory_window),
-            settings_config=settings_config,
-            llm_provider=str(req.llm_provider or "ollama"),
-            api_base_url=str(req.api_base_url or ""),
-            api_key=str(req.api_key or ""),
-            model=str(req.model or "qwen3:8b"),
-        )
-        yield _sse("done", {"text": full_answer, "topic_id": session_id})
-        if cleanup_turn_id:
-            _get_agent_graph_runtime().delete_turn(cleanup_turn_id)
+        finally:
+            if cleanup_turn_id:
+                runtime.delete_turn(cleanup_turn_id)
+                _clear_turn_tool_bridge_cache(cleanup_turn_id)
+            elif error_message and not pending_turn:
+                _clear_turn_tool_bridge_cache(turn_id)
+            _ensure_perf_keys(
+                perf,
+                "load_config",
+                "derive_settings_tooling",
+                "resolve_skills",
+                "load_topic_snapshot",
+                "router_classify",
+                "build_messages",
+                "graph_start",
+                "finalize_exchange",
+            )
+            _log_perf_event(
+                "chat_stream_perf",
+                session_id=session_id,
+                chat_mode=chat_mode,
+                router_used=router_used,
+                route_kind=route_kind,
+                topic_history_enabled=topic_history_enabled,
+                timings_ms=perf.timings_ms,
+                ok=stream_ok and not error_message,
+                error=error_message,
+            )
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
@@ -2542,22 +3583,60 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
     runtime = _get_agent_graph_runtime()
     if runtime.get_pending_approval(req.turn_id) is None:
         raise HTTPException(status_code=404, detail="pending turn not found or already handled")
+    perf = PerfTracker()
 
     async def event_gen():
         full_answer = ""
         cleanup_turn_id = req.turn_id
         state: dict[str, Any] = {}
+        stream_ok = False
+        error_message = ""
+        pending_turn = False
         try:
-            outcome = await runtime.resume_turn(ApprovalDecision(turn_id=req.turn_id, approved=req.approved))
+            outcome = await perf.time_await(
+                "approval_resume",
+                runtime.resume_turn(
+                    ApprovalDecision(
+                        turn_id=req.turn_id,
+                        approved=req.approved,
+                        user_text=str(req.user_text or ""),
+                    )
+                ),
+            )
             state = outcome.state
-            if req.approved:
+            if outcome.phase_events:
+                for item in outcome.phase_events:
+                    yield _sse(
+                        "phase",
+                        _phase_payload(
+                            str(item.get("phase") or ""),
+                            str(item.get("text") or ""),
+                            speaker=str(item.get("speaker") or "pet"),
+                            loop_round=item.get("loop_round"),
+                            thought_role=item.get("thought_role"),
+                            plan_id=item.get("plan_id"),
+                            step_id=item.get("step_id"),
+                            step_index=item.get("step_index"),
+                            step_title=item.get("step_title"),
+                            step_status=item.get("step_status"),
+                            batch_id=item.get("batch_id"),
+                            batch_size=item.get("batch_size"),
+                        ),
+                    )
+            elif req.approved:
                 yield _sse("phase", _phase_payload("action", "好呀，那我这就开始处理这件事。"))
+                if outcome.thought_summary:
+                    yield _sse("phase", _phase_payload("thought", outcome.thought_summary))
+            elif str(req.user_text or "").strip():
+                yield _sse("phase", _phase_payload("action", "收到你的补充啦，我按新的说明接着继续这轮任务。"))
                 if outcome.thought_summary:
                     yield _sse("phase", _phase_payload("thought", outcome.thought_summary))
             else:
                 yield _sse("phase", _phase_payload("action", "那这次我先不调用工具，直接按现有信息回答你。"))
             if outcome.is_pending and outcome.approval_request:
                 cleanup_turn_id = ""
+                pending_turn = True
+                stream_ok = True
                 yield _sse(
                     "approval_required",
                     {
@@ -2646,28 +3725,56 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
                     full_answer += clean_delta
                     yield _sse("token", {"delta": clean_delta})
         except Exception as exc:
-            yield _sse("error", {"message": str(exc)})
+            message = _exception_message(exc, "chat approval failed")
+            error_message = f"{type(exc).__name__}: {message}"
+            yield _sse("error", {"message": message})
             return
 
         full_answer = _sanitize_ai_text(full_answer)
         session_id = str(state.get("session_id") or "default")
         memory_window = int(state.get("memory_window") or 10)
-        settings_config = _load_settings_config()
-        await _finalize_chat_exchange(
-            session_id=session_id,
-            user_text=str(state.get("user_text") or ""),
-            assistant_text=full_answer,
-            working_messages=list(state.get("working_messages") or []),
-            memory_window=memory_window,
-            settings_config=settings_config,
-            llm_provider=str(state.get("llm_provider") or "ollama"),
-            api_base_url=str(state.get("api_base_url") or ""),
-            api_key=str(state.get("api_key") or ""),
-            model=str(state.get("model") or "qwen3:8b"),
-        )
-        yield _sse("done", {"text": full_answer, "topic_id": session_id})
-        if cleanup_turn_id:
-            runtime.delete_turn(cleanup_turn_id)
+        settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else _load_settings_config()
+        try:
+            await perf.time_await(
+                "finalize_exchange",
+                _finalize_chat_exchange(
+                    session_id=session_id,
+                    user_text=str(state.get("user_text") or ""),
+                    assistant_text=full_answer,
+                    working_messages=list(state.get("working_messages") or []),
+                    memory_window=memory_window,
+                    settings_config=settings_config,
+                    llm_provider=str(state.get("llm_provider") or "ollama"),
+                    api_base_url=str(state.get("api_base_url") or ""),
+                    api_key=str(state.get("api_key") or ""),
+                    model=str(state.get("model") or "qwen3:8b"),
+                ),
+            )
+            yield _sse("done", {"text": full_answer, "topic_id": session_id})
+            stream_ok = True
+        except Exception as exc:
+            message = _exception_message(exc, "chat approval failed")
+            error_message = f"{type(exc).__name__}: {message}"
+            yield _sse("error", {"message": message})
+            return
+        finally:
+            if cleanup_turn_id:
+                runtime.delete_turn(cleanup_turn_id)
+                _clear_turn_tool_bridge_cache(cleanup_turn_id)
+            elif error_message and not pending_turn:
+                _clear_turn_tool_bridge_cache(req.turn_id)
+            _ensure_perf_keys(perf, "approval_resume", "finalize_exchange")
+            _log_perf_event(
+                "chat_approval_perf",
+                session_id=str(state.get("session_id") or "default"),
+                chat_mode=str(state.get("chat_mode") or ""),
+                router_used=bool(state.get("router_used")),
+                route_kind=str(state.get("route_kind") or ""),
+                topic_history_enabled=bool(_topic_history_config(settings_config)["enabled"]),
+                timings_ms=perf.timings_ms,
+                ok=stream_ok and not error_message,
+                error=error_message,
+            )
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
@@ -2681,18 +3788,11 @@ async def create_chat_topic(payload: dict[str, Any] = Body(default_factory=dict)
     if isinstance(payload, dict):
         requested_topic_id = str(payload.get("topic_id") or payload.get("session_id") or "").strip()
         requested_title = str(payload.get("title") or DEFAULT_TOPIC_TITLE).strip() or DEFAULT_TOPIC_TITLE
-    if topic_cfg["enabled"]:
-        meta = _get_chat_topic_store().create_topic(
-            topic_id=requested_topic_id or None,
-            persisted=True,
-            title=requested_title,
-        )
-    else:
-        meta = _get_chat_topic_store().create_topic(
-            topic_id=requested_topic_id or None,
-            persisted=False,
-            title=requested_title,
-        )
+    meta = _get_chat_topic_store().create_topic(
+        topic_id=requested_topic_id or None,
+        persisted=False,
+        title=requested_title,
+    )
     topic_id = str(meta.get("topic_id") or "")
     if topic_id:
         SESSION_STORE.setdefault(topic_id, [])
@@ -2726,6 +3826,23 @@ async def get_chat_topic(topic_id: str) -> dict[str, Any]:
         "meta": detail.get("meta") or {},
         "messages": detail.get("messages") or [],
         "summary": detail.get("summary") or {},
+    }
+
+
+@app.delete("/api/chat/topics/{topic_id}")
+@app.post("/api/chat/topics/{topic_id}/delete")
+async def delete_chat_topic(topic_id: str) -> dict[str, Any]:
+    normalized_topic_id = normalize_topic_id(topic_id)
+    store = _get_chat_topic_store()
+    deleted = store.delete_topic(normalized_topic_id)
+    session_deleted = SESSION_STORE.pop(normalized_topic_id, None) is not None
+    if not deleted and not session_deleted:
+        raise HTTPException(status_code=404, detail="topic not found")
+    return {
+        "ok": True,
+        "topic_id": normalized_topic_id,
+        "deleted": True,
+        "topics": store.list_topics(),
     }
 
 
@@ -2796,6 +3913,108 @@ async def toggle_mcp(req: MCPToggleRequest) -> dict[str, Any]:
 async def reload_mcp() -> dict[str, Any]:
     bridge = _get_mcp_bridge(force_reload=True)
     return {"ok": True, "servers": bridge.list_servers()}
+
+
+@app.post("/api/asr/warmup")
+async def warmup_asr() -> dict[str, Any]:
+    settings_config = _load_settings_config()
+    asr_cfg = _asr_config(settings_config)
+    if not asr_cfg["enabled"]:
+        return {"ok": False, "started": False, "ready": False, "message": "ASR is disabled in settings."}
+    started, message = _ensure_internal_asr_warmup_started()
+    readiness_message = _get_asr_service().readiness_message()
+    ready = not readiness_message
+    return {
+        "ok": True,
+        "started": bool(started),
+        "ready": bool(ready),
+        "message": "" if ready else (message or readiness_message),
+    }
+
+
+@app.websocket("/api/asr/stream")
+async def asr_stream(websocket: WebSocket) -> None:
+    await websocket.accept()
+    settings_config = _load_settings_config()
+    asr_cfg = _asr_config(settings_config)
+    if not asr_cfg["enabled"]:
+        await websocket.send_json({"type": "error", "message": "ASR is disabled in settings."})
+        await websocket.close(code=1008)
+        return
+
+    service = _get_asr_service()
+    session_id = ""
+    try:
+        start_packet = await websocket.receive()
+        start_text = start_packet.get("text") if isinstance(start_packet, dict) else None
+        if not start_text:
+            await websocket.send_json({"type": "error", "message": "Expected a JSON start message."})
+            await websocket.close(code=1003)
+            return
+        try:
+            payload = json.loads(start_text)
+        except Exception:
+            await websocket.send_json({"type": "error", "message": "Invalid start payload JSON."})
+            await websocket.close(code=1003)
+            return
+        if str(payload.get("type") or "") != "start":
+            await websocket.send_json({"type": "error", "message": "The first ASR message must be type=start."})
+            await websocket.close(code=1008)
+            return
+
+        session = await service.start_session(
+            key=str(payload.get("key") or asr_cfg["push_to_talk_key"]),
+            language=str(payload.get("language") or DEFAULT_ASR_LANGUAGE),
+            punctuation=bool(payload.get("punctuation", True)),
+            interim_results=bool(payload.get("interim_results", asr_cfg["interim_results"])),
+        )
+        session_id = session.session_id
+        await websocket.send_json({"type": "ready", "session_id": session_id})
+
+        while True:
+            packet = await websocket.receive()
+            packet_type = str(packet.get("type") or "")
+            if packet_type == "websocket.disconnect":
+                break
+            audio_bytes = packet.get("bytes") if isinstance(packet, dict) else None
+            if audio_bytes is not None:
+                partial = await service.push_audio(session_id, bytes(audio_bytes))
+                if partial is not None and partial.text:
+                    await websocket.send_json({"type": "partial", "text": partial.text})
+                continue
+            packet_text = packet.get("text") if isinstance(packet, dict) else None
+            if not packet_text:
+                continue
+            try:
+                payload = json.loads(packet_text)
+            except Exception:
+                await websocket.send_json({"type": "error", "message": "Invalid ASR control payload."})
+                continue
+            if str(payload.get("type") or "") != "stop":
+                await websocket.send_json({"type": "error", "message": "Unsupported ASR control message."})
+                continue
+            final_result = await service.stop_session(session_id)
+            session_id = ""
+            await websocket.send_json({"type": "final", "text": final_result.text})
+            return
+    except WebSocketDisconnect:
+        pass
+    except ASRError as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    finally:
+        if session_id:
+            try:
+                await service.discard_session(session_id)
+            except Exception:
+                pass
 
 
 @app.post("/api/tts")

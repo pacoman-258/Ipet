@@ -219,6 +219,32 @@
             <span class="field-hint">大总结固定每 3 个小总结合并一次</span>
           </div>
           <label class="field">
+            <span>ASR</span>
+            <label class="inline-toggle">
+              <input id="chat-asr-enabled" type="checkbox" />
+              <span>启用按住说话</span>
+            </label>
+          </label>
+          <label class="field">
+            <span>按住说话键</span>
+            <select id="chat-asr-push-to-talk-key">
+              <option value="Alt">Alt</option>
+              <option value="Ctrl">Ctrl</option>
+              <option value="Space">Space</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>实时识别</span>
+            <label class="inline-toggle">
+              <input id="chat-asr-interim-results" type="checkbox" />
+              <span>边说边写入输入框</span>
+            </label>
+          </label>
+          <div class="field wide">
+            <span>ASR 说明</span>
+            <span class="field-hint">仅在聊天窗内生效；按住设定按键开始录音，松开后只写入输入框，不会自动发送。</span>
+          </div>
+          <label class="field">
             <span>TTS 方式</span>
             <select id="chat-tts-provider">
               <option value="edge_tts">edge_tts</option>

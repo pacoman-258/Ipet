@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +14,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from backend.agent_orchestrator import CapabilityPlan
 from backend.agent_graph import GraphTurnOutcome
 from backend.chat_topics import TopicStore
 from backend.skills.manager import SkillManager
@@ -52,7 +55,14 @@ def _write_skill(root: Path, *, name: str = "Repo Guide", description: str = "Gu
     return skill_dir
 
 
-def _write_script_skill(root: Path, *, name: str, description: str, script_name: str = "run_task") -> Path:
+def _write_script_skill(
+    root: Path,
+    *,
+    name: str,
+    description: str,
+    script_name: str = "run_task",
+    tool_allowlist: list[str] | None = None,
+) -> Path:
     skill_dir = _write_skill(root, name=name, description=description)
     scripts_dir = skill_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -67,6 +77,11 @@ def _write_script_skill(root: Path, *, name: str, description: str, script_name:
         ),
         encoding="utf-8",
     )
+    if tool_allowlist:
+        skill_dir.joinpath("skill.json").write_text(
+            json.dumps({"tool_allowlist": list(tool_allowlist)}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return skill_dir
 
 
@@ -221,10 +236,156 @@ class SkillsApiTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertIsNotNone(runtime.start_state)
+        self.assertEqual(runtime.start_state["decision_messages"][0]["role"], "system")
+        self.assertIn("Skill injected prompt", runtime.start_state["decision_messages"][0]["content"])
         prompt_messages = runtime.start_state["prompt_messages"]
-        self.assertIn("Skill injected prompt", prompt_messages[0]["content"])
+        self.assertEqual(prompt_messages[0]["content"], "Base prompt")
+        self.assertNotIn("Skill injected prompt", prompt_messages[0]["content"])
         self.assertEqual(runtime.start_state["active_skill_ids"], ["repo-guide"])
         self.assertIn('"active_skill_ids": ["repo-guide"]', resp.text)
+
+    def test_chat_stream_react_mode_sanitizes_hidden_tool_names_from_skill_prompt(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        resolved = SimpleNamespace(
+            skill_ids=("daily-hotspots",),
+            prompt_text=(
+                "[Skill: Daily Hotspots]\n"
+                "Follow this workflow exactly:\n\n"
+                "1. Collect current trend data with `tavily-mcp.*` when possible.\n"
+                "2. If extraction fails, fall back to `playwright.*`.\n"
+                "3. Save the final report with `skill.daily-hotspots.save_report`.\n\n"
+                "Dependencies:\n\n"
+                "- Allowed MCP tools: `bilibili-search.*`, `tavily-mcp.*`, `playwright.*`\n"
+                "- Local script tool: `skill.daily-hotspots.save_report`\n"
+            ),
+            tool_allowlist=(),
+            resource_tools=(),
+            adapter_tools=(),
+            script_tools=(),
+        )
+        config = {
+            "chat": {
+                "skills": {"enabled": True, "default_active_ids": ["daily-hotspots"]},
+                "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
+                "tooling": {"enabled": True, "max_tool_calls_per_turn": 6},
+            }
+        }
+
+        with mock.patch.object(backend_app, "_load_full_config", return_value=config), mock.patch.object(
+            backend_app,
+            "_resolve_request_skills",
+            return_value=resolved,
+        ), mock.patch.object(
+            backend_app,
+            "_get_agent_graph_runtime",
+            return_value=runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=mock.Mock(),
+        ), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ):
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "帮我按 skill 工作流处理",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "react_enabled": True,
+                    "chat_mode": "react",
+                    "router_enabled": False,
+                    "system_prompt": "Base prompt",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(runtime.start_state)
+        state = runtime.start_state
+        self.assertIn("Use only capabilities exposed in the current runtime phase.", state["skill_prompt_text"])
+        self.assertIn("Collect current trend data", state["skill_prompt_text"])
+        for text in (
+            state["skill_prompt_text"],
+            state["decision_messages"][0]["content"],
+        ):
+            self.assertNotIn("playwright", text)
+            self.assertNotIn("tavily-mcp", text)
+            self.assertNotIn("bilibili-search", text)
+            self.assertNotIn("skill.daily-hotspots.save_report", text)
+            self.assertNotIn("Dependencies:", text)
+        self.assertIn("`discovered MCP tool`", state["skill_prompt_text"])
+        self.assertIn("`skill-local tool`", state["skill_prompt_text"])
+        self.assertEqual(state["prompt_messages"][0]["content"], "Base prompt")
+
+    def test_chat_stream_loads_full_config_once_and_logs_perf(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        resolved = SimpleNamespace(
+            skill_ids=(),
+            prompt_text="",
+            tool_allowlist=(),
+            resource_tools=(),
+            adapter_tools=(),
+            script_tools=(),
+        )
+        load_calls: list[int] = []
+
+        def fake_load_full_config():
+            load_calls.append(1)
+            return {
+                "chat": {
+                    "skills": {"enabled": True, "default_active_ids": []},
+                    "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
+                    "tooling": {"enabled": True, "max_tool_calls_per_turn": 6},
+                }
+            }
+
+        with mock.patch.object(backend_app, "_load_full_config", side_effect=fake_load_full_config), mock.patch.object(
+            backend_app,
+            "_resolve_request_skills",
+            return_value=resolved,
+        ) as resolve_mock, mock.patch.object(
+            backend_app,
+            "_get_agent_graph_runtime",
+            return_value=runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=mock.Mock(),
+        ), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ), self.assertLogs(backend_app.LOGGER.name, level="INFO") as logs:
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "hello",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "react_enabled": True,
+                    "router_enabled": False,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(load_calls), 1)
+        self.assertEqual(resolve_mock.call_count, 1)
+        self.assertTrue(
+            any(
+                '"event": "chat_stream_perf"' in line and '"load_config"' in line and '"graph_start"' in line
+                for line in logs.output
+            )
+        )
 
     def test_chat_stream_chat_mode_ignores_skills_and_reports_mode(self) -> None:
         runtime = _FakeRuntime()
@@ -258,6 +419,10 @@ class SkillsApiTests(unittest.TestCase):
             "_load_runtime_tooling_config",
             return_value={"enabled": True, "max_tool_calls_per_turn": 6},
         ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=fake_bridge,
+        ), mock.patch.object(
             backend_app, "stream_final_reply", fake_stream_final_reply
         ):
             resp = self.client.post(
@@ -293,11 +458,11 @@ class SkillsApiTests(unittest.TestCase):
             ]
         )
 
-        with mock.patch.object(
+        with mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
             backend_app,
-            "_load_runtime_tooling_config",
-            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
-        ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge):
+            "_get_mcp_bridge_for_tooling",
+            return_value=fake_bridge,
+        ):
             resp = self.client.post(
                 "/api/chat/stream",
                 json={
@@ -314,12 +479,8 @@ class SkillsApiTests(unittest.TestCase):
     def test_chat_stream_skill_mode_requires_active_skill(self) -> None:
         with mock.patch.object(
             backend_app,
-            "_load_settings_config",
+            "_load_full_config",
             return_value={"chat": {"skills": {"enabled": True, "default_active_ids": []}}},
-        ), mock.patch.object(
-            backend_app,
-            "_load_runtime_tooling_config",
-            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
         ):
             resp = self.client.post(
                 "/api/chat/stream",
@@ -475,7 +636,119 @@ class SkillsApiTests(unittest.TestCase):
         self.assertIn("Skill prompt", runtime.start_state["decision_messages"][0]["content"])
         self.assertNotIn("ROLEPLAY_PROMPT", runtime.start_state["decision_messages"][0]["content"])
         self.assertIn("ROLEPLAY_PROMPT", runtime.start_state["prompt_messages"][0]["content"])
-        self.assertIn("Skill prompt", runtime.start_state["prompt_messages"][0]["content"])
+        self.assertNotIn("Skill prompt", runtime.start_state["prompt_messages"][0]["content"])
+
+    def test_build_execution_plan_for_state_uses_planner_config(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakePlan:
+            def to_dict(self) -> dict[str, object]:
+                return {
+                    "plan_id": "plan-1",
+                    "plan_summary": "Use the planner model.",
+                    "reason": "Planner config should win.",
+                    "steps": [],
+                }
+
+        async def fake_build_execution_plan(**kwargs):
+            captured.update(kwargs)
+            return _FakePlan()
+
+        state = {
+            "tooling_config": {},
+            "model": "main-model",
+            "llm_provider": "main-provider",
+            "api_base_url": "main-url",
+            "api_key": "main-key",
+            "settings_config": {
+                "chat": {
+                    "router_llm_provider": "planner-provider",
+                    "router_api_base_url": "planner-url",
+                    "router_api_key": "planner-key",
+                    "router_model": "planner-model",
+                }
+            },
+            "decision_messages": [{"role": "user", "content": "hello"}],
+        }
+        searcher_result = {"mode": "task_types", "matched_tool_names": []}
+
+        with mock.patch.object(backend_app, "build_execution_plan", side_effect=fake_build_execution_plan):
+            plan = asyncio.run(backend_app._build_execution_plan_for_state(state, searcher_result))
+
+        self.assertEqual(plan["plan_id"], "plan-1")
+        self.assertEqual(captured["model"], "planner-model")
+        self.assertEqual(captured["llm_provider"], "planner-provider")
+        self.assertEqual(captured["api_base_url"], "planner-url")
+        self.assertEqual(captured["api_key"], "planner-key")
+
+    def test_chat_stream_react_explicit_skill_request_forces_skill_task(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        skill_record = SimpleNamespace(
+            skill_id="daily-hotspots",
+            name="Daily Hotspots",
+            display_name="Daily Hotspots",
+            aliases=("hotspots", "daily-hotspots"),
+        )
+        resolved = SimpleNamespace(
+            skill_ids=("daily-hotspots",),
+            skills=(skill_record,),
+            prompt_text="Skill prompt",
+            tool_allowlist=("tavily-mcp.",),
+            resource_tools=(),
+            adapter_tools=(),
+            script_tools=(),
+        )
+        route = SimpleNamespace(
+            route_kind="direct_answer",
+            thought_summary="I can answer directly.",
+            skill_ids=[],
+            tool_candidates=[],
+            tool_call=None,
+            search_needed=False,
+            search_query="",
+        )
+
+        with mock.patch.object(backend_app, "_resolve_request_skills", return_value=resolved), mock.patch.object(
+            backend_app,
+            "_get_agent_graph_runtime",
+            return_value=runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=mock.Mock(),
+        ), mock.patch.object(
+            backend_app,
+            "stream_final_reply",
+            fake_stream_final_reply,
+        ), mock.patch.object(
+            backend_app,
+            "classify_route",
+            new=mock.AsyncMock(return_value=route),
+        ):
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "用skill里的方式来查热点并保存",
+                    "model": "demo",
+                    "system_prompt": "ROLEPLAY_PROMPT",
+                    "expression_mode": False,
+                    "chat_mode": "react",
+                    "router_enabled": True,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(runtime.start_state["route_kind"], "skill_task")
+        self.assertEqual(runtime.start_state["execution_phase"], backend_app.PHASE_SKILL_EXECUTION)
+        self.assertEqual(runtime.start_state["selected_skill_ids"], ["daily-hotspots"])
 
     def test_chat_stream_allows_reasoning_steps_above_previous_cap(self) -> None:
         runtime = _FakeRuntime()
@@ -580,6 +853,10 @@ class SkillsApiTests(unittest.TestCase):
             return_value=fake_bridge,
         ), mock.patch.object(
             backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=fake_bridge,
+        ), mock.patch.object(
+            backend_app,
             "stream_final_reply",
             fake_stream_final_reply,
         ), mock.patch.object(backend_app, "classify_route", new=mock.AsyncMock(return_value=route)):
@@ -614,12 +891,8 @@ class SkillsApiTests(unittest.TestCase):
 
         with mock.patch.object(
             backend_app,
-            "_load_settings_config",
+            "_load_full_config",
             return_value={"chat": {"skills": {"enabled": True, "default_active_ids": []}}},
-        ), mock.patch.object(
-            backend_app,
-            "_load_runtime_tooling_config",
-            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
         ), mock.patch.object(
             backend_app,
             "classify_route",
@@ -639,7 +912,7 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Skill", resp.json()["detail"])
 
-    def test_build_runtime_tool_bridge_react_skill_selection_exposes_system_search_and_default_skill_tools(self) -> None:
+    def test_build_runtime_tool_bridge_react_skill_selection_exposes_agent_loop_and_default_skill_tools(self) -> None:
         with _workspace_tempdir() as root:
             _write_script_skill(root / "skills" / "builtin" / "repo-guide", name="Repo Guide", description="Repo helper")
             _write_script_skill(root / "third_party_skills" / "daily-hotspots", name="Daily Hotspots", description="Collect daily hotspots")
@@ -665,23 +938,75 @@ class SkillsApiTests(unittest.TestCase):
                         "chat_mode": "react",
                         "execution_phase": backend_app.PHASE_SKILL_SELECTION,
                         "active_skill_ids": ["repo-guide"],
-                        "discovered_skill_ids": [],
-                        "discovered_tool_names": [],
+                        "selection_origin": "none",
                         "selected_skill_ids": [],
+                        "selected_tool_names": [],
+                        "planner_excluded_skill_ids": [],
+                        "planner_excluded_tool_names": [],
+                        "planner_retry_used": False,
                     }
                 )
                 tool_names = [tool.name for tool in bridge.list_registered_tools()]
-                search_result = bridge.call_tool("system.skill_search", {"query": "hotspots"})
+                agent_loop_result = bridge.call_tool("system.agent_loop", {"task": "general fallback"})
 
         self.assertIn("skill.repo-guide.run_task", tool_names)
-        self.assertIn("system.skill_search", tool_names)
         self.assertIn("system.agent_loop", tool_names)
+        self.assertNotIn("system.capability_search", tool_names)
         self.assertNotIn("read_file", tool_names)
-        self.assertTrue(search_result.ok)
-        self.assertIn("daily-hotspots", search_result.content)
-        self.assertNotIn("repo-guide", search_result.content)
+        self.assertTrue(agent_loop_result.ok)
+        self.assertIn("agent_loop", agent_loop_result.content)
 
-    def test_build_runtime_tool_bridge_agent_loop_only_exposes_discovered_tools_after_search(self) -> None:
+    def test_build_runtime_tool_bridge_planner_selected_skill_exposes_skill_tools_and_allowlisted_mcp(self) -> None:
+        with _workspace_tempdir() as root:
+            _write_script_skill(
+                root / "third_party_skills" / "daily-hotspots",
+                name="Daily Hotspots",
+                description="Collect daily hotspots",
+                tool_allowlist=["read_file"],
+            )
+            manager = SkillManager(root)
+            fake_bridge = _FakeBridge(
+                [
+                    Tool(
+                        name="read_file",
+                        description="Read a file",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _args: {"ok": True},
+                    ),
+                    Tool(
+                        name="browser.navigate",
+                        description="Navigate a page",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _args: {"ok": True},
+                    ),
+                ]
+            )
+            with mock.patch.object(backend_app, "_get_skill_manager", side_effect=lambda force_reload=False: manager), mock.patch.object(
+                backend_app,
+                "_get_mcp_bridge",
+                return_value=fake_bridge,
+            ):
+                bridge = backend_app._build_runtime_tool_bridge(
+                    {
+                        "chat_mode": "react",
+                        "execution_phase": backend_app.PHASE_SKILL_EXECUTION,
+                        "active_skill_ids": [],
+                        "selection_origin": "planner",
+                        "selected_skill_ids": ["daily-hotspots"],
+                        "selected_tool_names": [],
+                        "planner_excluded_skill_ids": [],
+                        "planner_excluded_tool_names": [],
+                        "planner_retry_used": False,
+                    }
+                )
+                tool_names = [tool.name for tool in bridge.list_registered_tools()]
+
+        self.assertIn("skill.daily-hotspots.run_task", tool_names)
+        self.assertIn("read_file", tool_names)
+        self.assertNotIn("system.capability_search", tool_names)
+        self.assertNotIn("browser.navigate", tool_names)
+
+    def test_build_runtime_tool_bridge_agent_loop_initial_and_planner_selected_mcp_handoff(self) -> None:
         fake_bridge = _FakeBridge(
             [
                 Tool(
@@ -704,31 +1029,314 @@ class SkillsApiTests(unittest.TestCase):
                     "chat_mode": "react",
                     "execution_phase": backend_app.PHASE_AGENT_LOOP,
                     "active_skill_ids": [],
-                    "discovered_skill_ids": [],
-                    "discovered_tool_names": [],
+                    "user_text": "open the page",
+                    "selection_origin": "none",
                     "selected_skill_ids": [],
+                    "selected_tool_names": [],
+                    "planner_excluded_skill_ids": [],
+                    "planner_excluded_tool_names": [],
+                    "planner_retry_used": False,
                 }
             )
             initial_names = [tool.name for tool in search_bridge.list_registered_tools()]
-            search_result = search_bridge.call_tool("system.tool_search", {"query": "read"})
             discovered_bridge = backend_app._build_runtime_tool_bridge(
                 {
                     "chat_mode": "react",
                     "execution_phase": backend_app.PHASE_AGENT_LOOP,
                     "active_skill_ids": [],
-                    "discovered_skill_ids": [],
-                    "discovered_tool_names": ["read_file"],
+                    "user_text": "open the page",
+                    "selection_origin": "planner",
                     "selected_skill_ids": [],
+                    "selected_tool_names": ["read_file"],
+                    "planner_excluded_skill_ids": [],
+                    "planner_excluded_tool_names": [],
+                    "planner_retry_used": False,
                 }
             )
             discovered_names = [tool.name for tool in discovered_bridge.list_registered_tools()]
 
-        self.assertEqual(initial_names, ["system.tool_search"])
-        self.assertTrue(search_result.ok)
-        self.assertIn("read_file", search_result.content)
-        self.assertIn("system.tool_search", discovered_names)
+        self.assertEqual(initial_names, ["read_file", "browser.navigate"])
+        self.assertNotIn("system.capability_search", discovered_names)
         self.assertIn("read_file", discovered_names)
         self.assertNotIn("browser.navigate", discovered_names)
+
+    def test_build_runtime_tool_bridge_explicit_inventory_request_still_exposes_runtime_tools(self) -> None:
+        fake_bridge = _FakeBridge(
+            [
+                Tool(
+                    name="playwright.browser_navigate",
+                    description="Navigate a page",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                )
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge):
+            bridge = backend_app._build_runtime_tool_bridge(
+                {
+                    "chat_mode": "react",
+                    "execution_phase": backend_app.PHASE_AGENT_LOOP,
+                    "active_skill_ids": [],
+                    "user_text": "搜有没有可用的 mcp",
+                    "selection_origin": "none",
+                    "selected_skill_ids": [],
+                    "selected_tool_names": [],
+                    "planner_excluded_skill_ids": [],
+                    "planner_excluded_tool_names": [],
+                    "planner_retry_used": False,
+                }
+            )
+            tool_names = [tool.name for tool in bridge.list_registered_tools()]
+
+        self.assertEqual(tool_names, ["playwright.browser_navigate"])
+
+    def test_build_runtime_tool_bridge_no_capability_search_tool_is_exposed(self) -> None:
+        fake_bridge = _FakeBridge(
+            [
+                Tool(
+                    name="playwright.browser_navigate",
+                    description="Navigate a page",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                )
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge):
+            bridge = backend_app._build_runtime_tool_bridge(
+                {
+                    "chat_mode": "react",
+                    "execution_phase": backend_app.PHASE_AGENT_LOOP,
+                    "active_skill_ids": [],
+                    "user_text": "搜有没有可用的 mcp",
+                    "selection_origin": "none",
+                    "selected_skill_ids": [],
+                    "selected_tool_names": [],
+                    "planner_excluded_skill_ids": [],
+                    "planner_excluded_tool_names": [],
+                    "planner_retry_used": False,
+                }
+            )
+            tool_names = [tool.name for tool in bridge.list_registered_tools()]
+
+        self.assertEqual(tool_names, ["playwright.browser_navigate"])
+
+    def test_plan_capabilities_for_state_only_exposes_default_skills_and_falls_back_to_mcp(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_plan_capabilities(**kwargs):
+            captured.update(kwargs)
+            return CapabilityPlan(
+                selection_kind="mcp",
+                skill_ids=[],
+                tool_names=["read_file"],
+                query="fallback to mcp",
+                thought_summary="Use MCP",
+                reason="No new skill remains.",
+            )
+
+        state = {
+            "chat_mode": "react",
+            "execution_phase": backend_app.PHASE_AGENT_LOOP,
+            "active_skill_ids": ["repo-guide"],
+            "selected_skill_ids": ["daily-hotspots"],
+            "planner_excluded_skill_ids": [],
+            "planner_excluded_tool_names": [],
+            "decision_messages": [{"role": "user", "content": "find another way"}],
+            "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
+            "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide"]}}},
+            "llm_provider": "ollama",
+            "api_base_url": "",
+            "api_key": "",
+            "model": "demo",
+        }
+
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            return_value=SimpleNamespace(canonicalize_skill_ids=lambda ids: list(dict.fromkeys(ids))),
+        ), mock.patch.object(
+            backend_app,
+            "_build_skill_capability_catalog",
+            return_value=[
+                {"skill_id": "repo-guide", "display_name": "Repo Guide"},
+                {"skill_id": "daily-hotspots", "display_name": "Daily Hotspots"},
+            ],
+        ), mock.patch.object(
+            backend_app,
+            "_build_mcp_capability_catalog",
+            return_value=[{"name": "read_file", "description": "Read a file", "source": "mcp"}],
+        ), mock.patch.object(
+            backend_app,
+            "_resolve_capability_planner_config",
+            return_value={"model": "demo", "llm_provider": "ollama", "api_base_url": "", "api_key": ""},
+        ), mock.patch.object(
+            backend_app,
+            "plan_capabilities",
+            side_effect=fake_plan_capabilities,
+        ):
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "fallback to mcp"}))
+
+        self.assertEqual(captured["exclude_skill_ids"], [])
+        self.assertEqual(captured["skill_catalog"], [{"skill_id": "repo-guide", "display_name": "Repo Guide"}])
+        self.assertEqual(captured["tool_catalog"], [{"name": "read_file", "description": "Read a file", "source": "mcp"}])
+        self.assertEqual(payload["selection_kind"], "mcp")
+        self.assertEqual(payload["tool_names"], ["read_file"])
+
+    def test_plan_capabilities_for_state_only_exposes_default_enabled_skills_to_planner(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def fake_plan_capabilities(**kwargs):
+            captured.update(kwargs)
+            return CapabilityPlan(
+                selection_kind="skill",
+                skill_ids=["calendar-skill"],
+                tool_names=[],
+                query="pick another default skill",
+                thought_summary="Use another default skill",
+                reason="Only checked skills are planner-visible.",
+            )
+
+        state = {
+            "chat_mode": "react",
+            "execution_phase": backend_app.PHASE_AGENT_LOOP,
+            "active_skill_ids": ["repo-guide"],
+            "selected_skill_ids": [],
+            "planner_excluded_skill_ids": [],
+            "planner_excluded_tool_names": [],
+            "decision_messages": [{"role": "user", "content": "pick another default skill"}],
+            "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
+            "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide", "calendar-skill"]}}},
+            "llm_provider": "ollama",
+            "api_base_url": "",
+            "api_key": "",
+            "model": "demo",
+        }
+
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            return_value=SimpleNamespace(canonicalize_skill_ids=lambda ids: list(dict.fromkeys(ids))),
+        ), mock.patch.object(
+            backend_app,
+            "_build_skill_capability_catalog",
+            return_value=[
+                {"skill_id": "repo-guide", "display_name": "Repo Guide"},
+                {"skill_id": "calendar-skill", "display_name": "Calendar Skill"},
+                {"skill_id": "hidden-skill", "display_name": "Hidden Skill"},
+            ],
+        ), mock.patch.object(
+            backend_app,
+            "_build_mcp_capability_catalog",
+            return_value=[{"name": "read_file", "description": "Read a file", "source": "mcp"}],
+        ), mock.patch.object(
+            backend_app,
+            "_resolve_capability_planner_config",
+            return_value={"model": "demo", "llm_provider": "ollama", "api_base_url": "", "api_key": ""},
+        ), mock.patch.object(
+            backend_app,
+            "plan_capabilities",
+            side_effect=fake_plan_capabilities,
+        ):
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "pick another default skill"}))
+
+        self.assertEqual(captured["exclude_skill_ids"], [])
+        self.assertEqual(
+            captured["skill_catalog"],
+            [
+                {"skill_id": "repo-guide", "display_name": "Repo Guide"},
+                {"skill_id": "calendar-skill", "display_name": "Calendar Skill"},
+            ],
+        )
+        self.assertEqual(payload["selection_kind"], "skill")
+        self.assertEqual(payload["skill_ids"], ["calendar-skill"])
+
+    def test_plan_capabilities_for_state_explicit_skill_inventory_lists_only_default_enabled_skills(self) -> None:
+        state = {
+            "chat_mode": "react",
+            "execution_phase": backend_app.PHASE_AGENT_LOOP,
+            "active_skill_ids": ["repo-guide"],
+            "selected_skill_ids": [],
+            "planner_excluded_skill_ids": [],
+            "planner_excluded_tool_names": [],
+            "decision_messages": [{"role": "user", "content": "搜一下现在有哪些 skill"}],
+            "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
+            "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide", "calendar-skill"]}}},
+            "llm_provider": "ollama",
+            "api_base_url": "",
+            "api_key": "",
+            "model": "demo",
+        }
+
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            return_value=SimpleNamespace(canonicalize_skill_ids=lambda ids: list(dict.fromkeys(ids))),
+        ), mock.patch.object(
+            backend_app,
+            "_build_skill_capability_catalog",
+            return_value=[
+                {"skill_id": "repo-guide", "display_name": "Repo Guide"},
+                {"skill_id": "calendar-skill", "display_name": "Calendar Skill"},
+                {"skill_id": "hidden-skill", "display_name": "Hidden Skill"},
+            ],
+        ), mock.patch.object(
+            backend_app,
+            "_build_mcp_capability_catalog",
+            return_value=[{"name": "read_file", "description": "Read a file", "source": "mcp"}],
+        ), mock.patch.object(
+            backend_app,
+            "plan_capabilities",
+            side_effect=AssertionError("inventory mode should not call planner"),
+        ):
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "搜一下现在有哪些 skill"}))
+
+        self.assertEqual(payload["mode"], "inventory")
+        self.assertEqual(payload["inventory_scope"], "skill")
+        self.assertEqual(payload["inventory_skill_ids"], ["repo-guide", "calendar-skill"])
+        self.assertEqual(payload["inventory_tool_names"], [])
+        self.assertNotIn("hidden-skill", payload["inventory_skill_ids"])
+
+    def test_plan_capabilities_for_state_explicit_mcp_inventory_returns_deterministic_empty_result(self) -> None:
+        state = {
+            "chat_mode": "react",
+            "execution_phase": backend_app.PHASE_AGENT_LOOP,
+            "active_skill_ids": [],
+            "selected_skill_ids": [],
+            "planner_excluded_skill_ids": [],
+            "planner_excluded_tool_names": [],
+            "decision_messages": [{"role": "user", "content": "搜有没有可用的 mcp"}],
+            "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
+            "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide"]}}},
+            "llm_provider": "ollama",
+            "api_base_url": "",
+            "api_key": "",
+            "model": "demo",
+        }
+
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            return_value=SimpleNamespace(canonicalize_skill_ids=lambda ids: list(dict.fromkeys(ids))),
+        ), mock.patch.object(
+            backend_app,
+            "_build_skill_capability_catalog",
+            return_value=[{"skill_id": "repo-guide", "display_name": "Repo Guide"}],
+        ), mock.patch.object(
+            backend_app,
+            "_build_mcp_capability_catalog",
+            return_value=[],
+        ), mock.patch.object(
+            backend_app,
+            "plan_capabilities",
+            side_effect=AssertionError("inventory mode should not call planner"),
+        ):
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "搜有没有可用的 mcp"}))
+
+        self.assertEqual(payload["mode"], "inventory")
+        self.assertEqual(payload["inventory_scope"], "mcp")
+        self.assertEqual(payload["inventory_skill_ids"], [])
+        self.assertEqual(payload["inventory_tool_names"], [])
+        self.assertIn("did not find any available non-skill MCP tools", payload["inventory_summary"])
 
 
 if __name__ == "__main__":

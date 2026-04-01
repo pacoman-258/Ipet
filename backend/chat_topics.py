@@ -2,8 +2,10 @@
 
 import json
 import re
+import shutil
 import threading
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -52,10 +54,19 @@ def _block_turn_span(block: dict[str, Any]) -> tuple[int, int]:
     return start, end
 
 
+@dataclass(frozen=True)
+class TopicRuntimeSnapshot:
+    topic_id: str
+    meta: dict[str, Any]
+    model_messages: tuple[dict[str, str], ...]
+    full_messages: tuple[dict[str, Any], ...]
+
+
 class TopicStore:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = Path(root_dir)
         self._lock = threading.RLock()
+        self._snapshot_cache: dict[str, tuple[str, TopicRuntimeSnapshot]] = {}
 
     def topic_dir(self, topic_id: str) -> Path:
         return self.root_dir / normalize_topic_id(topic_id)
@@ -106,6 +117,7 @@ class TopicStore:
                     "blocks": [],
                 },
             )
+            self._invalidate_snapshot_cache(normalized_id)
         return meta
 
     def ensure_topic(
@@ -122,6 +134,9 @@ class TopicStore:
         if meta is not None:
             return meta
         return self.create_topic(topic_id=normalized_id, persisted=True, title=title)
+
+    def has_topic(self, topic_id: str) -> bool:
+        return self.load_meta(topic_id) is not None
 
     def load_meta(self, topic_id: str) -> dict[str, Any] | None:
         path = self.meta_path(topic_id)
@@ -207,12 +222,59 @@ class TopicStore:
             meta = self.load_meta(topic_dir.name)
             if meta is None:
                 continue
+            if int(meta.get("assistant_turn_count") or 0) <= 0:
+                continue
             topics.append(meta)
         topics.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
         return topics
 
+    def delete_topic(self, topic_id: str) -> bool:
+        normalized_id = normalize_topic_id(topic_id)
+        topic_dir = self.topic_dir(normalized_id)
+        with self._lock:
+            if not topic_dir.exists():
+                return False
+            shutil.rmtree(topic_dir, ignore_errors=False)
+            self._invalidate_snapshot_cache(normalized_id)
+        return True
+
     def build_model_messages(self, topic_id: str) -> list[dict[str, str]]:
         summary_document = self.load_summary_document(topic_id)
+        return self._build_model_messages_from_summary_document(summary_document)
+
+    def get_runtime_snapshot(self, topic_id: str) -> TopicRuntimeSnapshot | None:
+        normalized_id = normalize_topic_id(topic_id)
+        meta = self.load_meta(normalized_id)
+        if meta is None:
+            return None
+        version = str(meta.get("updated_at") or "")
+        cached = self._snapshot_cache.get(normalized_id)
+        if cached is not None and cached[0] == version:
+            snapshot = cached[1]
+            return TopicRuntimeSnapshot(
+                topic_id=snapshot.topic_id,
+                meta=deepcopy(meta),
+                model_messages=tuple(deepcopy(list(snapshot.model_messages))),
+                full_messages=tuple(deepcopy(list(snapshot.full_messages))),
+            )
+        summary_document = self.load_summary_document(normalized_id)
+        model_messages = tuple(self._build_model_messages_from_summary_document(summary_document))
+        full_messages = tuple(self.load_full_messages(normalized_id))
+        snapshot = TopicRuntimeSnapshot(
+            topic_id=normalized_id,
+            meta=deepcopy(meta),
+            model_messages=model_messages,
+            full_messages=full_messages,
+        )
+        self._snapshot_cache[normalized_id] = (version, snapshot)
+        return TopicRuntimeSnapshot(
+            topic_id=normalized_id,
+            meta=deepcopy(meta),
+            model_messages=tuple(deepcopy(list(model_messages))),
+            full_messages=tuple(deepcopy(list(full_messages))),
+        )
+
+    def _build_model_messages_from_summary_document(self, summary_document: dict[str, Any]) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = []
         for block in summary_document.get("blocks") or []:
             if not isinstance(block, dict):
@@ -305,6 +367,7 @@ class TopicStore:
 
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
+            self._invalidate_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -389,6 +452,7 @@ class TopicStore:
             meta["pending_summary_end_assistant_turn"] = pending[1] if pending else None
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
+            self._invalidate_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -455,6 +519,7 @@ class TopicStore:
 
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
+            self._invalidate_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -529,3 +594,6 @@ class TopicStore:
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _invalidate_snapshot_cache(self, topic_id: str) -> None:
+        self._snapshot_cache.pop(normalize_topic_id(topic_id), None)

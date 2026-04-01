@@ -1,11 +1,15 @@
 import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -34,7 +38,7 @@ try:
     from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
     from PySide6.QtGui import QAction, QColor, QGuiApplication
     from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import (
         QApplication,
@@ -62,7 +66,7 @@ except ImportError:
     from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
     from PyQt6.QtGui import QAction, QColor, QGuiApplication
     from PyQt6.QtWebChannel import QWebChannel
-    from PyQt6.QtWebEngineCore import QWebEngineSettings
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import (
         QApplication,
@@ -91,12 +95,85 @@ ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
+DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
+DEFAULT_ASR_CONFIG = {
+    "enabled": True,
+    "provider": "funasr",
+    "api_base_url": DEFAULT_ASR_API_BASE_URL,
+    "push_to_talk_key": "Alt",
+    "interim_results": True,
+}
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
 RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
 RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
 RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
 AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
+BACKEND_VENV_DIRNAME = ".venv-py312"
+
+
+def _python_entry_for_venv(venv_dir: Path) -> Path:
+    return venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _python_command_exists(command: str) -> bool:
+    text = str(command or "").strip()
+    if not text:
+        return False
+    if os.path.sep in text or (os.path.altsep and os.path.altsep in text):
+        return Path(text).exists()
+    return shutil.which(text) is not None
+
+
+def _python_supports_backend(command: str) -> bool:
+    if not _python_command_exists(command):
+        return False
+    try:
+        result = subprocess.run(
+            [str(command), "-c", "import uvicorn; import backend.app"],
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def resolve_backend_python() -> str:
+    override = str(os.environ.get("PET_BACKEND_PYTHON") or "").strip()
+    candidates: list[str] = []
+    if override:
+        candidates.append(override)
+    candidates.append(sys.executable)
+    candidates.append(str(_python_entry_for_venv(ROOT_DIR / ".venv")))
+    candidates.append(str(_python_entry_for_venv(ROOT_DIR / BACKEND_VENV_DIRNAME)))
+
+    seen: set[str] = set()
+    fallback = sys.executable
+    for candidate in candidates:
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if _python_supports_backend(normalized):
+            return normalized
+        if _python_command_exists(normalized) and fallback == sys.executable:
+            fallback = normalized
+    return fallback
+
+
+def resolve_asr_python() -> str:
+    override = str(os.environ.get("PET_ASR_PYTHON") or "").strip()
+    if override:
+        return override
+    for dirname in (BACKEND_VENV_DIRNAME, ".venv"):
+        candidate = _python_entry_for_venv(ROOT_DIR / dirname)
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
 
 
 def _find_default_model() -> str:
@@ -172,6 +249,11 @@ DEFAULT_CONFIG = {
             "enabled": True,
             "default_active_ids": [],
         },
+        "topic_history": {
+            "enabled": True,
+            "summary_interval_assistant_turns": 10,
+        },
+        "asr": json.loads(json.dumps(DEFAULT_ASR_CONFIG)),
         "system_prompt": "",
     },
 }
@@ -282,12 +364,89 @@ def extract_pet_display_name(system_prompt: str) -> str:
     return "桌宠"
 
 
-def is_backend_healthy(backend_url: str) -> bool:
+def is_service_healthy(base_url: str, *, require_asr: bool = False) -> bool:
     try:
-        resp = requests.get(f"{backend_url.rstrip('/')}/api/health", timeout=1.5)
-        return resp.status_code == 200
+        resp = requests.get(f"{base_url.rstrip('/')}/api/health", timeout=1.5)
+        if resp.status_code != 200:
+            return False
+        if not require_asr:
+            return True
+        payload = resp.json()
+        return bool(payload.get("asr"))
     except Exception:
         return False
+
+
+def is_backend_live(backend_url: str) -> bool:
+    return is_service_healthy(backend_url)
+
+
+def is_backend_healthy(backend_url: str) -> bool:
+    return is_backend_live(backend_url) and backend_supports_required_routes(backend_url)
+
+
+def is_asr_healthy(asr_url: str) -> bool:
+    return is_service_healthy(asr_url, require_asr=True)
+
+
+def parse_service_host_port(base_url: str, *, default_port: int) -> tuple[str, int]:
+    parsed = urlparse(str(base_url or "").strip() or f"http://127.0.0.1:{default_port}")
+    host = parsed.hostname or "127.0.0.1"
+    port = int(parsed.port or default_port)
+    return host, port
+
+
+def backend_supports_required_routes(base_url: str) -> bool:
+    try:
+        resp = requests.get(f"{base_url.rstrip('/')}/openapi.json", timeout=1.5)
+        if resp.status_code != 200:
+            return False
+        payload = resp.json()
+    except Exception:
+        return False
+
+    paths = payload.get("paths", {}) if isinstance(payload, dict) else {}
+    if not isinstance(paths, dict):
+        return False
+
+    topic_detail = paths.get("/api/chat/topics/{topic_id}")
+    if isinstance(topic_detail, dict) and "delete" in topic_detail:
+        return True
+
+    topic_delete = paths.get("/api/chat/topics/{topic_id}/delete")
+    return isinstance(topic_delete, dict) and "post" in topic_delete
+
+
+def is_local_service_url(base_url: str) -> bool:
+    parsed = urlparse(str(base_url or "").strip() or "")
+    host = (parsed.hostname or "").strip().lower()
+    return host in {"127.0.0.1", "localhost"}
+
+
+def is_service_port_available(host: str, port: int) -> bool:
+    bind_host = "127.0.0.1" if host == "localhost" else host
+    family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((bind_host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def pick_backend_launch_url(preferred_url: str, *, max_offset: int = 12) -> str:
+    preferred = str(preferred_url or "").strip() or DEFAULT_BACKEND_URL
+    if not is_local_service_url(preferred):
+        return preferred
+    host, port = parse_service_host_port(preferred, default_port=8008)
+    for offset in range(max(1, int(max_offset)) + 1):
+        candidate_port = port + offset
+        if is_service_port_available(host, candidate_port):
+            return f"http://{host}:{candidate_port}"
+    return preferred
 
 
 def canonicalize_model_source_path(model_path: Path) -> Path:
@@ -528,6 +687,7 @@ def action_items_from_defs(groups: dict, exprs: list[dict]) -> list[dict]:
 class PetBridge(QObject):
     stateChanged = Signal(str)
     openSettingsRequested = Signal()
+    startAsrWarmupRequested = Signal()
     minimizeWindowRequested = Signal()
     closeWindowRequested = Signal()
 
@@ -542,6 +702,10 @@ class PetBridge(QObject):
     @Slot()
     def openSettingsPage(self) -> None:
         self.openSettingsRequested.emit()
+
+    @Slot()
+    def startAsrWarmup(self) -> None:
+        self.startAsrWarmupRequested.emit()
 
     @Slot()
     def minimizeWindow(self) -> None:
@@ -1119,6 +1283,10 @@ class DesktopPet(QMainWindow):
         self.runtime_model_path: Path | None = None
         self.backend_process: subprocess.Popen | None = None
         self.backend_started_by_app = False
+        self.asr_process: subprocess.Popen | None = None
+        self.asr_started_by_app = False
+        self._asr_warmup_monitor_lock = threading.Lock()
+        self._asr_warmup_monitor_thread: threading.Thread | None = None
         self._shutdown_in_progress = False
         self.control_panel = None
         self.resize_margin = 8
@@ -1131,6 +1299,7 @@ class DesktopPet(QMainWindow):
         self.bridge = PetBridge()
         self.bridge.stateChanged.connect(self.on_web_state_changed)
         self.bridge.openSettingsRequested.connect(self.open_settings_page)
+        self.bridge.startAsrWarmupRequested.connect(self.request_asr_warmup)
         self.bridge.minimizeWindowRequested.connect(self.showMinimized)
         self.bridge.closeWindowRequested.connect(self.close)
 
@@ -1151,6 +1320,9 @@ class DesktopPet(QMainWindow):
         if app is not None:
             app.installEventFilter(self)
 
+        if hasattr(self.browser.page(), "featurePermissionRequested"):
+            self.browser.page().featurePermissionRequested.connect(self.on_feature_permission_requested)
+
         self.channel = QWebChannel(self.browser.page())
         self.channel.registerObject("qtBridge", self.bridge)
         self.browser.page().setWebChannel(self.channel)
@@ -1169,6 +1341,7 @@ class DesktopPet(QMainWindow):
 
         self.refresh_motion_list(prefer_reset=False)
         self.ensure_backend_service()
+        self.ensure_asr_service()
 
         self.browser.loadFinished.connect(self.on_web_loaded)
         self.browser.setUrl(QUrl.fromLocalFile(str((ROOT_DIR / "index.html").resolve())))
@@ -1177,6 +1350,39 @@ class DesktopPet(QMainWindow):
         self._config_poll_timer.timeout.connect(self.on_config_poll)
         self._config_poll_timer.start(1000)
         self._write_runtime_host_heartbeat()
+
+    def _feature_permission_policy(self, granted: bool):
+        policy_enum = getattr(QWebEnginePage, "PermissionPolicy", None)
+        if policy_enum is None:
+            return None
+        name = "PermissionGrantedByUser" if granted else "PermissionDeniedByUser"
+        return getattr(policy_enum, name, None)
+
+    def _is_local_security_origin(self, security_origin) -> bool:
+        try:
+            if security_origin.isLocalFile():
+                return True
+        except Exception:
+            pass
+        try:
+            return str(security_origin.scheme() or "").lower() == "file"
+        except Exception:
+            return False
+
+    def on_feature_permission_requested(self, security_origin, feature) -> None:
+        page = self.browser.page()
+        grant_policy = self._feature_permission_policy(True)
+        deny_policy = self._feature_permission_policy(False)
+        if grant_policy is None or deny_policy is None:
+            return
+        audio_feature = getattr(getattr(QWebEnginePage, "Feature", object), "MediaAudioCapture", None)
+        video_feature = getattr(getattr(QWebEnginePage, "Feature", object), "MediaVideoCapture", None)
+        av_feature = getattr(getattr(QWebEnginePage, "Feature", object), "MediaAudioVideoCapture", None)
+        if feature == audio_feature and self._is_local_security_origin(security_origin):
+            page.setFeaturePermission(security_origin, feature, grant_policy)
+            return
+        if feature in {audio_feature, video_feature, av_feature}:
+            page.setFeaturePermission(security_origin, feature, deny_policy)
 
     def apply_window_geometry_from_config(self) -> None:
         geom = self.config["window"]
@@ -1438,11 +1644,17 @@ class DesktopPet(QMainWindow):
         self.window_locked = bool(self.config["window"]["locked"])
         self.apply_window_geometry_from_config()
         self.refresh_motion_list(prefer_reset=False)
+        asr_cfg = self.config.get("chat", {}).get("asr", {}) if isinstance(self.config.get("chat", {}), dict) else {}
+        if isinstance(asr_cfg, dict) and bool(asr_cfg.get("enabled", True)):
+            self.ensure_asr_service()
+        else:
+            self.stop_asr_service()
         self.apply_config_to_web()
 
     def open_settings_page(self) -> None:
         self.ensure_backend_service()
-        url = f"{DEFAULT_BACKEND_URL.rstrip('/')}/settings"
+        backend_url = str(self.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).strip() or DEFAULT_BACKEND_URL
+        url = f"{backend_url.rstrip('/')}/settings"
         try:
             webbrowser.open(url)
         except Exception as exc:
@@ -1479,15 +1691,25 @@ class DesktopPet(QMainWindow):
         if is_backend_healthy(backend_url):
             return
 
+        if is_local_service_url(backend_url):
+            launch_url = pick_backend_launch_url(backend_url)
+            if launch_url != backend_url:
+                self.config.setdefault("chat", {})["backend_url"] = launch_url
+                backend_url = launch_url
+            if is_backend_healthy(backend_url):
+                return
+
+        host, port = parse_service_host_port(backend_url, default_port=8008)
+        backend_python = resolve_backend_python()
         cmd = [
-            sys.executable,
+            backend_python,
             "-m",
             "uvicorn",
             "backend.app:app",
             "--host",
-            "127.0.0.1",
+            host,
             "--port",
-            "8008",
+            str(port),
             "--log-level",
             "warning",
         ]
@@ -1505,22 +1727,142 @@ class DesktopPet(QMainWindow):
             )
             self.backend_started_by_app = True
         except Exception as exc:
-            print(f"启动后端失败: {exc}")
+            print(f"failed to start backend with {backend_python}: {exc}")
             return
 
-        for _ in range(20):
-            if is_backend_healthy(backend_url):
+        for _ in range(60):
+            if is_backend_live(backend_url):
+                return
+            time.sleep(0.25)
+        print("backend did not become ready in time; chat may be unavailable.")
+
+    def ensure_asr_service(self) -> None:
+        chat_cfg = self.config.get("chat", {})
+        asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
+        if not isinstance(asr_cfg, dict) or not bool(asr_cfg.get("enabled", True)):
+            return
+        backend_url = str(chat_cfg.get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
+        if is_local_service_url(backend_url):
+            self.config.setdefault("chat", {}).setdefault("asr", {})["api_base_url"] = backend_url
+            return
+        asr_url = str(asr_cfg.get("api_base_url") or DEFAULT_ASR_API_BASE_URL).strip() or DEFAULT_ASR_API_BASE_URL
+        self.config.setdefault("chat", {}).setdefault("asr", {})["api_base_url"] = asr_url
+        if is_asr_healthy(asr_url):
+            return
+
+        host, port = parse_service_host_port(asr_url, default_port=8012)
+        asr_python = resolve_asr_python()
+        cmd = [
+            asr_python,
+            "-m",
+            "uvicorn",
+            "backend.asr_server:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ]
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+        try:
+            self.asr_process = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+            self.asr_started_by_app = True
+        except Exception as exc:
+            print(f"启动 ASR 服务失败: {exc}")
+            return
+
+        for _ in range(40):
+            if is_asr_healthy(asr_url):
                 return
             time.sleep(0.2)
-        print("后端未在预期时间内就绪，聊天功能可能不可用。")
+        print("ASR 服务未在预期时间内就绪，语音输入可能不可用。")
 
-    def stop_backend_service(self) -> None:
-        proc = self.backend_process
-        if not proc or not self.backend_started_by_app:
+    def request_asr_warmup(self) -> None:
+        chat_cfg = self.config.get("chat", {})
+        asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
+        if not isinstance(asr_cfg, dict) or not bool(asr_cfg.get("enabled", True)):
+            print("[ASR] ASR 已禁用，跳过初始化。")
+            return
+        self.ensure_backend_service()
+        self.ensure_asr_service()
+        backend_url = str(self.config.get("chat", {}).get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
+        warmup_base_url = backend_url.rstrip("/")
+        try:
+            resp = requests.post(f"{warmup_base_url}/api/asr/warmup", timeout=3)
+            payload = resp.json() if resp.headers.get("content-type", "").lower().startswith("application/json") else {}
+        except Exception as exc:
+            print(f"[ASR] 初始化请求失败: {exc}")
+            return
+
+        ready = bool(payload.get("ready"))
+        started = bool(payload.get("started"))
+        message = str(payload.get("message") or "").strip()
+        if ready:
+            print("[ASR] 初始化已完成，此时按住 Ctrl 可以正常使用。")
+            return
+        if started:
+            print("[ASR] 已开始初始化语音模型，松开 Ctrl 也不会中断。")
+        elif message:
+            print(f"[ASR] {message}")
+        self._start_asr_warmup_progress_monitor(warmup_base_url)
+
+    def _start_asr_warmup_progress_monitor(self, base_url: str) -> None:
+        with self._asr_warmup_monitor_lock:
+            if self._asr_warmup_monitor_thread is not None and self._asr_warmup_monitor_thread.is_alive():
+                return
+            self._asr_warmup_monitor_thread = threading.Thread(
+                target=self._run_asr_warmup_progress_monitor,
+                args=(str(base_url or "").rstrip("/"),),
+                daemon=True,
+            )
+            self._asr_warmup_monitor_thread.start()
+
+    def _run_asr_warmup_progress_monitor(self, base_url: str) -> None:
+        started_at = time.perf_counter()
+        bar_width = 24
+        print("[ASR] 正在初始化本地语音模型，首次加载通常需要约 1 分钟。")
+        while True:
+            elapsed = time.perf_counter() - started_at
+            ready = False
+            message = "等待 ASR 后端响应..."
+            try:
+                resp = requests.get(f"{base_url}/api/health", timeout=2)
+                payload = resp.json() if resp.headers.get("content-type", "").lower().startswith("application/json") else {}
+                ready = bool(payload.get("asr"))
+                message = str(payload.get("message") or ("ASR 已就绪" if ready else "ASR 正在初始化...")).strip() or "ASR 正在初始化..."
+            except Exception as exc:
+                message = f"等待 ASR 后端响应: {exc.__class__.__name__}"
+
+            progress = 1.0 if ready else min(0.95, max(0.05, elapsed / 60.0 * 0.9))
+            filled = max(1, int(bar_width * progress)) if not ready else bar_width
+            bar = "#" * filled + "-" * max(0, bar_width - filled)
+            line = f"\r[ASR] [{bar}] {int(progress * 100):>3}% {int(elapsed):>3}s {message[:48]}"
+            sys.stdout.write(line.ljust(96))
+            sys.stdout.flush()
+            if ready:
+                sys.stdout.write("\n[ASR] 初始化完成，此时按住 Ctrl 可以正常使用。\n")
+                sys.stdout.flush()
+                return
+            if elapsed >= 180:
+                sys.stdout.write("\n[ASR] 初始化超过 180 秒仍未完成，请稍后再按住 Ctrl 重试。\n")
+                sys.stdout.flush()
+                return
+            time.sleep(1.0)
+
+    def _stop_managed_process(self, proc: subprocess.Popen | None, *, started_by_app: bool) -> None:
+        if not proc or not started_by_app:
             return
         if proc.poll() is not None:
-            self.backend_process = None
-            self.backend_started_by_app = False
             return
         try:
             if os.name == "nt":
@@ -1541,9 +1883,34 @@ class DesktopPet(QMainWindow):
                 proc.wait(timeout=2)
             except Exception:
                 pass
+
+    def stop_backend_service(self) -> None:
+        proc = self.backend_process
+        if not proc or not self.backend_started_by_app:
+            return
+        if proc.poll() is not None:
+            self.backend_process = None
+            self.backend_started_by_app = False
+            return
+        try:
+            self._stop_managed_process(proc, started_by_app=True)
         finally:
             self.backend_process = None
             self.backend_started_by_app = False
+
+    def stop_asr_service(self) -> None:
+        proc = self.asr_process
+        if not proc or not self.asr_started_by_app:
+            return
+        if proc.poll() is not None:
+            self.asr_process = None
+            self.asr_started_by_app = False
+            return
+        try:
+            self._stop_managed_process(proc, started_by_app=True)
+        finally:
+            self.asr_process = None
+            self.asr_started_by_app = False
 
     def shutdown_runtime(self) -> None:
         if self._shutdown_in_progress:
@@ -1599,6 +1966,7 @@ class DesktopPet(QMainWindow):
         except Exception:
             pass
 
+        self.stop_asr_service()
         self.stop_backend_service()
 
     def eventFilter(self, watched, event):
@@ -1901,6 +2269,11 @@ class DesktopPet(QMainWindow):
                 "enabled": bool(chat_cfg.get("skills", {}).get("enabled", True)),
                 "default_active_ids": list(chat_cfg.get("skills", {}).get("default_active_ids", [])),
             },
+            "topic_history": json.loads(json.dumps(chat_cfg.get("topic_history", {
+                "enabled": True,
+                "summary_interval_assistant_turns": 10,
+            }))),
+            "asr": json.loads(json.dumps(chat_cfg.get("asr", DEFAULT_ASR_CONFIG))),
             "system_prompt": panel.system_prompt_input.toPlainText().strip(),
         }
 

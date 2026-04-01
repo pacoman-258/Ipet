@@ -3,17 +3,26 @@ name = "ai-assistant"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "edge-tts>=7.2.3",
+    "funasr>=1.2.6",
     "fastapi>=0.115.0",
+    "huggingface_hub>=0.34.0",
     "httpx>=0.28.1",
     "langgraph>=1.0.5",
+    "modelscope>=1.29.1",
+    "openai-whisper>=20250625",
     "pyqt6>=6.10.2",
     "pyqt6-webengine>=6.10.0",
     "pyside6>=6.10.2",
     "pyyaml>=6.0.3",
     "requests>=2.32.5",
     "sse-starlette>=2.3.6",
+    "tiktoken>=0.11.0",
+    "torch>=2.6.0",
+    "torchaudio>=2.6.0",
+    "transformers>=4.55.0",
     "uvicorn>=0.34.0",
+    "websockets>=15.0.1",
 ]

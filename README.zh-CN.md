@@ -24,7 +24,7 @@
 
 ## 环境要求
 
-- Python 3.13+
+- Python 3.12+
 - 当前代码主要面向 Windows 环境
 - 可选依赖：
   - Ollama

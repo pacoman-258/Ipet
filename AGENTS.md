@@ -20,8 +20,15 @@ This file is the shortest safe entrypoint for coding agents working in this repo
 
 ## Quick Start
 
-- Project shape: desktop pet host in `main.py`, FastAPI backend in `backend/`, runtime UI in `index.html`, settings UI in `settings.html`, `settings.css`, and `settings.js`.
-- Primary stack: Python, Qt WebEngine, FastAPI, LangGraph, MCP, Live2D-style assets.
+- Project shape: desktop pet host in `main.py`, FastAPI backend in `backend/`, topic persistence in `backend/chat_topics.py`, ASR runtime in `backend/asr.py` and `backend/asr_server.py`, runtime UI in `index.html`, settings UI in `settings.html`, `settings.css`, and `settings.js`.
+- Primary stack: Python, Qt WebEngine, FastAPI, LangGraph, MCP, imported skills, Live2D-style assets.
+- The currently verified dev runtime is the project `.venv` on Python 3.12.
+- Preferred local start command:
+
+```powershell
+uv run --no-sync python main.py
+```
+
 - Default test command:
 
 ```powershell
@@ -43,6 +50,10 @@ Read in this order unless the task is extremely narrow:
 Useful stable facts:
 
 - Root UI files stay at repo root because the desktop host and backend currently load them from there.
+- Topic history persists under `data/chat_topics/<topic_id>/`.
+- Imported skills live under `skills/` and `third_party_skills/`.
+- Third-party MCP runtimes remain separate from skills and still live under `third_party_mcp/`.
+- The canonical runtime workflow map lives in `docs/WORKFLOW.md`; any workflow change must update that file in the same task.
 - Tests live under `tests/`.
 - Debug helpers live under `scripts/debug/`.
 - Fixed role prompts live under `docs/subagents/`.
@@ -78,10 +89,12 @@ Use this map before opening large files:
 | --- | --- | --- |
 | Desktop host, tray, Qt bridge, runtime command handling | `main.py` | `docs/SUBAGENTS.md` |
 | Chat SSE, LangGraph, approval flow, provider routing | `backend/agent_graph.py` | `backend/agent_orchestrator.py`, chat routes in `backend/app.py` |
+| Topic history, persisted chat, layered summaries | `backend/chat_topics.py` | topic routes in `backend/app.py`, `index.html`, topic settings in `settings.js` |
+| ASR, push-to-talk, mic permissions, streaming recognition | `backend/asr.py` | `backend/asr_server.py`, `main.py`, `index.html`, ASR settings in `settings.js` |
 | MCP, stdio transport, file tools, third-party server lifecycle | `backend/mcp_bridge.py` | `backend/tool_runtime.py`, `backend/tooling/`, MCP routes in `backend/app.py` |
 | Runtime UI, chat window, skills drawer, display state | `index.html` | related backend route only if contract changed |
 | Settings page | `settings.js` | `settings.html`, `settings.css`, relevant settings route in `backend/app.py` |
-| Skills import/runtime | `backend/skills/manager.py` | `backend/skills/runtime.py`, `backend/skills/models.py` |
+| Skills import/runtime | `backend/skills/manager.py` | `backend/skills/runtime.py`, `backend/skills/models.py`, related `third_party_skills/*` manifests |
 
 ## Token-Saving Rules
 
@@ -101,6 +114,12 @@ Run the smallest useful set first.
 
 ```powershell
 python -m unittest tests.test_chat_segmented_flow tests.test_agent_graph_runtime tests.test_chat_dual_output tests.test_react_trace_visibility -v
+```
+
+### Topic History And ASR
+
+```powershell
+python -m unittest tests.test_chat_topics tests.test_chat_topics_api tests.test_asr_api tests.test_asr_service tests.test_asr_server_api tests.test_health_endpoint -v
 ```
 
 ### MCP And Tooling

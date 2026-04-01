@@ -30,6 +30,7 @@ class ChatStreamRequest(BaseModel):
 class ChatApprovalRequest(BaseModel):
     turn_id: str
     approved: bool = Field(default=True)
+    user_text: str = Field(default="")
 
 
 class TTSRequest(BaseModel):

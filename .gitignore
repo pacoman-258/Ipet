@@ -12,6 +12,8 @@ wheels/
 # Local runtime state
 backend/agent_graph_state.pkl
 backend/audio_cache/
+.cache/
+tmp_*.log
 
 # Local config and personal workspace files
 pet_config.json

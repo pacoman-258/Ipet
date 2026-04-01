@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import shutil
 import unittest
 from pathlib import Path
-import shutil
 from uuid import uuid4
 
 from backend.chat_topics import (
@@ -44,6 +44,22 @@ class TopicStoreTests(unittest.TestCase):
         self.assertEqual(blocks[0]["type"], BLOCK_RAW_MESSAGES)
         self.assertEqual([item["content"] for item in blocks[0]["messages"]], ["Hello", "World"])
         self.assertEqual(detail["meta"]["title"], "Hello")
+
+    def test_list_topics_ignores_blank_drafts(self) -> None:
+        self.store.create_topic(topic_id="blank-topic")
+        self.store.create_topic(topic_id="saved-topic")
+        self.store.append_exchange("saved-topic", user_text="Hi", assistant_text="There")
+
+        topics = self.store.list_topics()
+        self.assertEqual([item["topic_id"] for item in topics], ["saved-topic"])
+
+    def test_delete_topic_removes_directory(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        self.store.append_exchange("demo-topic", user_text="hello", assistant_text="world")
+
+        self.assertTrue(self.store.delete_topic("demo-topic"))
+        self.assertFalse((self.root / "demo-topic").exists())
+        self.assertFalse(self.store.delete_topic("demo-topic"))
 
     def test_apply_mini_summary_replaces_first_pending_turn_window(self) -> None:
         self.store.create_topic(topic_id="demo-topic")
@@ -105,6 +121,50 @@ class TopicStoreTests(unittest.TestCase):
         self.assertEqual(blocks[0]["content"], "Major summary block")
         self.assertEqual(detail["meta"]["mini_summary_count"], 3)
         self.assertEqual(detail["meta"]["major_summary_count"], 1)
+
+    def test_runtime_snapshot_reuses_cache_until_topic_updates(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        self.store.append_exchange("demo-topic", user_text="hello", assistant_text="world")
+
+        snapshot_a = self.store.get_runtime_snapshot("demo-topic")
+        snapshot_b = self.store.get_runtime_snapshot("demo-topic")
+
+        self.assertIsNotNone(snapshot_a)
+        self.assertIsNotNone(snapshot_b)
+        self.assertEqual(len(self.store._snapshot_cache), 1)
+        self.assertEqual(snapshot_a.full_messages, snapshot_b.full_messages)
+        self.assertEqual(snapshot_a.model_messages, snapshot_b.model_messages)
+
+        self.store.append_exchange("demo-topic", user_text="next", assistant_text="turn")
+        snapshot_c = self.store.get_runtime_snapshot("demo-topic")
+
+        self.assertIsNotNone(snapshot_c)
+        self.assertEqual(len(snapshot_c.full_messages), 4)
+        self.assertNotEqual(snapshot_a.full_messages, snapshot_c.full_messages)
+
+    def test_runtime_snapshot_invalidates_after_summary_and_delete(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        for index in range(1, 11):
+            self.store.append_exchange(
+                "demo-topic",
+                user_text=f"user-{index}",
+                assistant_text=f"assistant-{index}",
+            )
+
+        snapshot_before = self.store.get_runtime_snapshot("demo-topic")
+        self.assertIsNotNone(snapshot_before)
+        self.assertIn("demo-topic", self.store._snapshot_cache)
+
+        candidate = self.store.get_pending_mini_summary("demo-topic", 10)
+        self.assertIsNotNone(candidate)
+        self.store.apply_mini_summary("demo-topic", candidate, "Mini summary cache test")
+        snapshot_after = self.store.get_runtime_snapshot("demo-topic")
+
+        self.assertIsNotNone(snapshot_after)
+        self.assertNotEqual(snapshot_before.model_messages, snapshot_after.model_messages)
+
+        self.assertTrue(self.store.delete_topic("demo-topic"))
+        self.assertNotIn("demo-topic", self.store._snapshot_cache)
 
 
 if __name__ == "__main__":

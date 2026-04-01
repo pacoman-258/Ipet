@@ -6,6 +6,22 @@ from typing import Any, AsyncGenerator
 
 from .mcp_bridge import MCPBridge
 from .ollama_client import chat_once, stream_chat
+from .runtime_prompts import (
+    build_approved_tool_message as _rt_build_approved_tool_message,
+    build_inventory_result_message as _rt_build_inventory_result_message,
+    build_rejected_tool_followup_message as _rt_build_rejected_tool_followup_message,
+    build_rejected_tool_message as _rt_build_rejected_tool_message,
+    capability_plan_prompt as _rt_capability_plan_prompt,
+    decider_prompt as _rt_decider_prompt,
+    leader_plan_assessment_prompt as _rt_leader_plan_assessment_prompt,
+    planner_execution_plan_prompt as _rt_planner_execution_plan_prompt,
+    router_prompt_chat as _rt_router_prompt_chat,
+    router_prompt_react as _rt_router_prompt_react,
+    router_prompt_skill as _rt_router_prompt_skill,
+    searcher_skill_match_prompt as _rt_searcher_skill_match_prompt,
+    searcher_tool_type_prompt as _rt_searcher_tool_type_prompt,
+    tool_catalog_prompt as _rt_tool_catalog_prompt,
+)
 from .tool_runtime import ToolResult
 
 
@@ -28,6 +44,7 @@ class TurnDecision:
     thought_summary: str
     action_message: str
     tool_calls: list[ToolIntent]
+    expected_effect: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +52,7 @@ class TurnDecision:
             "thought_summary": self.thought_summary,
             "action_message": self.action_message,
             "tool_calls": [item.to_dict() for item in self.tool_calls],
+            "expected_effect": self.expected_effect,
         }
 
 
@@ -57,6 +75,108 @@ class RouteDecision:
             "tool_call": self.tool_call.to_dict() if self.tool_call is not None else None,
             "search_needed": self.search_needed,
             "search_query": self.search_query,
+        }
+
+
+@dataclass
+class CapabilityPlan:
+    mode: str = "plan"
+    selection_kind: str = "none"
+    skill_ids: list[str] = field(default_factory=list)
+    tool_names: list[str] = field(default_factory=list)
+    query: str = ""
+    thought_summary: str = ""
+    reason: str = ""
+    usage_notes: str = ""
+    inventory_scope: str = ""
+    inventory_skill_ids: list[str] = field(default_factory=list)
+    inventory_tool_names: list[str] = field(default_factory=list)
+    inventory_summary: str = ""
+    inventory_skills: list[dict[str, Any]] = field(default_factory=list)
+    inventory_tools: list[dict[str, Any]] = field(default_factory=list)
+    debug: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "selection_kind": self.selection_kind,
+            "skill_ids": list(self.skill_ids),
+            "tool_names": list(self.tool_names),
+            "query": self.query,
+            "thought_summary": self.thought_summary,
+            "reason": self.reason,
+            "usage_notes": self.usage_notes,
+            "inventory_scope": self.inventory_scope,
+            "inventory_skill_ids": list(self.inventory_skill_ids),
+            "inventory_tool_names": list(self.inventory_tool_names),
+            "inventory_summary": self.inventory_summary,
+            "inventory_skills": [dict(item) for item in self.inventory_skills if isinstance(item, dict)],
+            "inventory_tools": [dict(item) for item in self.inventory_tools if isinstance(item, dict)],
+            "debug": dict(self.debug or {}),
+        }
+
+
+@dataclass
+class SearcherResult:
+    mode: str = "task_types"
+    skill_id: str = ""
+    task_types: list[str] = field(default_factory=list)
+    matched_tool_names: list[str] = field(default_factory=list)
+    query: str = ""
+    thought_summary: str = ""
+    reason: str = ""
+    debug: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "skill_id": self.skill_id,
+            "task_types": list(self.task_types),
+            "matched_tool_names": list(self.matched_tool_names),
+            "query": self.query,
+            "thought_summary": self.thought_summary,
+            "reason": self.reason,
+            "debug": dict(self.debug or {}),
+        }
+
+
+@dataclass
+class PlanStep:
+    step_id: str
+    title: str
+    goal: str
+    success_criteria: str
+    call_mode: str = "single"
+    candidate_tool_sets: list[list[str]] = field(default_factory=list)
+    notes: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "title": self.title,
+            "goal": self.goal,
+            "success_criteria": self.success_criteria,
+            "call_mode": self.call_mode,
+            "candidate_tool_sets": [list(item) for item in self.candidate_tool_sets],
+            "notes": self.notes,
+        }
+
+
+@dataclass
+class ExecutionPlan:
+    plan_id: str
+    plan_summary: str
+    reason: str
+    steps: list[PlanStep] = field(default_factory=list)
+    debug: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "plan_summary": self.plan_summary,
+            "reason": self.reason,
+            "steps": [item.to_dict() for item in self.steps],
+            "debug": dict(self.debug or {}),
         }
 
 
@@ -183,29 +303,7 @@ def _parse_args(raw: Any) -> dict[str, Any]:
 
 
 def _tool_catalog_prompt(tools: list[dict[str, Any]]) -> str:
-    lines = [
-        "You are the tool-decision stage for a desktop pet assistant.",
-        "Decide whether the user's request requires tools right now.",
-        "Do not roleplay. Do not answer the user's question. Only return one JSON object.",
-        "Do not reveal hidden reasoning. thought_summary must be short and user-facing.",
-        "If tools are needed, action_message should describe the planned work in a friendly, concise way for user approval.",
-        "When tools are not needed, set needs_tool to false and use an empty array for tool_calls.",
-        "The user's full request must be completed before you stop asking for tools.",
-        "Do not treat one successful tool call as task completion if the request clearly contains multiple unfinished steps.",
-        "For browser automation or multi-step tasks, keep needs_tool=true until the requested sequence is actually completed or cannot be continued usefully.",
-        "If part of the request is still unfinished, return only the next concrete tool step instead of jumping to a final answer.",
-        "If a previous tool call failed or produced no useful progress, do not repeat it in the same form. Change the parameters materially or switch tools.",
-        "Output JSON only with these keys:",
-        '{"needs_tool":true,"thought_summary":"brief summary","action_message":"what you plan to do","tool_calls":[{"name":"read_file","arguments":{"path":"story.txt"}}]}',
-        "Available tools:",
-    ]
-    for tool in tools:
-        fn = tool.get("function", {}) if isinstance(tool, dict) else {}
-        name = str(fn.get("name") or "").strip()
-        description = str(fn.get("description") or "").strip()
-        if name:
-            lines.append(f"- {name}: {description}")
-    return "\n".join(lines)
+    return _rt_tool_catalog_prompt(tools)
 
 
 def _tool_names(tools: list[dict[str, Any]]) -> set[str]:
@@ -264,15 +362,51 @@ def _normalize_skill_ids(raw_items: Any, allowed_ids: set[str]) -> list[str]:
     return items
 
 
+def _coerce_string_list(raw_items: Any) -> list[str]:
+    values = raw_items if isinstance(raw_items, list) else []
+    seen: set[str] = set()
+    items: list[str] = []
+    for item in values:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        items.append(value)
+    return items
+
+
+def _resolve_allowed_tool_name(raw_name: Any, allowed_names: set[str]) -> str:
+    value = str(raw_name or "").strip()
+    if not value:
+        return ""
+    if not allowed_names:
+        return value
+    if value in allowed_names:
+        return value
+
+    lowered = value.lower()
+    exact_lower_matches = [name for name in allowed_names if str(name or "").strip().lower() == lowered]
+    if len(exact_lower_matches) == 1:
+        return str(exact_lower_matches[0] or "").strip()
+
+    leaf = lowered.split(".")[-1]
+    leaf_matches = [name for name in allowed_names if str(name or "").strip().lower().split(".")[-1] == leaf]
+    if len(leaf_matches) == 1:
+        return str(leaf_matches[0] or "").strip()
+
+    suffix_matches = [name for name in allowed_names if str(name or "").strip().lower().endswith(f".{lowered}")]
+    if len(suffix_matches) == 1:
+        return str(suffix_matches[0] or "").strip()
+    return ""
+
+
 def _normalize_tool_candidates(raw_items: Any, allowed_names: set[str]) -> list[str]:
     values = raw_items if isinstance(raw_items, list) else []
     seen: set[str] = set()
     items: list[str] = []
     for item in values:
-        tool_name = str(item or "").strip()
+        tool_name = _resolve_allowed_tool_name(item, allowed_names)
         if not tool_name or tool_name in seen:
-            continue
-        if allowed_names and tool_name not in allowed_names:
             continue
         seen.add(tool_name)
         items.append(tool_name)
@@ -306,63 +440,104 @@ def _skill_summary_lines(skill_summaries: list[dict[str, str]]) -> list[str]:
 
 
 def _router_prompt_react(tools: list[dict[str, Any]], skill_summaries: list[dict[str, str]]) -> str:
-    lines = [
-        "You are the route-classifier stage for a desktop assistant.",
-        "Classify the user's request before the execution model acts.",
-        "Return JSON only.",
-        'Allowed route_kind values: "skill_task", "complex_task", "simple_tool_task", "direct_answer".',
-        'Return fields: {"route_kind":"","thought_summary":"","skill_ids":[],"tool_candidates":[],"tool_call":{"name":"","arguments":{}}}.',
-        "Use skill_task when one or more visible skills are the clearest fit.",
-        "Use complex_task when the request should fall back to the general agent loop.",
-        "Use direct_answer only for pure conversational replies or simple explanations that do not require doing any work.",
-        "If the user is asking you to perform a workflow, gather current information, search, save a file, follow a skill, or complete multiple steps, do not return direct_answer.",
-        "When visible default skills are not enough, prefer complex_task so the execution model can use skill_search or agent_loop.",
-        "Do not select simple_tool_task in react mode unless a single explicit system tool call is truly required.",
-    ]
-    tool_names = sorted(_tool_names(tools))
-    if tool_names:
-        lines.append("Available system capabilities:")
-        lines.extend([f"- {name}" for name in tool_names])
-    skill_lines = _skill_summary_lines(skill_summaries)
-    if skill_lines:
-        lines.append("Visible default skills:")
-        lines.extend(skill_lines)
-    else:
-        lines.append("Visible default skills: none")
-    lines.append("Use skill_task for default skills. Use complex_task when hidden skills or later tool discovery will likely be needed.")
-    return "\n".join(lines)
+    return _rt_router_prompt_react(tools, skill_summaries)
+
+
+def _decider_prompt() -> str:
+    return _rt_decider_prompt()
+
+
+def _decider_from_assistant_message(assistant_msg: dict[str, Any]) -> TurnDecision:
+    payload = _extract_json_payload(str(assistant_msg.get("content") or "")) or {}
+    needs_tool = bool(payload.get("needs_tool"))
+    thought_summary = _compact_text(str(payload.get("thought_summary") or ""), MAX_STEP_TEXT_CHARS)
+    if not thought_summary:
+        thought_summary = _default_thought_summary(needs_tool)
+    action_message = _compact_text(str(payload.get("action_message") or ""), MAX_PREVIEW_CHARS)
+    return TurnDecision(
+        needs_tool=needs_tool,
+        thought_summary=thought_summary,
+        action_message=action_message,
+        tool_calls=[],
+        expected_effect="",
+    )
+
+
+def _capability_prompt_excerpt(value: Any, limit: int = 220) -> str:
+    return _compact_text(str(value or "").replace("\r", "\n"), limit)
+
+
+def _capability_plan_prompt(
+    skill_catalog: list[dict[str, Any]],
+    tool_catalog: list[dict[str, Any]],
+    *,
+    excluded_skill_ids: list[str],
+    excluded_tool_names: list[str],
+) -> str:
+    return _rt_capability_plan_prompt(
+        skill_catalog,
+        tool_catalog,
+        excluded_skill_ids=excluded_skill_ids,
+        excluded_tool_names=excluded_tool_names,
+    )
+
+
+SEARCHER_TASK_TYPES = (
+    "browser_automation",
+    "web_search",
+    "file_io",
+    "general_mcp",
+)
+
+
+def _searcher_skill_match_prompt(skill_catalog: list[dict[str, Any]]) -> str:
+    return _rt_searcher_skill_match_prompt(skill_catalog)
+
+
+def _searcher_tool_type_prompt(task_types: list[str], tool_catalog: list[dict[str, Any]]) -> str:
+    return _rt_searcher_tool_type_prompt(task_types, tool_catalog)
+
+
+def _planner_execution_plan_prompt(
+    *,
+    user_text: str,
+    searcher_result: dict[str, Any],
+    resolved_skill_prompt: str = "",
+    tool_catalog: list[dict[str, Any]] | None = None,
+) -> str:
+    return _rt_planner_execution_plan_prompt(
+        user_text=user_text,
+        searcher_result=searcher_result,
+        resolved_skill_prompt=resolved_skill_prompt,
+        tool_catalog=tool_catalog or [],
+    )
+
+
+def _leader_plan_assessment_prompt(
+    *,
+    user_text: str,
+    plan: dict[str, Any],
+    plan_status: str,
+    completed_steps: list[str],
+    blocked_steps: list[str],
+    loop_round: int,
+) -> str:
+    return _rt_leader_plan_assessment_prompt(
+        user_text=user_text,
+        plan=plan,
+        plan_status=plan_status,
+        completed_steps=completed_steps,
+        blocked_steps=blocked_steps,
+        loop_round=loop_round,
+    )
 
 
 def _router_prompt_chat(tools: list[dict[str, Any]]) -> str:
-    lines = [
-        "You are the route-classifier stage for chat mode.",
-        "Return JSON only.",
-        'Return fields: {"search_needed":true,"search_query":"keywords","thought_summary":"brief user-facing summary"}.',
-        "Only decide whether web search is needed and what to search for.",
-        "Do not mention any other MCP, local tool, or skill.",
-        "If search is not needed, set search_needed to false and search_query to an empty string.",
-    ]
-    tool_names = sorted(_tool_names(tools))
-    if tool_names:
-        lines.append("Available search tools:")
-        lines.extend([f"- {name}" for name in tool_names])
-    return "\n".join(lines)
+    return _rt_router_prompt_chat(tools)
 
 
 def _router_prompt_skill(skill_summaries: list[dict[str, str]]) -> str:
-    lines = [
-        "You are the route-classifier stage for skill mode.",
-        "Return JSON only.",
-        'Return fields: {"skill_ids":[],"thought_summary":"brief user-facing summary"}.',
-        "Select the most relevant skill IDs for the user's request.",
-        "Do not mention MCP or other tools.",
-        "If no listed skill fits, return an empty array.",
-    ]
-    skill_lines = _skill_summary_lines(skill_summaries)
-    if skill_lines:
-        lines.append("Available skills:")
-        lines.extend(skill_lines)
-    return "\n".join(lines)
+    return _rt_router_prompt_skill(skill_summaries)
 
 
 def _route_from_assistant_message(
@@ -418,6 +593,318 @@ def _route_from_assistant_message(
     )
 
 
+def _capability_plan_from_assistant_message(
+    assistant_msg: dict[str, Any],
+    skill_catalog: list[dict[str, Any]],
+    tool_catalog: list[dict[str, Any]],
+) -> CapabilityPlan:
+    raw_content = str(assistant_msg.get("content") or "")
+    visible_skill_ids = [
+        str(item.get("skill_id") or "").strip()
+        for item in (skill_catalog or [])
+        if isinstance(item, dict) and str(item.get("skill_id") or "").strip()
+    ]
+    visible_tool_names = [
+        str(item.get("name") or "").strip()
+        for item in (tool_catalog or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    allowed_skill_ids = set(visible_skill_ids)
+    allowed_tool_names = set(visible_tool_names)
+    debug: dict[str, Any] = {
+        "raw_content_excerpt": _compact_text(raw_content, MAX_PREVIEW_CHARS),
+        "visible_skill_count": len(visible_skill_ids),
+        "visible_tool_count": len(visible_tool_names),
+        "visible_skill_ids": list(visible_skill_ids),
+        "visible_tool_name_sample": list(visible_tool_names[:10]),
+    }
+    payload = _extract_json_payload(raw_content)
+    if not isinstance(payload, dict):
+        debug["parse_status"] = "json_invalid"
+        return CapabilityPlan(
+            selection_kind="none",
+            thought_summary="I checked the visible capability lists, but the planner response was not valid JSON.",
+            reason="The planner did not return a valid JSON capability selection.",
+            usage_notes="",
+            debug=debug,
+        )
+
+    raw_selection_kind = str(payload.get("selection_kind") or "none").strip().lower()
+    debug["raw_selection_kind"] = raw_selection_kind
+    raw_skill_ids = _coerce_string_list(payload.get("skill_ids"))
+    raw_tool_names = _coerce_string_list(payload.get("tool_names"))
+    debug["requested_skill_ids"] = list(raw_skill_ids)
+    debug["requested_tool_names"] = list(raw_tool_names)
+    selection_kind = raw_selection_kind
+    if selection_kind not in {"skill", "mcp", "none"}:
+        selection_kind = "none"
+    skill_ids = _normalize_skill_ids(raw_skill_ids, allowed_skill_ids)
+    tool_names = _normalize_tool_candidates(raw_tool_names, allowed_tool_names)
+    debug["normalized_skill_ids"] = list(skill_ids)
+    debug["normalized_tool_names"] = list(tool_names)
+    debug["normalized_selection"] = {
+        "selection_kind": selection_kind,
+        "skill_ids": list(skill_ids),
+        "tool_names": list(tool_names),
+    }
+    query = _compact_text(str(payload.get("query") or "").strip(), MAX_PREVIEW_CHARS)
+    thought_summary = _compact_text(str(payload.get("thought_summary") or "").strip(), MAX_STEP_TEXT_CHARS)
+    reason = _compact_text(str(payload.get("reason") or "").strip(), MAX_PREVIEW_CHARS)
+    usage_notes = _compact_text(str(payload.get("usage_notes") or "").strip(), MAX_PREVIEW_CHARS)
+    if selection_kind == "skill":
+        if raw_tool_names:
+            debug["parse_status"] = "mixed_selection"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible skill bundles, but the planner mixed skill and MCP selections.",
+                reason=reason or "The planner response mixed skill_ids and tool_names in the same response.",
+                usage_notes="",
+                debug=debug,
+            )
+        if raw_skill_ids and not skill_ids:
+            debug["parse_status"] = "invalid_skill_ids"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible skill bundles, but the planner only returned unavailable skill IDs.",
+                reason=reason or "The planner response did not provide skill IDs from the visible default-enabled skill list.",
+                usage_notes="",
+                debug=debug,
+            )
+        if not skill_ids:
+            debug["parse_status"] = "empty_selection"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible skill bundles, but no usable skill IDs were returned.",
+                reason=reason or "The planner response did not provide a valid skill-only selection.",
+                usage_notes="",
+                debug=debug,
+            )
+        debug["parse_status"] = "json_ok"
+        return CapabilityPlan(
+            selection_kind="skill",
+            skill_ids=skill_ids,
+            tool_names=[],
+            query=query,
+            thought_summary=thought_summary or "I found a skill workflow to try next.",
+            reason=reason or "A matching skill workflow is the best next step.",
+            usage_notes=usage_notes or "Use the selected skill workflow first, then let the writer turn it into the next concrete tool call.",
+            debug=debug,
+        )
+    if selection_kind == "mcp":
+        if raw_skill_ids:
+            debug["parse_status"] = "mixed_selection"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible MCP bundles, but the planner mixed skill and MCP selections.",
+                reason=reason or "The planner response mixed skill_ids and tool_names in the same response.",
+                usage_notes="",
+                debug=debug,
+            )
+        if raw_tool_names and not tool_names:
+            debug["parse_status"] = "invalid_tool_names"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible MCP bundles, but the planner only returned unavailable tool names.",
+                reason=reason or "The planner response did not provide tool names from the visible MCP list.",
+                usage_notes="",
+                debug=debug,
+            )
+        if not tool_names:
+            debug["parse_status"] = "empty_selection"
+            return CapabilityPlan(
+                selection_kind="none",
+                query=query,
+                thought_summary=thought_summary or "I checked the visible MCP bundles, but no usable tool names were returned.",
+                reason=reason or "The planner response did not provide a valid MCP-only selection.",
+                usage_notes="",
+                debug=debug,
+            )
+        debug["parse_status"] = "json_ok"
+        return CapabilityPlan(
+            selection_kind="mcp",
+            skill_ids=[],
+            tool_names=tool_names,
+            query=query,
+            thought_summary=thought_summary or "I should use a concrete MCP tool next.",
+            reason=reason or "No skill fit, so a narrowed MCP tool bundle is the best fallback.",
+            usage_notes=usage_notes or "Use the selected MCP tools directly for the next concrete step.",
+            debug=debug,
+        )
+    debug["parse_status"] = "planner_selected_none" if raw_selection_kind == "none" else "normalized_to_none"
+    return CapabilityPlan(
+        selection_kind="none",
+        skill_ids=[],
+        tool_names=[],
+        query=query,
+        thought_summary=thought_summary or "I can continue without selecting another capability bundle.",
+        reason=reason or "No suitable skill or MCP tool remained after the current exclusions.",
+        usage_notes="",
+        debug=debug,
+    )
+
+
+def _normalize_task_types(raw_items: Any) -> list[str]:
+    normalized = []
+    for value in _coerce_string_list(raw_items):
+        if value in SEARCHER_TASK_TYPES and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _searcher_result_from_assistant_message(
+    assistant_msg: dict[str, Any],
+    *,
+    skill_catalog: list[dict[str, Any]],
+) -> SearcherResult:
+    raw_content = str(assistant_msg.get("content") or "")
+    payload = _extract_json_payload(raw_content) or {}
+    allowed_skill_ids = {
+        str(item.get("skill_id") or "").strip()
+        for item in (skill_catalog or [])
+        if isinstance(item, dict) and str(item.get("skill_id") or "").strip()
+    }
+    mode = str(payload.get("mode") or "task_types").strip().lower() or "task_types"
+    if mode not in {"skill", "task_types", "inventory"}:
+        mode = "task_types"
+    skill_id = str(payload.get("skill_id") or "").strip()
+    if skill_id and skill_id not in allowed_skill_ids:
+        skill_id = ""
+    task_types = _normalize_task_types(payload.get("task_types"))
+    if mode == "skill" and not skill_id:
+        mode = "task_types"
+    if mode == "task_types" and not task_types:
+        task_types = ["general_mcp"]
+    return SearcherResult(
+        mode=mode,
+        skill_id=skill_id,
+        task_types=task_types,
+        matched_tool_names=[],
+        query=_compact_text(str(payload.get("query") or ""), MAX_PREVIEW_CHARS),
+        thought_summary=_compact_text(str(payload.get("thought_summary") or ""), MAX_STEP_TEXT_CHARS)
+        or ("I found a matching default-enabled skill." if mode == "skill" else "I mapped the task to tool domains."),
+        reason=_compact_text(str(payload.get("reason") or ""), MAX_PREVIEW_CHARS),
+        debug={
+            "raw_content_excerpt": _compact_text(raw_content, MAX_PREVIEW_CHARS),
+            "visible_skill_count": len(allowed_skill_ids),
+        },
+    )
+
+
+def _matched_tool_result_from_assistant_message(
+    assistant_msg: dict[str, Any],
+    *,
+    allowed_tool_names: set[str],
+    fallback_task_types: list[str],
+    fallback_tool_names: list[str],
+) -> SearcherResult:
+    raw_content = str(assistant_msg.get("content") or "")
+    payload = _extract_json_payload(raw_content) or {}
+    task_types = _normalize_task_types(payload.get("task_types")) or list(fallback_task_types)
+    matched_tool_names = _normalize_tool_candidates(payload.get("matched_tool_names"), allowed_tool_names)
+    if not matched_tool_names:
+        matched_tool_names = [name for name in fallback_tool_names if name in allowed_tool_names]
+    return SearcherResult(
+        mode="task_types",
+        skill_id="",
+        task_types=task_types,
+        matched_tool_names=matched_tool_names,
+        query=_compact_text(str(payload.get("query") or ""), MAX_PREVIEW_CHARS),
+        thought_summary=_compact_text(str(payload.get("thought_summary") or ""), MAX_STEP_TEXT_CHARS)
+        or "I filtered the MCP tools for the next planning step.",
+        reason=_compact_text(str(payload.get("reason") or ""), MAX_PREVIEW_CHARS),
+        debug={
+            "raw_content_excerpt": _compact_text(raw_content, MAX_PREVIEW_CHARS),
+            "visible_tool_count": len(allowed_tool_names),
+        },
+    )
+
+
+def _normalize_candidate_tool_sets(raw_sets: Any, allowed_tool_names: set[str]) -> list[list[str]]:
+    normalized: list[list[str]] = []
+    if not isinstance(raw_sets, list):
+        return normalized
+    for raw_set in raw_sets:
+        if not isinstance(raw_set, list):
+            continue
+        names = _normalize_tool_candidates(raw_set, allowed_tool_names)
+        if names:
+            normalized.append(names)
+    return normalized
+
+
+def _execution_plan_from_assistant_message(
+    assistant_msg: dict[str, Any],
+    *,
+    allowed_tool_names: set[str],
+    fallback_tool_names: list[str],
+) -> ExecutionPlan:
+    raw_content = str(assistant_msg.get("content") or "")
+    payload = _extract_json_payload(raw_content) or {}
+    raw_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
+    steps: list[PlanStep] = []
+    for index, raw_step in enumerate(raw_steps):
+        if not isinstance(raw_step, dict):
+            continue
+        title = _compact_text(str(raw_step.get("title") or f"Step {index + 1}"), 120)
+        goal = _compact_text(str(raw_step.get("goal") or title), 220)
+        success_criteria = _compact_text(str(raw_step.get("success_criteria") or goal), 220)
+        call_mode = str(raw_step.get("call_mode") or "single").strip().lower() or "single"
+        if call_mode not in {"single", "batch"}:
+            call_mode = "single"
+        candidate_tool_sets = _normalize_candidate_tool_sets(raw_step.get("candidate_tool_sets"), allowed_tool_names)
+        if not candidate_tool_sets and fallback_tool_names:
+            fallback_group = [name for name in fallback_tool_names if name in allowed_tool_names]
+            if fallback_group:
+                candidate_tool_sets = [fallback_group]
+        if not candidate_tool_sets:
+            continue
+        if call_mode == "batch":
+            candidate_tool_sets = [item for item in candidate_tool_sets if len(item) >= 2] or candidate_tool_sets
+        else:
+            candidate_tool_sets = [[item[0]] for item in candidate_tool_sets if item]
+        if not candidate_tool_sets:
+            continue
+        steps.append(
+            PlanStep(
+                step_id=str(raw_step.get("step_id") or f"step-{index + 1}").strip() or f"step-{index + 1}",
+                title=title,
+                goal=goal,
+                success_criteria=success_criteria,
+                call_mode=call_mode,
+                candidate_tool_sets=candidate_tool_sets,
+                notes=_compact_text(str(raw_step.get("notes") or ""), 240),
+            )
+        )
+    if not steps:
+        fallback_group = [name for name in fallback_tool_names if name in allowed_tool_names]
+        if not fallback_group and allowed_tool_names:
+            fallback_group = [sorted(allowed_tool_names)[0]]
+        if fallback_group:
+            steps = [
+                PlanStep(
+                    step_id="step-1",
+                    title="First concrete step",
+                    goal="Take the next useful tool step for the user's request.",
+                    success_criteria="The next concrete subtask is completed with a useful result.",
+                    call_mode="single",
+                    candidate_tool_sets=[[fallback_group[0]]],
+                    notes="Fallback plan synthesized after invalid planner output.",
+                )
+            ]
+    return ExecutionPlan(
+        plan_id=str(payload.get("plan_id") or "plan-1").strip() or "plan-1",
+        plan_summary=_compact_text(str(payload.get("plan_summary") or "Follow a multi-step execution plan."), 220),
+        reason=_compact_text(str(payload.get("reason") or ""), MAX_PREVIEW_CHARS),
+        steps=steps,
+        debug={"raw_content_excerpt": _compact_text(raw_content, MAX_PREVIEW_CHARS)},
+    )
+
+
 def _decision_from_assistant_message(
     assistant_msg: dict[str, Any],
     allowed_names: set[str],
@@ -432,6 +919,7 @@ def _decision_from_assistant_message(
         action_message = _compact_text(content, MAX_PREVIEW_CHARS)
         if not action_message:
             action_message = _default_action_message(tool_calls)
+        expected_effect = _default_expected_effect(tool_calls)
     else:
         needs_tool = bool(payload.get("needs_tool"))
         tool_calls = _normalize_tool_intents(payload.get("tool_calls"), allowed_names)
@@ -443,11 +931,15 @@ def _decision_from_assistant_message(
         action_message = _compact_text(str(payload.get("action_message") or ""), MAX_PREVIEW_CHARS)
         if needs_tool and not action_message:
             action_message = _default_action_message(tool_calls)
+        expected_effect = _compact_text(str(payload.get("expected_effect") or ""), MAX_PREVIEW_CHARS)
+        if needs_tool and not expected_effect:
+            expected_effect = _default_expected_effect(tool_calls)
     return TurnDecision(
         needs_tool=needs_tool,
         thought_summary=thought_summary,
         action_message=action_message,
         tool_calls=tool_calls,
+        expected_effect=expected_effect if needs_tool else "",
     )
 
 
@@ -463,6 +955,16 @@ def _default_action_message(tool_calls: list[ToolIntent]) -> str:
         return "我打算先借助工具确认细节，再回来认真回答你。"
     joined = "、".join(dict.fromkeys(names))
     return f"我准备调用这些工具来帮你处理：{joined}。如果你同意，我就开始。"
+
+
+def _default_expected_effect(tool_calls: list[ToolIntent]) -> str:
+    names = [item.name for item in tool_calls if item.name]
+    if not names:
+        return ""
+    if len(names) == 1:
+        return f"Use {names[0]} to complete the next concrete step and bring back a useful result."
+    joined = ", ".join(dict.fromkeys(names))
+    return f"Use the planned tools ({joined}) to make concrete progress on the user's request."
 
 
 def _tool_summary_list(tool_calls: list[ToolIntent]) -> list[dict[str, Any]]:
@@ -488,7 +990,10 @@ async def decide_turn(
     provider_adapter: ProviderAdapter | None = None,
 ) -> TurnDecision:
     allowed_names = _tool_names(tools)
-    decision_messages = [{"role": "system", "content": _tool_catalog_prompt(tools)}] + list(messages)
+    if tools:
+        decision_messages = [{"role": "system", "content": _tool_catalog_prompt(tools)}] + list(messages)
+    else:
+        decision_messages = [{"role": "system", "content": _decider_prompt()}] + list(messages)
     adapter = provider_adapter or ProviderAdapter(
         provider=llm_provider,
         base_url=api_base_url,
@@ -499,7 +1004,187 @@ async def decide_turn(
         model=model,
         tools=tools or None,
     )
+    if not tools:
+        return _decider_from_assistant_message(assistant_msg)
     return _decision_from_assistant_message(assistant_msg, allowed_names)
+
+
+async def decide_tool_need(
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    llm_provider: str = "ollama",
+    api_base_url: str = "",
+    api_key: str = "",
+    provider_adapter: ProviderAdapter | None = None,
+) -> TurnDecision:
+    decider_messages = [{"role": "system", "content": _decider_prompt()}] + list(messages)
+    adapter = provider_adapter or ProviderAdapter(
+        provider=llm_provider,
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+    assistant_msg = await adapter.chat_once(
+        messages=decider_messages,
+        model=model,
+        tools=None,
+    )
+    return _decider_from_assistant_message(assistant_msg)
+
+
+async def plan_capabilities(
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    skill_catalog: list[dict[str, Any]],
+    tool_catalog: list[dict[str, Any]],
+    exclude_skill_ids: list[str] | None = None,
+    exclude_tool_names: list[str] | None = None,
+    llm_provider: str = "ollama",
+    api_base_url: str = "",
+    api_key: str = "",
+    provider_adapter: ProviderAdapter | None = None,
+) -> CapabilityPlan:
+    excluded_skill_ids = [str(item).strip() for item in (exclude_skill_ids or []) if str(item).strip()]
+    excluded_tool_names = [str(item).strip() for item in (exclude_tool_names or []) if str(item).strip()]
+    prompt = _capability_plan_prompt(
+        list(skill_catalog or []),
+        list(tool_catalog or []),
+        excluded_skill_ids=excluded_skill_ids,
+        excluded_tool_names=excluded_tool_names,
+    )
+    planner_messages = [{"role": "system", "content": prompt}] + list(messages)
+    adapter = provider_adapter or ProviderAdapter(
+        provider=llm_provider,
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+    assistant_msg = await adapter.chat_once(
+        messages=planner_messages,
+        model=model,
+        tools=None,
+    )
+    return _capability_plan_from_assistant_message(
+        assistant_msg,
+        list(skill_catalog or []),
+        list(tool_catalog or []),
+    )
+
+
+def _tool_catalog_names_by_task_type(task_types: list[str], tool_catalog: list[dict[str, Any]]) -> list[str]:
+    normalized_types = set(_normalize_task_types(task_types))
+    if not normalized_types:
+        normalized_types = {"general_mcp"}
+    matched: list[str] = []
+    seen: set[str] = set()
+    for item in tool_catalog or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        task_type = str(item.get("task_type") or "general_mcp").strip() or "general_mcp"
+        if not name or name in seen:
+            continue
+        if task_type in normalized_types or "general_mcp" in normalized_types:
+            seen.add(name)
+            matched.append(name)
+    return matched
+
+
+async def search_capabilities(
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    skill_catalog: list[dict[str, Any]],
+    tool_catalog: list[dict[str, Any]],
+    llm_provider: str = "ollama",
+    api_base_url: str = "",
+    api_key: str = "",
+    provider_adapter: ProviderAdapter | None = None,
+) -> SearcherResult:
+    adapter = provider_adapter or ProviderAdapter(
+        provider=llm_provider,
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+    first_messages = [{"role": "system", "content": _searcher_skill_match_prompt(skill_catalog)}] + list(messages)
+    assistant_msg = await adapter.chat_once(
+        messages=first_messages,
+        model=model,
+        tools=None,
+    )
+    first_result = _searcher_result_from_assistant_message(
+        assistant_msg,
+        skill_catalog=list(skill_catalog or []),
+    )
+    if first_result.mode in {"skill", "inventory"}:
+        return first_result
+
+    deterministic_tools = _tool_catalog_names_by_task_type(first_result.task_types, list(tool_catalog or []))
+    second_messages = [{"role": "system", "content": _searcher_tool_type_prompt(first_result.task_types, tool_catalog)}] + list(messages)
+    second_assistant_msg = await adapter.chat_once(
+        messages=second_messages,
+        model=model,
+        tools=None,
+    )
+    second_result = _matched_tool_result_from_assistant_message(
+        second_assistant_msg,
+        allowed_tool_names={str(item.get("name") or "").strip() for item in (tool_catalog or []) if isinstance(item, dict)},
+        fallback_task_types=first_result.task_types,
+        fallback_tool_names=deterministic_tools,
+    )
+    if not second_result.thought_summary:
+        second_result.thought_summary = first_result.thought_summary
+    if not second_result.reason:
+        second_result.reason = first_result.reason
+    return second_result
+
+
+async def build_execution_plan(
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    searcher_result: dict[str, Any],
+    resolved_skill_prompt: str = "",
+    tool_catalog: list[dict[str, Any]] | None = None,
+    llm_provider: str = "ollama",
+    api_base_url: str = "",
+    api_key: str = "",
+    provider_adapter: ProviderAdapter | None = None,
+) -> ExecutionPlan:
+    adapter = provider_adapter or ProviderAdapter(
+        provider=llm_provider,
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+    matched_tool_names = _normalize_tool_candidates(
+        searcher_result.get("matched_tool_names"),
+        {
+            str(item.get("name") or "").strip()
+            for item in (tool_catalog or [])
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        },
+    )
+    prompt = _planner_execution_plan_prompt(
+        user_text=_compact_text(str((messages[-1] if messages else {}).get("content") or ""), 400),
+        searcher_result=searcher_result,
+        resolved_skill_prompt=resolved_skill_prompt,
+        tool_catalog=tool_catalog or [],
+    )
+    planner_messages = [{"role": "system", "content": prompt}] + list(messages)
+    assistant_msg = await adapter.chat_once(
+        messages=planner_messages,
+        model=model,
+        tools=None,
+    )
+    return _execution_plan_from_assistant_message(
+        assistant_msg,
+        allowed_tool_names={
+            str(item.get("name") or "").strip()
+            for item in (tool_catalog or [])
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        },
+        fallback_tool_names=matched_tool_names,
+    )
 
 
 async def classify_route(
@@ -639,38 +1324,18 @@ def build_approved_tool_message(
     executions: list[ToolExecution],
     remaining_steps: int | None = None,
     user_request: str = "",
+    expected_effect: str = "",
 ) -> str:
-    lines = [
-        "The user approved the previous tool step.",
-        "The tools below have already been executed in this turn.",
-        "The original user request is still active until it is fully completed.",
-        "Do not switch to a final answer just because one tool call succeeded.",
-        "If any requested subtask is still unfinished, plan the next tool step based on these results instead of repeating the same tool call.",
-    ]
-    if user_request:
-        lines.append(f"Original user request: {user_request}")
-    if remaining_steps is not None:
-        if remaining_steps > 0:
-            lines.append(f"You may request up to {remaining_steps} more approved tool step(s) in this turn if necessary.")
-        else:
-            lines.append("Do not request more tools in this turn. Give the best possible final answer with the current results.")
-    for item in executions:
-        lines.append(
-            json.dumps(
-                {
-                    "name": item.name,
-                    "arguments": item.arguments,
-                    "ok": item.ok,
-                    "summary": item.summary,
-                    "payload": item.payload,
-                },
-                ensure_ascii=False,
-            )
-        )
-    return "\n".join(lines)
+    return _rt_build_approved_tool_message(
+        executions,
+        remaining_steps=remaining_steps,
+        user_request=user_request,
+        expected_effect=expected_effect,
+    )
 
 
 def build_rejected_tool_message(decision: TurnDecision) -> str:
+    return _rt_build_rejected_tool_message(decision)
     planned = [item.name for item in decision.tool_calls if item.name]
     joined = "、".join(dict.fromkeys(planned))
     if joined:
@@ -683,6 +1348,14 @@ def build_rejected_tool_message(decision: TurnDecision) -> str:
         "The user did not approve tool usage. "
         "Answer without using tools and do not claim that you executed anything."
     )
+
+
+def build_inventory_result_message(inventory_result: dict[str, Any], user_request: str = "") -> str:
+    return _rt_build_inventory_result_message(inventory_result, user_request=user_request)
+
+
+def build_rejected_tool_followup_message(decision: TurnDecision, user_text: str) -> str:
+    return _rt_build_rejected_tool_followup_message(decision, user_text)
 
 
 def approval_tool_items(decision: TurnDecision) -> list[dict[str, Any]]:

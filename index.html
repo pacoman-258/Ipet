@@ -654,7 +654,6 @@
       gap: 8px;
       text-align: left;
       color: #4f5f79;
-      cursor: pointer;
       transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
       box-shadow: 0 10px 20px rgba(92, 112, 141, 0.08);
     }
@@ -667,6 +666,46 @@
     .chat-history-item.is-active {
       border-color: rgba(92, 141, 255, 0.44);
       background: linear-gradient(180deg, rgba(241, 247, 255, 0.98), rgba(233, 242, 255, 0.94));
+    }
+
+    .chat-history-main {
+      border: none;
+      background: transparent;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: left;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .chat-history-delete {
+      align-self: flex-end;
+      border: none;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #9c5163;
+      background: rgba(255, 238, 242, 0.96);
+      cursor: pointer;
+      transition: background 0.16s ease, transform 0.16s ease;
+    }
+
+    .chat-history-delete:hover {
+      background: rgba(255, 224, 231, 0.98);
+      transform: translateY(-1px);
+    }
+
+    .chat-history-delete.is-danger {
+      color: #fff6f7;
+      background: linear-gradient(135deg, rgba(215, 97, 120, 0.98), rgba(184, 63, 94, 0.98));
+      box-shadow: 0 10px 22px rgba(183, 78, 103, 0.24);
+    }
+
+    .chat-history-delete.is-danger:hover {
+      background: linear-gradient(135deg, rgba(205, 82, 109, 0.99), rgba(169, 49, 82, 0.99));
     }
 
     .chat-history-item h4 {
@@ -826,6 +865,30 @@
       box-shadow: 0 12px 22px rgba(70, 119, 233, 0.16);
     }
 
+    .chat-history-main {
+      border: none;
+      background: transparent;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .chat-history-delete {
+      align-self: flex-end;
+      border: none;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #965466;
+      background: rgba(255, 238, 242, 0.96);
+      cursor: pointer;
+    }
+
     .chat-history-item strong {
       font-size: 13px;
       color: #42526a;
@@ -976,6 +1039,91 @@
       line-height: 1.6;
     }
 
+    .thought-group .msg-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .thought-group-hint {
+      font-size: 12px;
+      color: #6f5260;
+    }
+
+    .thought-details {
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      background: rgba(255, 255, 255, 0.56);
+      padding: 8px 10px 10px;
+    }
+
+    .thought-details summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #6e5160;
+    }
+
+    .thought-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .thought-details summary::after {
+      content: "展开";
+      font-size: 11px;
+      color: #8a6677;
+    }
+
+    .thought-details[open] summary::after {
+      content: "收起";
+    }
+
+    .thought-items {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .thought-item {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.82);
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+
+    .thought-role-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      align-self: flex-start;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.88);
+      color: #6c4d5d;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+    }
+
+    .thought-item-text {
+      font-size: 12px;
+      line-height: 1.65;
+      color: #5f4650;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     .tool-list {
       display: flex;
       flex-wrap: wrap;
@@ -1039,6 +1187,24 @@
       grid-template-columns: 1fr auto auto;
       gap: 10px;
       background: linear-gradient(180deg, rgba(255, 247, 250, 0.96), rgba(255, 240, 246, 0.94));
+    }
+
+    #chat-asr-status {
+      grid-column: 1 / -1;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #7f5d6d;
+      min-height: 18px;
+    }
+
+    #chat-asr-status.is-active {
+      color: #6a587c;
+      font-weight: 700;
+    }
+
+    #chat-asr-status.is-error {
+      color: #af4d5a;
+      font-weight: 700;
     }
 
     #chat-input {
@@ -1359,6 +1525,7 @@
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-wrap">
+      <div id="chat-asr-status">&#25353;&#20303; Alt &#35828;&#35805;</div>
       <textarea id="chat-input" placeholder="输入消息，Enter发送，Shift+Enter换行"></textarea>
       <button id="chat-send">发送</button>
       <button id="chat-stop">停止语音</button>
@@ -1424,6 +1591,13 @@
             enabled: true,
             summary_interval_assistant_turns: 10,
           },
+          asr: {
+            enabled: true,
+            provider: "funasr",
+            api_base_url: "http://127.0.0.1:8012",
+            push_to_talk_key: "Alt",
+            interim_results: true,
+          },
           system_prompt: "",
           pet_display_name: "机魂",
         },
@@ -1457,6 +1631,7 @@
       const chatSkillsListEl = document.getElementById("chat-skills-list");
       const chatMessagesEl = document.getElementById("chat-messages");
       const chatInputEl = document.getElementById("chat-input");
+      const chatAsrStatusEl = document.getElementById("chat-asr-status");
       const chatSendEl = document.getElementById("chat-send");
       const chatStopEl = document.getElementById("chat-stop");
       const chatHeaderEl = document.getElementById("chat-header");
@@ -1493,6 +1668,12 @@
       let panelStartW = 0;
       let panelStartH = 0;
       let activeApprovalId = "";
+      let pendingApprovalInputTurnId = "";
+      let currentThoughtGroup = null;
+      let activeThoughtSessionId = "";
+      let thoughtSessionCounter = 0;
+      const approvalBubbleRefs = new Map();
+      const approvalThoughtSessionRefs = new Map();
       let chatSkillCatalog = [];
       let chatSkillDefaultIds = [];
       let chatSelectedSkillIds = [];
@@ -1500,9 +1681,25 @@
       let topicHistoryItems = [];
       let topicHistoryLoaded = false;
       let topicHistoryLoading = false;
+      let pendingDeleteTopicId = "";
+      let pendingDeleteTopicTimer = null;
       let currentTopicId = String(state.chat.session_id || "default").trim() || "default";
       let currentTopicMeta = null;
       let currentChatMode = "react";
+      let asrAudioContext = null;
+      let asrMediaStream = null;
+      let asrInputSource = null;
+      let asrProcessor = null;
+      let asrSilenceGain = null;
+      let asrSocket = null;
+      let asrStarting = false;
+      let asrRecording = false;
+      let asrAwaitingFinal = false;
+      let asrHotkeyPressed = false;
+      let asrRunToken = 0;
+      let asrDraftState = null;
+      let activeAsrBaseUrl = "";
+      let asrStatusTimer = 0;
 
       let dragging = false;
       let dragDx = 0;
@@ -1761,6 +1958,591 @@
         }
       }
 
+      function normalizeAsrConfig(raw) {
+        return {
+          enabled: raw?.enabled !== false,
+          provider: String(raw?.provider || "funasr").trim() || "funasr",
+          api_base_url: String(raw?.api_base_url || "http://127.0.0.1:8012").trim() || "http://127.0.0.1:8012",
+          push_to_talk_key: (() => {
+            const key = String(raw?.push_to_talk_key || "Alt").trim();
+            return ["Alt", "Ctrl", "Space"].includes(key) ? key : "Alt";
+          })(),
+          interim_results: raw?.interim_results !== false,
+        };
+      }
+
+      function asrConfig() {
+        return normalizeAsrConfig(state.chat?.asr || {});
+      }
+
+      function defaultAsrStatusText() {
+        const config = asrConfig();
+        if (!config.enabled) {
+          return "\u8bed\u97f3\u8f93\u5165\u5df2\u5173\u95ed";
+        }
+        return `\u6309\u4f4f ${config.push_to_talk_key} \u8bf4\u8bdd`;
+      }
+
+      function activeAsrStatusText() {
+        return `\u6309\u4f4f ${asrConfig().push_to_talk_key} \uff1a\u8bed\u97f3\u8f93\u5165\u4e2d\uff0c\u677e\u5f00\u7ed3\u675f`;
+      }
+
+      function setAsrStatus(message, tone = "idle") {
+        if (!chatAsrStatusEl) {
+          return;
+        }
+        if (asrStatusTimer) {
+          clearTimeout(asrStatusTimer);
+          asrStatusTimer = 0;
+        }
+        chatAsrStatusEl.textContent = String(message || defaultAsrStatusText());
+        chatAsrStatusEl.classList.toggle("is-active", tone === "active");
+        chatAsrStatusEl.classList.toggle("is-error", tone === "error");
+        if (tone === "error") {
+          asrStatusTimer = window.setTimeout(() => {
+            chatAsrStatusEl.classList.remove("is-error");
+            chatAsrStatusEl.classList.remove("is-active");
+            chatAsrStatusEl.textContent = defaultAsrStatusText();
+            asrStatusTimer = 0;
+          }, 2600);
+        }
+      }
+
+      function syncChatInputAvailability() {
+        const asrBusy = asrStarting || asrRecording || asrAwaitingFinal;
+        chatSendEl.disabled = !canSubmitChatInput() || asrBusy;
+        chatInputEl.disabled = chatState === "streaming";
+        chatInputEl.readOnly = asrBusy;
+      }
+
+      function canSubmitChatInput() {
+        return chatState === "idle" || chatState === "awaiting_followup_input";
+      }
+
+      function matchesPushToTalkKey(event) {
+        const config = asrConfig();
+        const key = config.push_to_talk_key;
+        if (key === "Ctrl") {
+          return event.key === "Control" && !event.altKey && !event.metaKey && !event.shiftKey;
+        }
+        if (key === "Space") {
+          return (event.code === "Space" || event.key === " " || event.key === "Spacebar") && !event.ctrlKey && !event.altKey && !event.metaKey;
+        }
+        return event.key === "Alt" && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+      }
+
+      function canStartPushToTalk(options = {}) {
+        const { allowWithoutFocus = false } = options;
+        return asrConfig().enabled
+          && chatPanelEl.classList.contains("open")
+          && chatState === "idle"
+          && (allowWithoutFocus || document.hasFocus());
+      }
+
+      function shouldHandlePushToTalk(event, options = {}) {
+        return !!event && canStartPushToTalk(options);
+      }
+
+      function candidateAsrBaseUrls() {
+        const seen = new Set();
+        const candidates = [
+          String(state.chat?.backend_url || "").trim(),
+          String(state.chat?.asr?.api_base_url || "").trim(),
+        ];
+        return candidates.filter((value) => {
+          if (!value || seen.has(value)) {
+            return false;
+          }
+          seen.add(value);
+          return true;
+        });
+      }
+
+      function buildAsrWebSocketUrl(baseUrl = "") {
+        const asrBaseUrl = String(baseUrl || activeAsrBaseUrl || candidateAsrBaseUrls()[0] || "").trim();
+        if (!asrBaseUrl) {
+          throw new Error("\u540e\u7aef\u5730\u5740\u672a\u914d\u7f6e");
+        }
+        const url = new URL(asrBaseUrl);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        const basePath = url.pathname.replace(/\/+$/, "");
+        url.pathname = `${basePath}/api/asr/stream`.replace(/\/+/g, "/");
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      }
+
+      function buildAsrHealthUrl(baseUrl = "") {
+        const asrBaseUrl = String(baseUrl || activeAsrBaseUrl || candidateAsrBaseUrls()[0] || "").trim();
+        if (!asrBaseUrl) {
+          throw new Error("\u540e\u7aef\u5730\u5740\u672a\u914d\u7f6e");
+        }
+        const url = new URL(asrBaseUrl);
+        const basePath = url.pathname.replace(/\/+$/, "");
+        url.pathname = `${basePath}/api/health`.replace(/\/+/g, "/");
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      }
+
+      function buildAsrWarmupUrl(baseUrl = "") {
+        const asrBaseUrl = String(baseUrl || candidateAsrBaseUrls()[0] || "").trim();
+        if (!asrBaseUrl) {
+          throw new Error("\u540e\u7aef\u5730\u5740\u672a\u914d\u7f6e");
+        }
+        const url = new URL(asrBaseUrl);
+        const basePath = url.pathname.replace(/\/+$/, "");
+        url.pathname = `${basePath}/api/asr/warmup`.replace(/\/+/g, "/");
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      }
+
+      async function probeAsrAvailability() {
+        let lastMessage = "ASR \u4e0d\u53ef\u7528";
+        for (const baseUrl of candidateAsrBaseUrls()) {
+          const controller = typeof AbortController === "function" ? new AbortController() : null;
+          const timer = controller
+            ? window.setTimeout(() => controller.abort(), 1500)
+            : 0;
+          try {
+            const response = await fetch(buildAsrHealthUrl(baseUrl), {
+              method: "GET",
+              cache: "no-store",
+              signal: controller?.signal,
+            });
+            const payload = await response.json().catch(() => ({}));
+            const failureMessage = String(payload?.message || "ASR \u4e0d\u53ef\u7528").trim() || "ASR \u4e0d\u53ef\u7528";
+            lastMessage = failureMessage;
+            if (!response.ok || !payload?.asr) {
+              continue;
+            }
+            return {
+              ok: true,
+              message: "",
+              baseUrl,
+            };
+          } catch (_) {
+            lastMessage = "ASR \u4e0d\u53ef\u7528";
+          } finally {
+            if (timer) {
+              clearTimeout(timer);
+            }
+          }
+        }
+        return {
+          ok: false,
+          message: lastMessage,
+          baseUrl: "",
+        };
+      }
+
+      async function requestAsrWarmup() {
+        if (callQtBridge("startAsrWarmup")) {
+          return;
+        }
+        for (const baseUrl of candidateAsrBaseUrls()) {
+          try {
+            await fetch(buildAsrWarmupUrl(baseUrl), {
+              method: "POST",
+              cache: "no-store",
+            });
+            return;
+          } catch (_) {
+            // try next candidate
+          }
+        }
+      }
+
+      function shouldRetryAsrAvailability(message) {
+        const text = String(message || "").trim();
+        return text.includes("尚未启动") || text.includes("开始初始化") || text.includes("正在加载模型") || text.includes("正在预热");
+      }
+
+      function createAsrDraft() {
+        const value = String(chatInputEl.value || "");
+        const start = Number.isFinite(chatInputEl.selectionStart) ? chatInputEl.selectionStart : value.length;
+        const end = Number.isFinite(chatInputEl.selectionEnd) ? chatInputEl.selectionEnd : start;
+        asrDraftState = { baseValue: value, start, end };
+      }
+
+      function renderAsrDraft(text) {
+        if (!asrDraftState) {
+          createAsrDraft();
+        }
+        const draftText = String(text || "");
+        const before = asrDraftState.baseValue.slice(0, asrDraftState.start);
+        const after = asrDraftState.baseValue.slice(asrDraftState.end);
+        chatInputEl.value = `${before}${draftText}${after}`;
+        const cursor = before.length + draftText.length;
+        chatInputEl.setSelectionRange(cursor, cursor);
+      }
+
+      function revertAsrDraft() {
+        if (!asrDraftState) {
+          return;
+        }
+        chatInputEl.value = asrDraftState.baseValue;
+        chatInputEl.setSelectionRange(asrDraftState.start, asrDraftState.end);
+        asrDraftState = null;
+        chatInputEl.focus();
+      }
+
+      function commitAsrDraft(text) {
+        const finalText = String(text || "").trim();
+        if (!asrDraftState) {
+          if (finalText) {
+            chatInputEl.value = `${chatInputEl.value || ""}${finalText}`;
+          }
+          chatInputEl.focus();
+          return;
+        }
+        if (!finalText) {
+          revertAsrDraft();
+          return;
+        }
+        renderAsrDraft(finalText);
+        asrDraftState = null;
+        chatInputEl.focus();
+      }
+
+      function closeAsrSocket() {
+        if (!asrSocket) {
+          return;
+        }
+        try {
+          asrSocket.onopen = null;
+          asrSocket.onmessage = null;
+          asrSocket.onerror = null;
+          asrSocket.onclose = null;
+          if (asrSocket.readyState === WebSocket.OPEN || asrSocket.readyState === WebSocket.CONNECTING) {
+            asrSocket.close();
+          }
+        } catch (_) {}
+        asrSocket = null;
+      }
+
+      function stopAsrCapturePipeline() {
+        if (asrProcessor) {
+          try {
+            asrProcessor.disconnect();
+          } catch (_) {}
+        }
+        if (asrInputSource) {
+          try {
+            asrInputSource.disconnect();
+          } catch (_) {}
+        }
+        if (asrSilenceGain) {
+          try {
+            asrSilenceGain.disconnect();
+          } catch (_) {}
+        }
+        if (asrMediaStream) {
+          try {
+            for (const track of asrMediaStream.getTracks()) {
+              track.stop();
+            }
+          } catch (_) {}
+        }
+        if (asrAudioContext) {
+          try {
+            asrAudioContext.close().catch(() => {});
+          } catch (_) {}
+        }
+        asrProcessor = null;
+        asrInputSource = null;
+        asrSilenceGain = null;
+        asrMediaStream = null;
+        asrAudioContext = null;
+      }
+
+      function cancelAsrSession(options = {}) {
+        const { restoreInput = true, statusMessage = defaultAsrStatusText(), tone = "idle" } = options;
+        asrRunToken += 1;
+        asrHotkeyPressed = false;
+        asrStarting = false;
+        asrRecording = false;
+        asrAwaitingFinal = false;
+        activeAsrBaseUrl = "";
+        stopAsrCapturePipeline();
+        closeAsrSocket();
+        if (restoreInput) {
+          revertAsrDraft();
+        } else {
+          asrDraftState = null;
+        }
+        syncChatInputAvailability();
+        setAsrStatus(statusMessage, tone);
+      }
+
+      function handleAsrPartial(text) {
+        const partialText = String(text || "");
+        if (!partialText) {
+          return;
+        }
+        renderAsrDraft(partialText);
+      }
+
+      function handleAsrFinal(text) {
+        const finalText = String(text || "");
+        stopAsrCapturePipeline();
+        closeAsrSocket();
+        asrHotkeyPressed = false;
+        asrStarting = false;
+        asrRecording = false;
+        asrAwaitingFinal = false;
+        commitAsrDraft(finalText);
+        syncChatInputAvailability();
+        setAsrStatus(defaultAsrStatusText(), "idle");
+      }
+
+      function handleAsrError(error) {
+        cancelAsrSession({
+          restoreInput: true,
+          statusMessage: `\u8bed\u97f3\u8f93\u5165\u5931\u8d25\uff1a${error?.message || String(error)}`,
+          tone: "error",
+        });
+      }
+
+      function downsampleFloat32ToInt16Buffer(input, inputSampleRate, outputSampleRate = 16000) {
+        const source = input instanceof Float32Array ? input : new Float32Array(input || []);
+        if (!source.length) {
+          return new ArrayBuffer(0);
+        }
+        if (inputSampleRate === outputSampleRate) {
+          const direct = new Int16Array(source.length);
+          for (let index = 0; index < source.length; index += 1) {
+            const sample = Math.max(-1, Math.min(1, source[index] || 0));
+            direct[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+          }
+          return direct.buffer;
+        }
+        const ratio = inputSampleRate / outputSampleRate;
+        const length = Math.max(1, Math.round(source.length / ratio));
+        const result = new Int16Array(length);
+        let offsetSource = 0;
+        for (let offsetResult = 0; offsetResult < length; offsetResult += 1) {
+          const nextOffsetSource = Math.min(source.length, Math.round((offsetResult + 1) * ratio));
+          let total = 0;
+          let count = 0;
+          for (let index = offsetSource; index < nextOffsetSource; index += 1) {
+            total += source[index];
+            count += 1;
+          }
+          const sample = Math.max(-1, Math.min(1, count ? total / count : 0));
+          result[offsetResult] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+          offsetSource = nextOffsetSource;
+        }
+        return result.buffer;
+      }
+
+      async function openAsrSocket(token) {
+        return await new Promise((resolve, reject) => {
+          let settled = false;
+          let sawSocketError = false;
+          let lastSocketErrorMessage = "";
+          const socket = new WebSocket(buildAsrWebSocketUrl());
+          socket.binaryType = "arraybuffer";
+          asrSocket = socket;
+
+          const fail = (error) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            reject(error);
+          };
+
+          socket.onopen = () => {
+            if (token !== asrRunToken) {
+              fail(new Error("ASR start cancelled"));
+              return;
+            }
+            try {
+              socket.send(JSON.stringify({
+                type: "start",
+                key: asrConfig().push_to_talk_key,
+                language: "zh",
+                punctuation: true,
+                interim_results: asrConfig().interim_results,
+              }));
+            } catch (error) {
+              fail(error);
+            }
+          };
+
+          socket.onmessage = (event) => {
+            let payload = null;
+            try {
+              payload = JSON.parse(String(event.data || "{}"));
+            } catch (_) {
+              return;
+            }
+            const type = String(payload?.type || "");
+            if (type === "ready") {
+              if (!settled) {
+                settled = true;
+                resolve(payload);
+              }
+              return;
+            }
+            if (type === "partial") {
+              handleAsrPartial(String(payload?.text || ""));
+              return;
+            }
+            if (type === "final") {
+              handleAsrFinal(String(payload?.text || ""));
+              return;
+            }
+            if (type === "error") {
+              lastSocketErrorMessage = String(payload?.message || "ASR error");
+              fail(new Error(lastSocketErrorMessage));
+            }
+          };
+
+          socket.onerror = () => {
+            sawSocketError = true;
+          };
+
+          socket.onclose = () => {
+            if (!settled && token === asrRunToken && (asrStarting || asrRecording || asrAwaitingFinal)) {
+              fail(new Error(lastSocketErrorMessage || (sawSocketError ? "ASR websocket error" : "ASR connection closed")));
+            }
+          };
+        });
+      }
+
+      async function startAsrCapturePipeline(token) {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (token !== asrRunToken) {
+          for (const track of mediaStream.getTracks()) {
+            track.stop();
+          }
+          throw new Error("ASR start cancelled");
+        }
+        const AudioCtor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtor) {
+          for (const track of mediaStream.getTracks()) {
+            track.stop();
+          }
+          throw new Error("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u97f3\u9891\u91c7\u96c6");
+        }
+        const context = new AudioCtor();
+        if (typeof context.resume === "function") {
+          await context.resume().catch(() => {});
+        }
+        const source = context.createMediaStreamSource(mediaStream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const silenceGain = context.createGain();
+        silenceGain.gain.value = 0;
+        processor.onaudioprocess = (event) => {
+          if (token !== asrRunToken || !asrRecording || !asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
+            return;
+          }
+          const channelData = event.inputBuffer.getChannelData(0);
+          const audioBuffer = downsampleFloat32ToInt16Buffer(channelData, context.sampleRate, 16000);
+          if (audioBuffer.byteLength) {
+            asrSocket.send(audioBuffer);
+          }
+        };
+        source.connect(processor);
+        processor.connect(silenceGain);
+        silenceGain.connect(context.destination);
+        asrAudioContext = context;
+        asrMediaStream = mediaStream;
+        asrInputSource = source;
+        asrProcessor = processor;
+        asrSilenceGain = silenceGain;
+      }
+
+      async function startPushToTalk() {
+        if (!canStartPushToTalk()) {
+          return;
+        }
+        if (asrStarting || asrRecording || asrAwaitingFinal) {
+          return;
+        }
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+          setAsrStatus("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u9ea6\u514b\u98ce\u91c7\u96c6", "error");
+          return;
+        }
+        asrHotkeyPressed = true;
+        const token = asrRunToken + 1;
+        asrRunToken = token;
+        asrStarting = true;
+        syncChatInputAvailability();
+        setAsrStatus(activeAsrStatusText(), "active");
+        await requestAsrWarmup();
+        let availability = await probeAsrAvailability();
+        while (token === asrRunToken && asrHotkeyPressed && !availability.ok) {
+          if (!shouldRetryAsrAvailability(availability.message)) {
+            break;
+          }
+          setAsrStatus(availability.message || "ASR \u6b63\u5728\u52a0\u8f7d\u6a21\u578b\uff0c\u8bf7\u7ee7\u7eed\u6309\u4f4f\u70ed\u952e\u7b49\u5f85\u3002", "active");
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          availability = await probeAsrAvailability();
+        }
+        if (token !== asrRunToken || !asrHotkeyPressed) {
+          cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+          return;
+        }
+        if (!availability.ok) {
+          asrStarting = false;
+          syncChatInputAvailability();
+          setAsrStatus(availability.message || "ASR \u4e0d\u53ef\u7528", shouldRetryAsrAvailability(availability.message) ? "active" : "error");
+          return;
+        }
+        activeAsrBaseUrl = String(availability.baseUrl || "").trim();
+        createAsrDraft();
+        renderAsrDraft("");
+        try {
+          await openAsrSocket(token);
+          if (token !== asrRunToken || !asrHotkeyPressed) {
+            throw new Error("ASR start cancelled");
+          }
+          await startAsrCapturePipeline(token);
+          if (token !== asrRunToken || !asrHotkeyPressed) {
+            throw new Error("ASR start cancelled");
+          }
+          asrStarting = false;
+          asrRecording = true;
+          syncChatInputAvailability();
+          setAsrStatus(activeAsrStatusText(), "active");
+        } catch (error) {
+          if (String(error?.message || error) === "ASR start cancelled") {
+            cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+            return;
+          }
+          handleAsrError(error);
+        }
+      }
+
+      function stopPushToTalk() {
+        asrHotkeyPressed = false;
+        if (asrStarting) {
+          cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+          return;
+        }
+        if (!asrRecording) {
+          return;
+        }
+        asrRecording = false;
+        asrAwaitingFinal = true;
+        stopAsrCapturePipeline();
+        syncChatInputAvailability();
+        setAsrStatus("\u6b63\u5728\u8bc6\u522b...", "active");
+        if (!asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
+          handleAsrError(new Error("ASR connection unavailable"));
+          return;
+        }
+        try {
+          asrSocket.send(JSON.stringify({ type: "stop" }));
+        } catch (error) {
+          handleAsrError(error);
+        }
+      }
+
       function topicHistoryEnabled() {
         return state.chat?.topic_history?.enabled !== false;
       }
@@ -1819,6 +2601,38 @@
         }
       }
 
+      function clearPendingDeleteTopic(shouldRender = true) {
+        const hadPending = !!pendingDeleteTopicId;
+        pendingDeleteTopicId = "";
+        if (pendingDeleteTopicTimer) {
+          window.clearTimeout(pendingDeleteTopicTimer);
+          pendingDeleteTopicTimer = null;
+        }
+        if (hadPending && shouldRender) {
+          renderTopicHistoryList();
+        }
+      }
+
+      function armPendingDeleteTopic(topicId, topicTitle = "") {
+        const normalizedTopicId = String(topicId || "").trim();
+        if (!normalizedTopicId) {
+          return;
+        }
+        const displayTitle = String(topicTitle || normalizedTopicId).trim() || normalizedTopicId;
+        pendingDeleteTopicId = normalizedTopicId;
+        if (pendingDeleteTopicTimer) {
+          window.clearTimeout(pendingDeleteTopicTimer);
+        }
+        pendingDeleteTopicTimer = window.setTimeout(() => {
+          pendingDeleteTopicId = "";
+          pendingDeleteTopicTimer = null;
+          setChatHistoryStatus(`已取消删除：${displayTitle}`);
+          renderTopicHistoryList();
+        }, 5000);
+        renderTopicHistoryList();
+        setChatHistoryStatus(`再次点击“确认删除”即可删除话题：${displayTitle}`);
+      }
+
       function renderTopicHistoryList() {
         if (!chatHistoryListEl) {
           return;
@@ -1836,13 +2650,16 @@
         }
         setChatHistoryStatus(`共找到 ${topicHistoryItems.length} 个已保存话题。`);
         syncTopicIndicator();
+        const pendingTopic = topicHistoryItems.find((item) => item.topic_id === pendingDeleteTopicId) || null;
         for (const item of topicHistoryItems) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "chat-history-item";
+          const card = document.createElement("div");
+          card.className = "chat-history-item";
           if (item.topic_id === currentTopicId) {
-            button.classList.add("is-active");
+            card.classList.add("is-active");
           }
+          const mainButton = document.createElement("button");
+          mainButton.type = "button";
+          mainButton.className = "chat-history-main";
           const titleEl = document.createElement("strong");
           titleEl.textContent = item.title;
           const previewEl = document.createElement("div");
@@ -1851,13 +2668,30 @@
           const metaEl = document.createElement("div");
           metaEl.className = "chat-history-meta";
           metaEl.textContent = `${item.updated_at || item.created_at || "未知时间"} | AI ${item.assistant_turn_count} 轮`;
-          button.appendChild(titleEl);
-          button.appendChild(previewEl);
-          button.appendChild(metaEl);
-          button.addEventListener("click", async () => {
+          mainButton.appendChild(titleEl);
+          mainButton.appendChild(previewEl);
+          mainButton.appendChild(metaEl);
+          mainButton.addEventListener("click", async () => {
             await selectTopic(item.topic_id);
           });
-          chatHistoryListEl.appendChild(button);
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          const isPendingDelete = item.topic_id === pendingDeleteTopicId;
+          deleteButton.className = `chat-history-delete${isPendingDelete ? " is-danger" : ""}`;
+          deleteButton.textContent = isPendingDelete ? "\u786e\u8ba4\u5220\u9664" : "\u5220\u9664";
+          deleteButton.title = isPendingDelete ? "\u518d\u6b21\u70b9\u51fb\u5373\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898";
+          deleteButton.setAttribute("aria-label", isPendingDelete ? "\u786e\u8ba4\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898");
+          deleteButton.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            await deleteTopic(item.topic_id, item.title);
+          });
+          card.appendChild(mainButton);
+          card.appendChild(deleteButton);
+          chatHistoryListEl.appendChild(card);
+        }
+        if (pendingTopic) {
+          setChatHistoryStatus(`\u518d\u6b21\u70b9\u51fb\u201c\u786e\u8ba4\u5220\u9664\u201d\u5373\u53ef\u5220\u9664\u8bdd\u9898\uff1a${pendingTopic.title}`);
         }
       }
 
@@ -1917,6 +2751,7 @@
           currentTopicId = fallbackId;
           state.chat.session_id = fallbackId;
           currentTopicMeta = normalizeTopicRecord({ topic_id: fallbackId, title: "临时会话", persisted: false });
+          clearPendingDeleteTopic(false);
           replaceChatMessages([]);
           topicHistoryLoaded = false;
           if (shouldOpen) {
@@ -1942,6 +2777,7 @@
             state.chat.session_id = topic.topic_id;
             currentTopicMeta = topic;
           }
+          clearPendingDeleteTopic(false);
           replaceChatMessages([]);
           toggleChatSkillsDrawer(false);
           toggleChatHistoryDrawer(false);
@@ -1975,6 +2811,7 @@
       }
 
       async function selectTopic(topicId) {
+        clearPendingDeleteTopic(false);
         try {
           const payload = await loadTopicDetail(topicId);
           const meta = normalizeTopicRecord(payload.meta || { topic_id: topicId });
@@ -1988,6 +2825,72 @@
           updateShellButtons();
         } catch (error) {
           appendMessage("error", `读取历史话题失败: ${error?.message || String(error)}`, { speakerName: "系统" });
+        }
+      }
+
+      async function deleteTopic(topicId, topicTitle = "") {
+        const normalizedTopicId = String(topicId || "").trim();
+        if (!normalizedTopicId) {
+          return;
+        }
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          setChatHistoryStatus("\u540e\u7aef\u5730\u5740\u672a\u914d\u7f6e\uff0c\u65e0\u6cd5\u5220\u9664\u5386\u53f2\u8bdd\u9898\u3002");
+          return;
+        }
+        const displayTitle = String(topicTitle || normalizedTopicId).trim() || normalizedTopicId;
+        if (pendingDeleteTopicId !== normalizedTopicId) {
+          armPendingDeleteTopic(normalizedTopicId, displayTitle);
+          return;
+        }
+        clearPendingDeleteTopic(false);
+        setChatHistoryStatus(`正在删除话题：${displayTitle}...`);
+        const parsePayload = async (resp) => {
+          const rawText = await resp.text();
+          if (!rawText) {
+            return {};
+          }
+          try {
+            return JSON.parse(rawText);
+          } catch {
+            return { detail: rawText };
+          }
+        };
+        try {
+          let resp = await fetch(`${backend}/api/chat/topics/${encodeURIComponent(normalizedTopicId)}`, {
+            method: "DELETE",
+          });
+          let payload = await parsePayload(resp);
+          if (resp.status === 405) {
+            resp = await fetch(`${backend}/api/chat/topics/${encodeURIComponent(normalizedTopicId)}/delete`, {
+              method: "POST",
+            });
+            payload = await parsePayload(resp);
+          }
+          if (!resp.ok) {
+            throw new Error(payload.detail || `HTTP ${resp.status}`);
+          }
+          clearPendingDeleteTopic(false);
+          topicHistoryItems = (Array.isArray(payload.topics) ? payload.topics : []).map(normalizeTopicRecord).filter(Boolean);
+          topicHistoryLoaded = true;
+          if (currentTopicId === normalizedTopicId) {
+            if (topicHistoryItems.length) {
+              await selectTopic(topicHistoryItems[0].topic_id);
+            } else {
+              currentTopicId = "";
+              state.chat.session_id = "";
+              currentTopicMeta = null;
+              await createNewTopic(false);
+            }
+          } else {
+            renderTopicHistoryList();
+            updateShellButtons();
+          }
+          setChatHistoryStatus(`\u5df2\u5220\u9664\u8bdd\u9898\uff1a${displayTitle}`);
+        } catch (error) {
+          clearPendingDeleteTopic(false);
+          setChatHistoryStatus(`\u5220\u9664\u5386\u53f2\u8bdd\u9898\u5931\u8d25\uff1a${error?.message || String(error)}\u3002\u5982\u679c\u4ecd\u662f Method Not Allowed\uff0c\u8bf7\u91cd\u542f\u684c\u5ba0\u4ee5\u52a0\u8f7d\u65b0\u7248\u540e\u7aef\u3002`);
+          renderTopicHistoryList();
         }
       }
 
@@ -2167,6 +3070,167 @@
         return "";
       }
 
+      function thoughtRoleLabel(role) {
+        const value = String(role || "").trim().toLowerCase();
+        if (value === "decider" || value === "searcher" || value === "planner" || value === "writer") {
+          return value;
+        }
+        return "thought";
+      }
+
+      function formatStepMeta(payload) {
+        const stepIndex = Number(payload?.step_index || 0);
+        const stepTitle = String(payload?.step_title || "").trim();
+        const batchSize = Number(payload?.batch_size || 0);
+        const batchId = String(payload?.batch_id || "").trim();
+        const parts = [];
+        if (stepIndex > 0) {
+          parts.push(stepTitle ? `Step ${stepIndex}: ${stepTitle}` : `Step ${stepIndex}`);
+        }
+        if (batchSize > 0) {
+          parts.push(`Batch: ${batchSize} tool call${batchSize === 1 ? "" : "s"}`);
+        }
+        if (batchId) {
+          parts.push(`Batch ID: ${batchId}`);
+        }
+        return parts.join("\n");
+      }
+
+      function removeApprovalBubble(turnId) {
+        const key = String(turnId || "").trim();
+        if (!key) {
+          return;
+        }
+        const ref = approvalBubbleRefs.get(key);
+        if (ref && ref.el && ref.el.parentNode) {
+          ref.el.remove();
+        }
+        approvalBubbleRefs.delete(key);
+      }
+
+      function createThoughtSessionId() {
+        thoughtSessionCounter += 1;
+        return `thought-session-${thoughtSessionCounter}`;
+      }
+
+      function beginThoughtSession(existingSessionId = "") {
+        const nextSessionId = String(existingSessionId || "").trim() || createThoughtSessionId();
+        activeThoughtSessionId = nextSessionId;
+        return nextSessionId;
+      }
+
+      function clearActiveThoughtSession(sessionId = "") {
+        const normalizedSessionId = String(sessionId || "").trim();
+        if (normalizedSessionId && activeThoughtSessionId && activeThoughtSessionId !== normalizedSessionId) {
+          return;
+        }
+        activeThoughtSessionId = "";
+        currentThoughtGroup = null;
+      }
+
+      function buildThoughtGroup(round, speakerName, pending = false, sessionId = "") {
+        const el = document.createElement("article");
+        el.className = `msg pet phase-thought thought-group${pending ? " pending" : ""}`;
+
+        const headEl = document.createElement("div");
+        headEl.className = "msg-head";
+
+        const speakerEl = document.createElement("div");
+        speakerEl.className = "speaker-pill";
+        speakerEl.textContent = String(speakerName || speakerNameForRole("pet"));
+        headEl.appendChild(speakerEl);
+
+        const phaseEl = document.createElement("div");
+        phaseEl.className = "phase-pill";
+        phaseEl.textContent = `思考中：当前第${round}轮`;
+        headEl.appendChild(phaseEl);
+
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "msg-body";
+
+        const hintEl = document.createElement("div");
+        hintEl.className = "thought-group-hint";
+        hintEl.textContent = "这轮思路会整理在下面，点开就能看细节。";
+
+        const detailsEl = document.createElement("details");
+        detailsEl.className = "thought-details";
+
+        const summaryEl = document.createElement("summary");
+        summaryEl.textContent = "查看思考详情";
+
+        const itemsEl = document.createElement("div");
+        itemsEl.className = "thought-items";
+
+        detailsEl.appendChild(summaryEl);
+        detailsEl.appendChild(itemsEl);
+        bodyEl.appendChild(hintEl);
+        bodyEl.appendChild(detailsEl);
+
+        el.appendChild(headEl);
+        el.appendChild(bodyEl);
+        chatMessagesEl.appendChild(el);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return { el, bodyEl, hintEl, detailsEl, itemsEl, round, hasItems: false, sessionId: String(sessionId || "").trim() };
+      }
+
+      function ensureThoughtGroup(round = 1, pending = false, sessionId = "") {
+        const normalizedRound = Math.max(1, Number(round) || 1);
+        const normalizedSessionId = String(sessionId || activeThoughtSessionId || "").trim() || beginThoughtSession();
+        if (
+          currentThoughtGroup &&
+          currentThoughtGroup.round === normalizedRound &&
+          currentThoughtGroup.sessionId === normalizedSessionId
+        ) {
+          currentThoughtGroup.el.classList.toggle("pending", !!pending);
+          return currentThoughtGroup;
+        }
+        if (currentThoughtGroup && !currentThoughtGroup.hasItems && currentThoughtGroup.el && currentThoughtGroup.el.parentNode) {
+          currentThoughtGroup.el.remove();
+        }
+        currentThoughtGroup = buildThoughtGroup(normalizedRound, speakerNameForRole("pet"), pending, normalizedSessionId);
+        return currentThoughtGroup;
+      }
+
+      function removeEmptyPendingThoughtGroup(sessionId = "") {
+        if (!currentThoughtGroup || currentThoughtGroup.hasItems) {
+          return;
+        }
+        const normalizedSessionId = String(sessionId || "").trim();
+        if (normalizedSessionId && currentThoughtGroup.sessionId !== normalizedSessionId) {
+          return;
+        }
+        if (currentThoughtGroup.el && currentThoughtGroup.el.parentNode) {
+          currentThoughtGroup.el.remove();
+        }
+        currentThoughtGroup = null;
+      }
+
+      function appendThoughtPhase(payload, sessionId = "") {
+        const round = Math.max(1, Number(payload?.loop_round) || (currentThoughtGroup ? currentThoughtGroup.round : 1));
+        const group = ensureThoughtGroup(round, false, sessionId);
+        group.el.classList.remove("pending");
+        group.hintEl.textContent = `这轮已经整理出 ${group.hasItems ? "更多" : "一些"}思路啦，点开就能看细节。`;
+
+        const itemEl = document.createElement("div");
+        itemEl.className = "thought-item";
+
+        const roleEl = document.createElement("div");
+        roleEl.className = "thought-role-pill";
+        roleEl.textContent = thoughtRoleLabel(payload?.thought_role);
+
+        const textEl = document.createElement("div");
+        textEl.className = "thought-item-text";
+        const metaText = formatStepMeta(payload);
+        textEl.textContent = metaText ? `${metaText}\n${String(payload?.text || "")}` : String(payload?.text || "");
+
+        itemEl.appendChild(roleEl);
+        itemEl.appendChild(textEl);
+        group.itemsEl.appendChild(itemEl);
+        group.hasItems = true;
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return group;
+      }
+
       function appendMessage(role, text, options = {}) {
         const phase = String(options.phase || "").trim().toLowerCase();
         const el = document.createElement("article");
@@ -2225,8 +3289,7 @@
 
       function setChatState(next) {
         chatState = next;
-        chatSendEl.disabled = next !== "idle";
-        chatInputEl.disabled = next === "streaming";
+        syncChatInputAvailability();
       }
 
       function stopSpeaking(manual = false) {
@@ -2286,9 +3349,14 @@
         loadChatSkills(false);
         renderTopicHistoryList();
         chatInputEl.focus();
+        setAsrStatus(defaultAsrStatusText(), "idle");
+        syncChatInputAvailability();
       }
 
       function closeChat() {
+        if (asrStarting || asrRecording || asrAwaitingFinal) {
+          cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+        }
         chatPanelEl.classList.remove("open");
         chatHistoryDrawerEl.classList.remove("open");
         updateShellButtons();
@@ -2658,12 +3726,24 @@
         await playNextTTSChunk();
       }
 
-      function appendApprovalBubble(payload) {
+      function appendApprovalBubble(payload, sessionId = "") {
         const message = appendMessage("pet", String(payload.text || ""), {
           phase: "action",
           speakerName: speakerNameForRole("pet"),
         });
+        const turnId = String(payload.turn_id || "").trim();
+        if (turnId) {
+          approvalBubbleRefs.set(turnId, message);
+          approvalThoughtSessionRefs.set(turnId, String(sessionId || activeThoughtSessionId || "").trim());
+        }
         appendToolList(message.el, Array.isArray(payload.tools) ? payload.tools : []);
+        const metaText = formatStepMeta(payload);
+        if (metaText) {
+          const metaEl = document.createElement("div");
+          metaEl.className = "approval-status";
+          metaEl.textContent = metaText;
+          message.el.appendChild(metaEl);
+        }
 
         const actionWrap = document.createElement("div");
         actionWrap.className = "approval-actions";
@@ -2674,7 +3754,7 @@
 
         const rejectBtn = document.createElement("button");
         rejectBtn.className = "approval-btn reject";
-        rejectBtn.textContent = "取消";
+        rejectBtn.textContent = "拒绝并提示";
 
         const statusEl = document.createElement("div");
         statusEl.className = "approval-status";
@@ -2701,19 +3781,24 @@
         });
 
         rejectBtn.addEventListener("click", async () => {
-          if (!payload.turn_id || activeApprovalId) {
+          if (!payload.turn_id || activeApprovalId || pendingApprovalInputTurnId) {
             return;
           }
           activeApprovalId = String(payload.turn_id);
-          appendMessage("user", "这次先不要调用工具。", { speakerName: "你" });
-          setResolved("已取消工具调用，正在改为直接回答。");
-          await continueApproval(payload.turn_id, false);
+          pendingApprovalInputTurnId = String(payload.turn_id);
+          setResolved("已拒绝这一步，请在输入框里告诉我接下来该怎么调整。");
+          appendMessage("pet", "这一步我先暂停啦。你直接补充想法，我会沿着当前任务继续处理。", {
+            phase: "action",
+            speakerName: speakerNameForRole("pet"),
+          });
+          setChatState("awaiting_followup_input");
+          chatInputEl.focus();
         });
 
         return message;
       }
 
-      async function consumeChatStream(resp) {
+      async function consumeChatStream(resp, options = {}) {
         if (!resp.ok) {
           let detail = `chat http ${resp.status}`;
           try {
@@ -2740,11 +3825,8 @@
         let full = "";
         let awaitingApproval = false;
         let receivedDisplaySegment = false;
-        let pendingThought = appendMessage("pet", "少女整理思绪中...", {
-          phase: "thought",
-          speakerName: speakerNameForRole("pet"),
-          pending: true,
-        });
+        const thoughtSessionId = beginThoughtSession(String(options?.thoughtSessionId || "").trim());
+        currentThoughtGroup = ensureThoughtGroup(1, true, thoughtSessionId);
         receivedStructuredSegment = false;
 
         const ensureFinalMessage = () => {
@@ -2755,16 +3837,6 @@
             });
           }
           return finalMsg;
-        };
-
-        const finishPendingThought = (text) => {
-          if (!pendingThought) {
-            return null;
-          }
-          updateMessageText(pendingThought, text, false);
-          const current = pendingThought;
-          pendingThought = null;
-          return current;
         };
 
         while (true) {
@@ -2817,9 +3889,10 @@
             } else if (eventName === "phase") {
               const phase = String(payload.phase || "");
               const text = String(payload.text || "");
-              if (phase === "thought" && pendingThought) {
-                finishPendingThought(text || "我先整理了一下思路。");
+              if (phase === "thought") {
+                appendThoughtPhase(payload, thoughtSessionId);
               } else {
+                removeEmptyPendingThoughtGroup(thoughtSessionId);
                 appendMessage("pet", text, {
                   phase,
                   speakerName: speakerNameForRole("pet"),
@@ -2827,15 +3900,10 @@
               }
             } else if (eventName === "approval_required") {
               awaitingApproval = true;
-              if (pendingThought) {
-                finishPendingThought("我先整理好了接下来的计划。");
-              }
-              appendApprovalBubble(payload);
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
+              appendApprovalBubble(payload, thoughtSessionId);
             } else if (eventName === "segment") {
-              if (pendingThought) {
-                pendingThought.el.remove();
-                pendingThought = null;
-              }
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
               receivedStructuredSegment = true;
               const segText = String(payload.text || "");
               const segExpr = payload.expr == null ? null : String(payload.expr || "");
@@ -2843,10 +3911,7 @@
                 enqueueTTSChunk(segText, segExpr);
               }
             } else if (eventName === "display_segment") {
-              if (pendingThought) {
-                pendingThought.el.remove();
-                pendingThought = null;
-              }
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
               receivedDisplaySegment = true;
               full += String(payload.text || "");
               updateMessageText(ensureFinalMessage(), full || "少女思考中...");
@@ -2854,10 +3919,7 @@
               if (receivedStructuredSegment) {
                 continue;
               }
-              if (pendingThought) {
-                pendingThought.el.remove();
-                pendingThought = null;
-              }
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
               full += payload.delta || "";
               updateMessageText(ensureFinalMessage(), full || "少女思考中...");
               feedSpeakBuffer(payload.delta || "");
@@ -2867,10 +3929,7 @@
                 currentTopicId = String(payload.topic_id || "").trim() || currentTopicId;
                 state.chat.session_id = currentTopicId;
               }
-              if (pendingThought) {
-                pendingThought.el.remove();
-                pendingThought = null;
-              }
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
               if (receivedStructuredSegment && !receivedDisplaySegment && !full) {
                 full = "(\u8bed\u97f3\u8f93\u51fa\u5df2\u5b8c\u6210)";
               }
@@ -2878,19 +3937,21 @@
               if (topicHistoryEnabled()) {
                 await loadTopicHistory(true);
               }
+              clearActiveThoughtSession(thoughtSessionId);
             } else if (eventName === "error") {
+              clearActiveThoughtSession(thoughtSessionId);
               throw new Error(payload.message || "chat stream error");
             }
           }
         }
 
-        if (pendingThought && !awaitingApproval) {
-          pendingThought.el.remove();
+        if (!awaitingApproval) {
+          removeEmptyPendingThoughtGroup(thoughtSessionId);
         }
-        return { full, awaitingApproval };
+        return { full, awaitingApproval, thoughtSessionId };
       }
 
-      async function continueApproval(turnId, approved) {
+      async function continueApproval(turnId, approved, userText = "") {
         const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
         if (!backend) {
           appendMessage("error", "后端地址未配置");
@@ -2903,17 +3964,22 @@
         pendingSpeakBuffer = "";
         ttsQueue = [];
         ttsPlaying = false;
+        const turnKey = String(turnId || "").trim();
+        const thoughtSessionId = String(approvalThoughtSessionRefs.get(turnKey) || activeThoughtSessionId || createThoughtSessionId()).trim();
         try {
           const resp = await fetch(`${backend}/api/chat/approval`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ turn_id: turnId, approved: !!approved }),
+            body: JSON.stringify({ turn_id: turnId, approved: !!approved, user_text: String(userText || "") }),
           });
-          const result = await consumeChatStream(resp);
+          removeApprovalBubble(turnId);
+          const result = await consumeChatStream(resp, { thoughtSessionId });
           if (result.awaitingApproval) {
             setChatState("awaiting_approval");
+            approvalThoughtSessionRefs.set(turnKey, thoughtSessionId);
             return;
           }
+          approvalThoughtSessionRefs.delete(turnKey);
           if (!result.awaitingApproval) {
             streamFinished = true;
             if (!receivedStructuredSegment) {
@@ -2924,12 +3990,15 @@
             }
           }
         } catch (err) {
+          approvalThoughtSessionRefs.delete(turnKey);
+          clearActiveThoughtSession(thoughtSessionId);
           appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
             speakerName: "系统",
           });
           setChatState("idle");
         } finally {
           activeApprovalId = "";
+          pendingApprovalInputTurnId = "";
           if (chatState !== "awaiting_approval" && chatState !== "idle" && !ttsPlaying) {
             setChatState("idle");
           }
@@ -2944,6 +4013,12 @@
         }
         const userText = text.trim();
         if (!userText) {
+          return;
+        }
+        if (pendingApprovalInputTurnId) {
+          appendMessage("user", userText, { speakerName: "你" });
+          activeApprovalId = String(pendingApprovalInputTurnId);
+          await continueApproval(pendingApprovalInputTurnId, false, userText);
           return;
         }
         await ensureTopicReady();
@@ -2966,6 +4041,7 @@
         ttsQueue = [];
         ttsPlaying = false;
         activeApprovalId = "";
+        const thoughtSessionId = beginThoughtSession();
 
         try {
           const resp = await fetch(`${backend}/api/chat/stream`, {
@@ -3000,12 +4076,13 @@
             }),
           });
 
-          const result = await consumeChatStream(resp);
+          const result = await consumeChatStream(resp, { thoughtSessionId });
           if (result.awaitingApproval) {
             setChatState("awaiting_approval");
             return;
           }
         } catch (err) {
+          clearActiveThoughtSession(thoughtSessionId);
           appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
             speakerName: "系统",
           });
@@ -3246,6 +4323,7 @@
             enabled: state.chat?.topic_history?.enabled !== false,
             summary_interval_assistant_turns: Number(state.chat?.topic_history?.summary_interval_assistant_turns || 10),
           };
+          state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});
           const configuredDefaults = Array.isArray(incoming.chat.skills?.default_active_ids)
             ? incoming.chat.skills.default_active_ids
             : [];
@@ -3262,8 +4340,17 @@
           renderTopicHistoryList();
           applyChatModeUI();
           updateShellButtons();
+          if (!state.chat.asr.enabled && (asrStarting || asrRecording || asrAwaitingFinal)) {
+            cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+          } else {
+            setAsrStatus(defaultAsrStatusText(), "idle");
+            syncChatInputAvailability();
+          }
         }
         syncPetDisplayName();
+        state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});
+        setAsrStatus(defaultAsrStatusText(), "idle");
+        syncChatInputAvailability();
         state.background_enabled = !!state.background_enabled;
         state.background_image = String(state.background_image || "");
         state.background_image_url = String(state.background_image_url || "");
@@ -3353,7 +4440,7 @@
         chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
         updateShellButtons();
         chatSendEl.addEventListener("click", async () => {
-          if (chatState !== "idle") {
+          if (!canSubmitChatInput() || asrStarting || asrRecording || asrAwaitingFinal) {
             return;
           }
           const text = chatInputEl.value;
@@ -3361,9 +4448,13 @@
           await streamChat(text);
         });
         chatInputEl.addEventListener("keydown", async (event) => {
+          if (matchesPushToTalkKey(event) && shouldHandlePushToTalk(event)) {
+            event.preventDefault();
+            return;
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            if (chatState !== "idle") {
+            if (!canSubmitChatInput() || asrStarting || asrRecording || asrAwaitingFinal) {
               return;
             }
             const text = chatInputEl.value;
@@ -3371,7 +4462,36 @@
             await streamChat(text);
           }
         });
-        chatStopEl.addEventListener("click", () => stopSpeaking(true));
+        chatStopEl.addEventListener("click", () => {
+          if (asrStarting || asrRecording || asrAwaitingFinal) {
+            cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+            return;
+          }
+          stopSpeaking(true);
+        });
+        window.addEventListener("keydown", async (event) => {
+          if (!matchesPushToTalkKey(event) || !shouldHandlePushToTalk(event)) {
+            return;
+          }
+          if (event.repeat) {
+            event.preventDefault();
+            return;
+          }
+          event.preventDefault();
+          await startPushToTalk();
+        });
+        window.addEventListener("keyup", (event) => {
+          if (!matchesPushToTalkKey(event)) {
+            return;
+          }
+          event.preventDefault();
+          stopPushToTalk();
+        });
+        window.addEventListener("blur", () => {
+          if (asrStarting || asrRecording || asrAwaitingFinal) {
+            cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
+          }
+        });
 
         chatHeaderEl.addEventListener("pointerdown", (event) => {
           if (event.target === chatCloseEl) {
