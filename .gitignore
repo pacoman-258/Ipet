@@ -8,12 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+.uv-cache/
 
 # Local runtime state
 backend/agent_graph_state.pkl
 backend/audio_cache/
 .cache/
 tmp_*.log
+data/chat_topics/
+.DS_Store
 
 # Local config and personal workspace files
 pet_config.json

@@ -416,6 +416,9 @@ def router_prompt_chat(tools: list[dict[str, Any]]) -> str:
     if tool_names:
         lines.append("Available search tools:")
         lines.extend([f"- {name}" for name in tool_names])
+    else:
+        lines.append("Available search tools: none")
+        lines.append("If no search tools are listed, set search_needed to false.")
     return "\n".join(lines)
 
 

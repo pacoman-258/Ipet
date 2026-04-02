@@ -18,9 +18,9 @@
   },
   "description": "Created from frontend MCP server config",
   "env": {
-    "TAVILY_API_KEY": "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",
+    "TAVILY_API_KEY": "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",
     "DEFAULT_PARAMETERS": "{\"include_images\": true, \"max_results\": 15, \"search_depth\": \"advanced\"}"
   },
   "protocol": "jsonline",
-  "server_dir": "D:\\LYJ\\2. 02_学习提升\\third_round\\AI_assistant\\third_party_mcp\\tavily-mcp"
+  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/tavily-mcp"
 }

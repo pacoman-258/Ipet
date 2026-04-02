@@ -18,6 +18,52 @@ def _safe_name(name: str) -> str:
     return cleaned.strip("._-") or "mcp_server"
 
 
+def _common_exec_search_dirs(server_dir: Path | None = None) -> list[str]:
+    home = Path.home()
+    candidates: list[Path] = []
+    if server_dir is not None:
+        if os.name == "nt":
+            candidates.append(server_dir / ".venv" / "Scripts")
+        else:
+            candidates.append(server_dir / ".venv" / "bin")
+    if os.name == "nt":
+        candidates.append(home / "AppData" / "Roaming" / "Python" / "Scripts")
+    else:
+        candidates.extend(
+            [
+                home / ".local" / "bin",
+                home / ".cargo" / "bin",
+                Path("/opt/homebrew/bin"),
+                Path("/opt/homebrew/sbin"),
+                Path("/usr/local/bin"),
+                Path("/usr/local/sbin"),
+            ]
+        )
+
+    seen: set[str] = set()
+    resolved: list[str] = []
+    for candidate in candidates:
+        text = str(candidate)
+        if not text or text in seen or not candidate.exists():
+            continue
+        seen.add(text)
+        resolved.append(text)
+    return resolved
+
+
+def _prepend_exec_search_path(env: dict[str, str], server_dir: Path | None = None) -> str:
+    current = [item for item in str(env.get("PATH") or "").split(os.pathsep) if item]
+    prefixes: list[str] = []
+    seen = set(current)
+    for candidate in _common_exec_search_dirs(server_dir):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        prefixes.append(candidate)
+    env["PATH"] = os.pathsep.join(prefixes + current)
+    return env["PATH"]
+
+
 IGNORED_DISCOVERY_DIRS = {
     ".git",
     ".venv",
@@ -324,18 +370,20 @@ class ThirdPartyMCPManager:
         if runtime == "python":
             if command in {"python", "python3"}:
                 return [str(self._venv_python(server_dir))] + args
-            return [self._resolve_spawn_command(command)] + args
-        return [self._resolve_spawn_command(command or "node")] + args
+            return [self._resolve_spawn_command(command, server_dir)] + args
+        return [self._resolve_spawn_command(command or "node", server_dir)] + args
 
-    def _resolve_spawn_command(self, command: str) -> str:
+    def _resolve_spawn_command(self, command: str, server_dir: Path | None = None) -> str:
         text = str(command or "").strip()
         if not text:
             return text
+        search_env = dict(os.environ)
+        _prepend_exec_search_path(search_env, server_dir)
         candidates = [text]
         if os.name == "nt" and "." not in Path(text).name:
             candidates.extend([f"{text}.cmd", f"{text}.exe", f"{text}.bat"])
         for candidate in candidates:
-            resolved = shutil.which(candidate)
+            resolved = shutil.which(candidate, path=search_env.get("PATH"))
             if resolved:
                 return resolved
         return text
@@ -762,14 +810,15 @@ class ThirdPartyMCPManager:
         venv_dir = server_dir / ".venv"
         venv_python = self._venv_python(server_dir)
         run_env = self._build_run_env(server_dir, manifest)
+        uv_command = self._resolve_spawn_command("uv", server_dir)
         if not venv_python.exists():
-            subprocess.run(["uv", "venv", str(venv_dir)], check=True, cwd=str(server_dir), env=run_env)
+            subprocess.run([uv_command, "venv", str(venv_dir)], check=True, cwd=str(server_dir), env=run_env)
 
         pyproject = server_dir / "pyproject.toml"
         req_file = server_dir / str(manifest["install"].get("requirements") or "requirements.txt")
         if pyproject.exists():
             subprocess.run(
-                ["uv", "sync", "--project", str(server_dir), "--python", str(venv_python)],
+                [uv_command, "sync", "--project", str(server_dir), "--python", str(venv_python)],
                 check=True,
                 cwd=str(server_dir),
                 env=run_env,
@@ -777,7 +826,7 @@ class ThirdPartyMCPManager:
             return
         if req_file.exists():
             subprocess.run(
-                ["uv", "pip", "install", "--python", str(venv_python), "-r", str(req_file)],
+                [uv_command, "pip", "install", "--python", str(venv_python), "-r", str(req_file)],
                 check=True,
                 cwd=str(server_dir),
                 env=run_env,
@@ -790,8 +839,11 @@ class ThirdPartyMCPManager:
         if not package_json.exists():
             raise FileNotFoundError(f"package.json not found in {server_dir}")
         lock_file = server_dir / "package-lock.json"
-        cmd = ["npm", "ci"] if lock_file.exists() else ["npm", "install"]
-        subprocess.run(cmd, check=True, cwd=str(server_dir))
+        npm_command = self._resolve_spawn_command("npm", server_dir)
+        cmd = [npm_command, "ci"] if lock_file.exists() else [npm_command, "install"]
+        env = dict(os.environ)
+        _prepend_exec_search_path(env, server_dir)
+        subprocess.run(cmd, check=True, cwd=str(server_dir), env=env)
 
     def _venv_python(self, server_dir: Path) -> Path:
         if os.name == "nt":
@@ -809,6 +861,7 @@ class ThirdPartyMCPManager:
 
     def _build_run_env(self, server_dir: Path, manifest: dict[str, Any]) -> dict[str, str]:
         env = dict(os.environ)
+        _prepend_exec_search_path(env, server_dir)
         extra = manifest.get("env", {})
         if isinstance(extra, dict):
             for k, v in extra.items():
@@ -822,6 +875,7 @@ class ThirdPartyMCPManager:
     def _build_client_env(self, manifest: dict[str, Any]) -> dict[str, str]:
         env = dict(os.environ)
         server_dir = self._manifest_workdir_path(manifest)
+        _prepend_exec_search_path(env, server_dir)
         extra = manifest.get("env", {})
         if isinstance(extra, dict):
             for k, v in extra.items():
@@ -863,7 +917,7 @@ class ThirdPartyMCPManager:
             return manifest
 
         server_dir = self._manifest_workdir_path(manifest)
-        npm_command = self._resolve_spawn_command("npm")
+        npm_command = self._resolve_spawn_command("npm", server_dir)
         try:
             install_run = subprocess.run(
                 [npm_command, "install", "--no-save", package_spec],

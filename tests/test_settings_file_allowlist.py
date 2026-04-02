@@ -280,6 +280,15 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         self.assertIn('els.fileAllowlistEffectiveBtn.addEventListener("click", () => wrapAction(refreshEffectiveFileAllowlist));', body)
         self.assertIn("async function pickAllowlistDirectory()", body)
 
+    def test_settings_js_preserves_posix_paths_for_macos(self) -> None:
+        resp = self.client.get("/settings.js")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.text
+        self.assertIn("function prefersWindowsPaths()", body)
+        self.assertIn("function looksLikeWindowsPath(value)", body)
+        self.assertIn('normalized = normalized.replace(/\\\\/g, "/");', body)
+
     def test_settings_js_binds_router_model_controls(self) -> None:
         resp = self.client.get("/settings.js")
 

@@ -41,6 +41,15 @@ def _qt_runtime_env_defaults(platform_name: str | None = None) -> dict[str, str]
         "QTWEBENGINE_DISABLE_SANDBOX": "1",
     }
     if _is_macos(platform_name):
+        defaults["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
+            [
+                "--disable-logging",
+                "--log-level=3",
+                "--enable-webgl",
+                "--ignore-gpu-blocklist",
+                "--disable-features=UseSkiaRenderer,VizDisplayCompositor",
+            ]
+        )
         return defaults
     defaults["QT_OPENGL"] = "software"
     defaults["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
@@ -68,67 +77,163 @@ def _apply_qt_runtime_env(env: dict[str, str] | None = None, platform_name: str 
     return defaults
 
 
+def _desktop_pet_window_flags(platform_name: str | None = None):
+    if _is_macos(platform_name):
+        return Qt.WindowType.Window
+    return (
+        Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.WindowStaysOnTopHint
+        | Qt.WindowType.Tool
+    )
+
+
+def _should_use_translucent_window(force_opaque: bool | None = None, platform_name: str | None = None) -> bool:
+    effective_force_opaque = FORCE_OPAQUE_WINDOW if force_opaque is None else bool(force_opaque)
+    return (not effective_force_opaque) and (not _is_macos(platform_name))
+
+
+def _desktop_pet_background_color(platform_name: str | None = None) -> tuple[int, int, int, int]:
+    if _should_use_translucent_window(platform_name=platform_name):
+        return (0, 0, 0, 0)
+    return (18, 18, 18, 255)
+
+
+def _should_enable_webgl(platform_name: str | None = None) -> bool:
+    return True
+
+
+def _should_force_software_opengl(platform_name: str | None = None) -> bool:
+    return not _is_macos(platform_name)
+
+
+def _should_install_python_event_filters(platform_name: str | None = None) -> bool:
+    return not _is_macos(platform_name)
+
+
+def _prefer_pyqt_bindings(platform_name: str | None = None) -> bool:
+    return _is_macos(platform_name)
+
+
 _apply_qt_runtime_env()
 
-try:
-    from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
-    from PySide6.QtGui import QAction, QColor, QGuiApplication
-    from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import (
-        QApplication,
-        QCheckBox,
-        QComboBox,
-        QDoubleSpinBox,
-        QFileDialog,
-        QFormLayout,
-        QGridLayout,
-        QGroupBox,
-        QHBoxLayout,
-        QLabel,
-        QLineEdit,
-        QInputDialog,
-        QMainWindow,
-        QMenu,
-        QPlainTextEdit,
-        QPushButton,
-        QSlider,
-        QSpinBox,
-        QVBoxLayout,
-        QWidget,
-    )
-except ImportError:
-    from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
-    from PyQt6.QtGui import QAction, QColor, QGuiApplication
-    from PyQt6.QtWebChannel import QWebChannel
-    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWidgets import (
-        QApplication,
-        QCheckBox,
-        QComboBox,
-        QDoubleSpinBox,
-        QFileDialog,
-        QFormLayout,
-        QGridLayout,
-        QGroupBox,
-        QHBoxLayout,
-        QLabel,
-        QLineEdit,
-        QInputDialog,
-        QMainWindow,
-        QMenu,
-        QPlainTextEdit,
-        QPushButton,
-        QSlider,
-        QSpinBox,
-        QVBoxLayout,
-        QWidget,
-    )
+if _prefer_pyqt_bindings():
+    try:
+        from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+        from PyQt6.QtGui import QAction, QColor, QGuiApplication
+        from PyQt6.QtWebChannel import QWebChannel
+        from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtWidgets import (
+            QApplication,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QGridLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QInputDialog,
+            QMainWindow,
+            QMenu,
+            QPlainTextEdit,
+            QPushButton,
+            QSlider,
+            QSpinBox,
+            QVBoxLayout,
+            QWidget,
+        )
+    except ImportError:
+        from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
+        from PySide6.QtGui import QAction, QColor, QGuiApplication
+        from PySide6.QtWebChannel import QWebChannel
+        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import (
+            QApplication,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QGridLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QInputDialog,
+            QMainWindow,
+            QMenu,
+            QPlainTextEdit,
+            QPushButton,
+            QSlider,
+            QSpinBox,
+            QVBoxLayout,
+            QWidget,
+        )
+else:
+    try:
+        from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
+        from PySide6.QtGui import QAction, QColor, QGuiApplication
+        from PySide6.QtWebChannel import QWebChannel
+        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import (
+            QApplication,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QGridLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QInputDialog,
+            QMainWindow,
+            QMenu,
+            QPlainTextEdit,
+            QPushButton,
+            QSlider,
+            QSpinBox,
+            QVBoxLayout,
+            QWidget,
+        )
+    except ImportError:
+        from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+        from PyQt6.QtGui import QAction, QColor, QGuiApplication
+        from PyQt6.QtWebChannel import QWebChannel
+        from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtWidgets import (
+            QApplication,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QGridLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QInputDialog,
+            QMainWindow,
+            QMenu,
+            QPlainTextEdit,
+            QPushButton,
+            QSlider,
+            QSpinBox,
+            QVBoxLayout,
+            QWidget,
+        )
 
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
+RUNTIME_LOG_DIR = ROOT_DIR / ".runtime-logs"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
@@ -142,8 +247,112 @@ AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
 BACKEND_VENV_DIRNAME = ".venv-py312"
 
 
+def _common_exec_search_dirs(root_dir: Path | None = None) -> list[str]:
+    root = root_dir or ROOT_DIR
+    home = Path.home()
+    candidates: list[Path] = []
+    if os.name == "nt":
+        candidates.extend(
+            [
+                root / ".venv" / "Scripts",
+                root / BACKEND_VENV_DIRNAME / "Scripts",
+                home / "AppData" / "Roaming" / "Python" / "Scripts",
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                root / ".venv" / "bin",
+                root / BACKEND_VENV_DIRNAME / "bin",
+                home / ".local" / "bin",
+                home / ".cargo" / "bin",
+                Path("/opt/homebrew/bin"),
+                Path("/opt/homebrew/sbin"),
+                Path("/usr/local/bin"),
+                Path("/usr/local/sbin"),
+            ]
+        )
+
+    seen: set[str] = set()
+    resolved: list[str] = []
+    for candidate in candidates:
+        text = str(candidate)
+        if not text or text in seen or not candidate.exists():
+            continue
+        seen.add(text)
+        resolved.append(text)
+    return resolved
+
+
+def _augment_process_path(env: dict[str, str] | None = None, *, root_dir: Path | None = None) -> str:
+    target = env if env is not None else os.environ
+    current = [item for item in str(target.get("PATH") or "").split(os.pathsep) if item]
+    prefixes: list[str] = []
+    seen = set(current)
+    for candidate in _common_exec_search_dirs(root_dir):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        prefixes.append(candidate)
+    target["PATH"] = os.pathsep.join(prefixes + current)
+    return target["PATH"]
+
+
+def _preferred_python_commands(root_dir: Path | None = None) -> list[str]:
+    root = root_dir or ROOT_DIR
+    commands: list[str] = []
+    version_text = ""
+    try:
+        version_text = (root / ".python-version").read_text(encoding="utf-8").strip()
+    except Exception:
+        version_text = ""
+    parts = [item for item in version_text.split(".") if item]
+    if len(parts) >= 2:
+        commands.append(f"python{parts[0]}.{parts[1]}")
+    if parts:
+        commands.append(f"python{parts[0]}")
+    commands.extend(["python3.12", "python3"])
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in commands:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ordered
+
+
+_augment_process_path()
+
+
 def _python_entry_for_venv(venv_dir: Path) -> Path:
     return venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _runtime_log_path(name: str) -> Path:
+    try:
+        RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return ROOT_DIR / f".{name}.log"
+    return RUNTIME_LOG_DIR / f"{name}.log"
+
+
+def _truncate_runtime_log(path: Path) -> Path:
+    try:
+        path.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+    return path
+
+
+def _tail_runtime_log(path: Path, *, max_lines: int = 20) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return ""
+    tail = lines[-max(1, int(max_lines)) :]
+    return "\n".join(line.rstrip() for line in tail if str(line).strip())
 
 
 def _python_command_exists(command: str) -> bool:
@@ -177,9 +386,10 @@ def resolve_backend_python() -> str:
     candidates: list[str] = []
     if override:
         candidates.append(override)
-    candidates.append(sys.executable)
     candidates.append(str(_python_entry_for_venv(ROOT_DIR / ".venv")))
     candidates.append(str(_python_entry_for_venv(ROOT_DIR / BACKEND_VENV_DIRNAME)))
+    candidates.extend(_preferred_python_commands())
+    candidates.append(sys.executable)
 
     seen: set[str] = set()
     fallback = sys.executable
@@ -203,6 +413,9 @@ def resolve_asr_python() -> str:
         candidate = _python_entry_for_venv(ROOT_DIR / dirname)
         if candidate.exists():
             return str(candidate)
+    for command in _preferred_python_commands():
+        if _python_command_exists(command):
+            return command
     return sys.executable
 
 
@@ -1325,6 +1538,7 @@ class DesktopPet(QMainWindow):
         self._resize_edges: tuple[bool, bool, bool, bool] = (False, False, False, False)  # left, top, right, bottom
         self._drag_start_global = QPoint()
         self._drag_start_geometry = self.geometry()
+        self._python_event_filters_installed = False
 
         self.bridge = PetBridge()
         self.bridge.stateChanged.connect(self.on_web_state_changed)
@@ -1335,20 +1549,22 @@ class DesktopPet(QMainWindow):
 
         self.browser = QWebEngineView(self)
         self.browser.setMouseTracking(True)
-        self.browser.page().setBackgroundColor(QColor(0, 0, 0, 0))
+        self.browser.page().setBackgroundColor(QColor(*_desktop_pet_background_color()))
 
         settings = self.browser.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, _should_enable_webgl())
         settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
 
         self.browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.browser.customContextMenuRequested.connect(self.show_context_menu)
-        self.browser.installEventFilter(self)
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+        if _should_install_python_event_filters():
+            self.browser.installEventFilter(self)
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+            self._python_event_filters_installed = True
 
         if hasattr(self.browser.page(), "featurePermissionRequested"):
             self.browser.page().featurePermissionRequested.connect(self.on_feature_permission_requested)
@@ -1359,13 +1575,11 @@ class DesktopPet(QMainWindow):
 
         self.setCentralWidget(self.browser)
 
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
+        self.setWindowFlags(_desktop_pet_window_flags())
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            _should_use_translucent_window(),
         )
-        if not FORCE_OPAQUE_WINDOW:
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self.apply_window_geometry_from_config()
 
@@ -1747,14 +1961,16 @@ class DesktopPet(QMainWindow):
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
+        backend_log_path = _truncate_runtime_log(_runtime_log_path("backend"))
         try:
-            self.backend_process = subprocess.Popen(
-                cmd,
-                cwd=str(ROOT_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
+            with backend_log_path.open("a", encoding="utf-8") as backend_log:
+                self.backend_process = subprocess.Popen(
+                    cmd,
+                    cwd=str(ROOT_DIR),
+                    stdout=backend_log,
+                    stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
             self.backend_started_by_app = True
         except Exception as exc:
             print(f"failed to start backend with {backend_python}: {exc}")
@@ -1763,8 +1979,19 @@ class DesktopPet(QMainWindow):
         for _ in range(60):
             if is_backend_live(backend_url):
                 return
+            if self.backend_process and self.backend_process.poll() is not None:
+                detail = _tail_runtime_log(backend_log_path)
+                if detail:
+                    print(f"backend exited early with code {self.backend_process.returncode}:\n{detail}")
+                else:
+                    print(f"backend exited early with code {self.backend_process.returncode}.")
+                return
             time.sleep(0.25)
-        print("backend did not become ready in time; chat may be unavailable.")
+        detail = _tail_runtime_log(backend_log_path)
+        if detail:
+            print(f"backend did not become ready in time; chat may be unavailable.\n{detail}")
+        else:
+            print("backend did not become ready in time; chat may be unavailable.")
 
     def ensure_asr_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
@@ -1798,14 +2025,16 @@ class DesktopPet(QMainWindow):
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
+        asr_log_path = _truncate_runtime_log(_runtime_log_path("asr"))
         try:
-            self.asr_process = subprocess.Popen(
-                cmd,
-                cwd=str(ROOT_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
+            with asr_log_path.open("a", encoding="utf-8") as asr_log:
+                self.asr_process = subprocess.Popen(
+                    cmd,
+                    cwd=str(ROOT_DIR),
+                    stdout=asr_log,
+                    stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
             self.asr_started_by_app = True
         except Exception as exc:
             print(f"启动 ASR 服务失败: {exc}")
@@ -1814,8 +2043,19 @@ class DesktopPet(QMainWindow):
         for _ in range(40):
             if is_asr_healthy(asr_url):
                 return
+            if self.asr_process and self.asr_process.poll() is not None:
+                detail = _tail_runtime_log(asr_log_path)
+                if detail:
+                    print(f"ASR 服务提前退出，退出码 {self.asr_process.returncode}:\n{detail}")
+                else:
+                    print(f"ASR 服务提前退出，退出码 {self.asr_process.returncode}。")
+                return
             time.sleep(0.2)
-        print("ASR 服务未在预期时间内就绪，语音输入可能不可用。")
+        detail = _tail_runtime_log(asr_log_path)
+        if detail:
+            print(f"ASR 服务未在预期时间内就绪，语音输入可能不可用。\n{detail}")
+        else:
+            print("ASR 服务未在预期时间内就绪，语音输入可能不可用。")
 
     def request_asr_warmup(self) -> None:
         chat_cfg = self.config.get("chat", {})
@@ -1955,7 +2195,7 @@ class DesktopPet(QMainWindow):
 
         try:
             app = QApplication.instance()
-            if app is not None:
+            if app is not None and self._python_event_filters_installed:
                 app.removeEventFilter(self)
         except Exception:
             pass
@@ -1975,6 +2215,12 @@ class DesktopPet(QMainWindow):
 
         try:
             self.browser.stop()
+        except Exception:
+            pass
+
+        try:
+            if self._python_event_filters_installed:
+                self.browser.removeEventFilter(self)
         except Exception:
             pass
 
@@ -2365,7 +2611,8 @@ class DesktopPet(QMainWindow):
 
 
 if __name__ == "__main__":
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
+    if _should_force_software_opengl():
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QApplication(sys.argv)

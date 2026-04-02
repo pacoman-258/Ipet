@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from unittest import mock
+import os
 import shutil
 import uuid
 
@@ -17,28 +18,18 @@ class MCPCommandResolutionTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         return root
 
-    def test_build_command_prefers_resolved_windows_launcher(self) -> None:
+    def test_resolve_spawn_command_prefers_resolved_windows_launcher(self) -> None:
         root = self._workspace_temp_root()
         manager = ThirdPartyMCPManager(root)
-        manifest_path = manager.register_server_config(
-            {
-                "mcpServers": {
-                    "playwright": {
-                        "command": "npx",
-                        "args": ["@playwright/mcp@latest"],
-                    }
-                }
-            }
-        )
-        manifest = manager.load_manifest(manifest_path)
         with mock.patch("backend.mcp.third_party_manager.os.name", "nt"), mock.patch(
+            "backend.mcp.third_party_manager.Path.home",
+            return_value=root,
+        ), mock.patch(
             "backend.mcp.third_party_manager.shutil.which",
-            side_effect=lambda value: "C:\\Program Files\\nodejs\\npx.cmd" if value == "npx.cmd" else None,
+            side_effect=lambda value, path=None: "C:\\Program Files\\nodejs\\npx.cmd" if value == "npx.cmd" else None,
         ):
-            command = manager.build_command(manifest)
-        self.assertEqual(command[0], "C:\\Program Files\\nodejs\\npx.cmd")
-        self.assertEqual(command[1:], ["-y", "@playwright/mcp@latest"])
-        self.assertEqual(manifest["protocol"], "jsonline")
+            command = manager._resolve_spawn_command("npx")
+        self.assertEqual(command, "C:\\Program Files\\nodejs\\npx.cmd")
 
     def test_register_server_config_injects_npx_yes_flag(self) -> None:
         root = self._workspace_temp_root()
@@ -84,6 +75,27 @@ class MCPCommandResolutionTests(unittest.TestCase):
         self.assertTrue(env["npm_config_prefix"].endswith(".npm-prefix"))
         self.assertTrue(Path(env["npm_config_cache"]).exists())
         self.assertTrue(Path(env["npm_config_prefix"]).exists())
+
+    def test_build_client_env_includes_user_local_bin_in_path(self) -> None:
+        root = self._workspace_temp_root()
+        fake_home = root / "fake-home"
+        local_bin = fake_home / ".local" / "bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        manager = ThirdPartyMCPManager(root)
+        manifest_path = manager.register_server_config(
+            {
+                "mcpServers": {
+                    "playwright": {
+                        "command": "npx",
+                        "args": ["@playwright/mcp@latest"],
+                    }
+                }
+            }
+        )
+        manifest = manager.load_manifest(manifest_path)
+        with mock.patch("backend.mcp.third_party_manager.Path.home", return_value=fake_home):
+            env = manager._build_client_env(manifest)
+        self.assertIn(str(local_bin), env["PATH"].split(os.pathsep))
 
     def test_prepare_server_materializes_direct_npx_package_to_node_entry(self) -> None:
         root = self._workspace_temp_root()

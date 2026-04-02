@@ -113,6 +113,12 @@ CHAT_MODE_CHAT = "chat"
 CHAT_MODE_SKILL = "skill"
 CHAT_MODE_VALUES = {CHAT_MODE_REACT, CHAT_MODE_CHAT, CHAT_MODE_SKILL}
 CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
+CHAT_MODE_NO_LIVE_SEARCH_PROMPT = (
+    "Live web search is unavailable in this chat-mode turn. "
+    "Answer using only the conversation context and your general built-in knowledge. "
+    "Do not claim that you searched, browsed, fetched, checked, or verified anything on the web. "
+    "If the answer may depend on current web information, say you cannot verify it live right now."
+)
 PHASE_SKILL_SELECTION = "skill_selection"
 PHASE_SKILL_EXECUTION = "skill_execution"
 PHASE_AGENT_LOOP = "agent_loop"
@@ -1104,17 +1110,27 @@ def _explicit_capability_inventory_scope(value: Any) -> str:
         "which ",
     )
     search_markers = ("搜索", "搜", "查", "查看")
+    visibility_markers = (
+        "能不能看到",
+        "能看到",
+        "能不能识别",
+        "识别",
+        "发现",
+        "现在有什么",
+        "当前有什么",
+    )
     skill_markers = ("skill", "skills", "技能")
     mcp_markers = ("mcp", "mcps")
     generic_markers = ("工具", "tool", "tools", "能力", "capability", "capabilities")
     list_hit = any(marker in text for marker in list_markers)
     search_hit = any(marker in text for marker in search_markers)
+    visibility_hit = any(marker in text for marker in visibility_markers)
     skill_hit = any(marker in text for marker in skill_markers)
     mcp_hit = any(marker in text for marker in mcp_markers)
     generic_hit = any(marker in text for marker in generic_markers)
     if not (skill_hit or mcp_hit or generic_hit):
         return ""
-    if not (list_hit or (search_hit and (skill_hit or mcp_hit))):
+    if not (list_hit or visibility_hit or (search_hit and (skill_hit or mcp_hit))):
         return ""
     if skill_hit and not mcp_hit and not generic_hit:
         return "skill"
@@ -3154,6 +3170,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
     route_tool_call: dict[str, Any] = {}
     route_search_needed = False
     route_search_query = ""
+    chat_mode_search_fallback_prompt = ""
     try:
         if not text:
             raise HTTPException(status_code=400, detail="text cannot be empty")
@@ -3170,8 +3187,6 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
         if chat_mode == CHAT_MODE_CHAT:
             if not tools_enabled:
                 raise HTTPException(status_code=400, detail="chat mode requires tavily-mcp tools to be enabled")
-            if not _has_chat_mode_tavily_tools(tooling_cfg):
-                raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
         if chat_mode == CHAT_MODE_SKILL and not router_cfg["enabled"] and not resolved_skills.skill_ids:
             raise HTTPException(status_code=400, detail="Skill mode requires at least one active skill")
 
@@ -3214,14 +3229,23 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 if chat_mode == CHAT_MODE_CHAT:
                     if route_search_needed and route_search_query:
                         search_tool_name = _pick_tavily_tool_name(route_tools)
-                        if not search_tool_name:
-                            raise HTTPException(status_code=400, detail="chat mode requires an available tavily-mcp tool")
-                        route_kind = "simple_tool_task"
-                        route_tool_call = {
-                            "name": search_tool_name,
-                            "arguments": {"query": route_search_query},
-                            "action_message": f"Search the web for {route_search_query}",
-                        }
+                        if search_tool_name:
+                            route_kind = "simple_tool_task"
+                            route_tool_call = {
+                                "name": search_tool_name,
+                                "arguments": {"query": route_search_query},
+                                "action_message": f"Search the web for {route_search_query}",
+                            }
+                        else:
+                            chat_mode_search_fallback_prompt = CHAT_MODE_NO_LIVE_SEARCH_PROMPT
+                            route_kind = "direct_answer"
+                            route_thought_summary = (
+                                "I do not have live web search in this turn, so I will answer from the current context."
+                            )
+                            route_tool_candidates = []
+                            route_tool_call = {}
+                            route_search_needed = False
+                            route_search_query = ""
                     else:
                         route_kind = "direct_answer"
                 elif chat_mode == CHAT_MODE_SKILL:
@@ -3330,6 +3354,12 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
         if sys_prompt
         else list(context.working_messages)
     )
+    if chat_mode_search_fallback_prompt:
+        prefix_messages = []
+        if sys_prompt:
+            prefix_messages.append({"role": "system", "content": sys_prompt})
+        prefix_messages.append({"role": "system", "content": chat_mode_search_fallback_prompt})
+        prompt_msgs = prefix_messages + list(context.working_messages)
     perf.add("build_messages", time.perf_counter() - build_started)
     tools_enabled = bool(tooling_cfg.get("enabled", True) and req.tools_enabled)
     selection_origin = "route" if chat_mode == CHAT_MODE_REACT and route_kind == "skill_task" and route_skill_ids else "none"

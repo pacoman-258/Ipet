@@ -174,14 +174,33 @@
     els.chatRateLabel.textContent = `${value >= 0 ? "+" : ""}${value}%`;
   }
 
+  function prefersWindowsPaths() {
+    const platform = String(navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+    return platform.includes("win");
+  }
+
+  function looksLikeWindowsPath(value) {
+    const text = String(value || "").trim();
+    return /^[A-Za-z]:[\\/]/.test(text) || text.startsWith("\\\\");
+  }
+
   function normalizeAllowlistPath(value) {
-    let normalized = String(value || "").trim().replace(/\//g, "\\");
+    let normalized = String(value || "").trim();
     if (!normalized) {
       return "";
     }
-    normalized = normalized.replace(/[\\]+$/g, "");
-    if (/^[A-Za-z]:$/.test(normalized)) {
-      normalized += "\\";
+    if (prefersWindowsPaths() || looksLikeWindowsPath(normalized)) {
+      normalized = normalized.replace(/\//g, "\\");
+      normalized = normalized.replace(/[\\]+$/g, "");
+      if (/^[A-Za-z]:$/.test(normalized)) {
+        normalized += "\\";
+      }
+      return normalized;
+    }
+    normalized = normalized.replace(/\\/g, "/");
+    normalized = normalized.replace(/\/+/g, "/");
+    if (normalized !== "/") {
+      normalized = normalized.replace(/\/+$/g, "");
     }
     return normalized;
   }

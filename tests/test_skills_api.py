@@ -138,6 +138,21 @@ class SkillsApiTests(unittest.TestCase):
         backend_app._reset_agent_graph_runtime()
         shutil.rmtree(self.topic_tmp, ignore_errors=True)
 
+    def test_explicit_capability_inventory_scope_accepts_visibility_phrases(self) -> None:
+        samples = {
+            "能不能看到mcp": "mcp",
+            "现在有什么mcp工具": "mcp",
+            "能不能识别mcp": "mcp",
+            "当前有什么技能": "skill",
+            "帮我发现一下工具": "both",
+            "看一下这个报错": "",
+            "现在有什么安排": "",
+        }
+
+        for text, expected in samples.items():
+            with self.subTest(text=text):
+                self.assertEqual(backend_app._explicit_capability_inventory_scope(text), expected)
+
     def test_list_skills_endpoint_returns_skills_and_default_active_ids(self) -> None:
         with _workspace_tempdir() as root:
             _write_skill(root / "skills" / "builtin" / "repo-guide")
@@ -446,7 +461,12 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(prompt_messages[0]["content"], "Base prompt")
         self.assertIn('"chat_mode": "chat"', resp.text)
 
-    def test_chat_stream_chat_mode_requires_tavily_tools(self) -> None:
+    def test_chat_stream_chat_mode_without_tavily_allows_direct_answer(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
         fake_bridge = _FakeBridge(
             [
                 Tool(
@@ -457,12 +477,27 @@ class SkillsApiTests(unittest.TestCase):
                 )
             ]
         )
+        route = SimpleNamespace(
+            route_kind="direct_answer",
+            thought_summary="No search needed",
+            skill_ids=[],
+            tool_candidates=[],
+            tool_call=None,
+            search_needed=False,
+            search_query="",
+        )
 
-        with mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
+        with mock.patch.object(backend_app, "_get_agent_graph_runtime", return_value=runtime), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
             backend_app,
             "_get_mcp_bridge_for_tooling",
             return_value=fake_bridge,
-        ):
+        ), mock.patch.object(
+            backend_app, "stream_final_reply", fake_stream_final_reply
+        ), mock.patch.object(backend_app, "classify_route", new=mock.AsyncMock(return_value=route)):
             resp = self.client.post(
                 "/api/chat/stream",
                 json={
@@ -470,11 +505,73 @@ class SkillsApiTests(unittest.TestCase):
                     "model": "demo",
                     "expression_mode": False,
                     "chat_mode": "chat",
+                    "router_enabled": True,
                 },
             )
 
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("tavily-mcp", resp.json()["detail"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(runtime.start_state["route_kind"], "direct_answer")
+        self.assertEqual(runtime.start_state["route_search_query"], "")
+        self.assertIn('"chat_mode": "chat"', resp.text)
+
+    def test_chat_stream_chat_mode_without_tavily_downgrades_search_request(self) -> None:
+        runtime = _FakeRuntime()
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "done"}
+
+        fake_bridge = _FakeBridge(
+            [
+                Tool(
+                    name="playwright_mcp.browser_navigate",
+                    description="Navigate",
+                    input_schema={"type": "object", "properties": {}},
+                    invoke=lambda _args: {"ok": True},
+                )
+            ]
+        )
+        route = SimpleNamespace(
+            route_kind="simple_tool_task",
+            thought_summary="Need live search",
+            skill_ids=[],
+            tool_candidates=[],
+            tool_call=None,
+            search_needed=True,
+            search_query="latest mcp docs",
+        )
+
+        with mock.patch.object(backend_app, "_get_agent_graph_runtime", return_value=runtime), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge_for_tooling",
+            return_value=fake_bridge,
+        ), mock.patch.object(
+            backend_app, "stream_final_reply", fake_stream_final_reply
+        ), mock.patch.object(backend_app, "classify_route", new=mock.AsyncMock(return_value=route)):
+            resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "hello",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "chat_mode": "chat",
+                    "router_enabled": True,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(runtime.start_state["route_kind"], "direct_answer")
+        self.assertFalse(runtime.start_state["route_search_needed"])
+        self.assertEqual(runtime.start_state["route_search_query"], "")
+        fallback_prompts = [
+            str(item.get("content") or "")
+            for item in (runtime.start_state.get("prompt_messages") or [])
+            if str(item.get("role") or "") == "system"
+        ]
+        self.assertTrue(any("Live web search is unavailable" in item for item in fallback_prompts))
 
     def test_chat_stream_skill_mode_requires_active_skill(self) -> None:
         with mock.patch.object(

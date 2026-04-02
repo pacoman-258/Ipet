@@ -19,5 +19,5 @@
   "description": "Created from frontend MCP server config",
   "env": {},
   "protocol": "jsonline",
-  "server_dir": "D:\\LYJ\\2. 02_学习提升\\third_round\\AI_assistant\\third_party_mcp\\playwright_mcp"
+  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/playwright_mcp"
 }
