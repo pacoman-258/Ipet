@@ -326,6 +326,47 @@ class CapabilityPlannerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.mode, "skill")
         self.assertEqual(result.skill_id, "calendar-skill")
 
+    async def test_search_capabilities_browser_skill_prompt_preserves_cross_platform_signals(self) -> None:
+        adapter = _FakePlannerAdapter(
+            lambda **_kwargs: {
+                "content": json.dumps(
+                    {
+                        "mode": "skill",
+                        "skill_id": "browser-automation",
+                        "task_types": [],
+                        "matched_tool_names": [],
+                        "reason": "The visible browser skill already covers the request.",
+                        "thought_summary": "Use the browser skill.",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        )
+
+        result = await search_capabilities(
+            messages=[{"role": "user", "content": "On my Mac, open the site and fill the form"}],
+            model="demo",
+            skill_catalog=[
+                {
+                    "skill_id": "browser-automation",
+                    "display_name": "Browser Automation",
+                    "description": "Open pages, click, type, fill forms, scrape content, upload or download files, and capture browser results on Windows or macOS",
+                    "prompt_excerpt": "Use this skill when the task is clearly about web browser automation on Windows or macOS. Keep user-provided file paths unchanged.",
+                }
+            ],
+            tool_catalog=[
+                {"name": "playwright.browser_navigate", "description": "Navigate", "task_type": "browser_automation"},
+                {"name": "desktop.click", "description": "Click a desktop app", "task_type": "desktop_automation"},
+            ],
+            provider_adapter=adapter,
+        )
+
+        self.assertEqual(result.mode, "skill")
+        self.assertEqual(result.skill_id, "browser-automation")
+        prompt = str(adapter.calls[0]["messages"][0]["content"])
+        self.assertIn("browser-automation", prompt)
+        self.assertIn("Windows or macOS", prompt)
+        self.assertIn("Keep user-provided file paths unchanged", prompt)
     async def test_search_capabilities_maps_task_types_then_narrows_tools(self) -> None:
         responses = [
             {
@@ -398,7 +439,7 @@ class CapabilityPlannerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await build_execution_plan(
-            messages=[{"role": "user", "content": "open bilibili and type 脆弱扩"}],
+            messages=[{"role": "user", "content": "open bilibili and type the query"}],
             model="demo",
             searcher_result={
                 "mode": "task_types",
@@ -426,7 +467,7 @@ class CapabilityPlannerTests(unittest.IsolatedAsyncioTestCase):
                 "inventory_skills": [],
                 "inventory_tools": [],
             },
-            user_request="搜有没有可用的 mcp",
+            user_request="鎼滄湁娌℃湁鍙敤鐨?mcp",
         )
 
         self.assertIn("deterministic inventory result", prompt)
@@ -445,7 +486,7 @@ class CapabilityPlannerTests(unittest.IsolatedAsyncioTestCase):
                     {"name": "read_file", "description": "Read a file", "source": "mcp"}
                 ],
             },
-            user_request="有哪些可用工具",
+            user_request="what tools are available",
         )
 
         self.assertIn("Planner-visible skills found", prompt)

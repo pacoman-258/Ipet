@@ -1,4 +1,4 @@
-﻿# Workflow Reference
+# Workflow Reference
 
 ## Purpose
 
@@ -236,6 +236,8 @@ prepare_context
 - The searcher only sees:
   - settings-page `default_active_ids` skills
   - runtime-registered non-skill MCP tools
+- New installs and configs that do not explicitly set skill defaults now start with the built-in `browser-automation` skill enabled, so common web-automation requests can match a visible skill before broader MCP planning.
+- The `browser-automation` skill keeps its helper scripts out of search-time MCP discovery. After that skill is selected, the runtime may also expose a few skill-local helper tools for deterministic recipe selection or long-result compaction.
 - The planner no longer picks only one skill-or-tool bundle. It now emits an execution plan:
   - `plan_id`
   - `plan_summary`
@@ -317,11 +319,13 @@ Tool exposure:
 
 - tools from selected active skills
 - allowlisted MCP tools for those skills
+- optional skill-local helper tools declared by the selected skill
 
 Use case:
 
 - run inside already selected skills
 - or continue a planner-selected skill handoff
+- for `browser-automation`, helper tools are optional accelerators, not mandatory pre-steps before every browser MCP action
 
 ### 3. `agent_loop`
 
