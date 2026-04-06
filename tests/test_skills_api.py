@@ -174,6 +174,99 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(payload["skills"][0]["id"], "pptx")
         self.assertIn("atr-pptx", payload["skills"][0]["aliases"])
 
+    def test_normalize_settings_config_defaults_browser_skill_when_not_explicit(self) -> None:
+        normalized = backend_app._normalize_settings_config({"chat": {"skills": {"enabled": True}}})
+        self.assertEqual(normalized["chat"]["skills"]["default_active_ids"], ["browser-automation"])
+
+    def test_normalize_settings_config_keeps_explicit_empty_default_skill_list(self) -> None:
+        normalized = backend_app._normalize_settings_config(
+            {"chat": {"skills": {"enabled": True, "default_active_ids": []}}}
+        )
+        self.assertEqual(normalized["chat"]["skills"]["default_active_ids"], [])
+
+    def test_list_skills_endpoint_includes_builtin_browser_automation_default(self) -> None:
+        manager = SkillManager(backend_app.ROOT_DIR)
+        settings = backend_app._normalize_settings_config({"chat": {"skills": {"enabled": True}}})
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            side_effect=lambda force_reload=False: manager,
+        ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
+            resp = self.client.get("/api/skills")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertEqual(payload["default_active_ids"], ["browser-automation"])
+        browser_skill = next(item for item in payload["skills"] if item["id"] == "browser-automation")
+        self.assertTrue(browser_skill["default_active"])
+        self.assertEqual(browser_skill["name"], "Browser Automation")
+        self.assertEqual(browser_skill["tool_allowlist"], ["playwright.", "playwright_mcp."])
+        self.assertEqual(browser_skill["script_count"], 2)
+        self.assertEqual(
+            [item["name"] for item in browser_skill["scripts"]],
+            ["resolve_mcp_recipe", "compact_browser_result"],
+        )
+        self.assertIn("Windows or macOS", browser_skill["description"])
+
+    def test_build_skill_capability_catalog_includes_browser_skill_cross_platform_excerpt(self) -> None:
+        manager = SkillManager(backend_app.ROOT_DIR)
+        runtime = backend_app.SkillRuntime(manager)
+        available_tools = [
+            Tool(
+                name="playwright.browser_navigate",
+                description="Navigate a page",
+                input_schema={"type": "object", "properties": {}},
+                invoke=lambda _args: {"ok": True},
+            ),
+            Tool(
+                name="playwright_mcp.browser_click",
+                description="Click an element",
+                input_schema={"type": "object", "properties": {}},
+                invoke=lambda _args: {"ok": True},
+            ),
+            Tool(
+                name="read_file",
+                description="Read a file",
+                input_schema={"type": "object", "properties": {}},
+                invoke=lambda _args: {"ok": True},
+            ),
+        ]
+        with mock.patch.object(
+            backend_app,
+            "_get_skill_manager",
+            side_effect=lambda force_reload=False: manager,
+        ), mock.patch.object(
+            backend_app,
+            "_get_skill_runtime",
+            side_effect=lambda force_reload=False: runtime,
+        ), mock.patch.object(
+            backend_app,
+            "_list_non_skill_tools",
+            return_value=available_tools,
+        ):
+            catalog = backend_app._build_skill_capability_catalog()
+
+        browser_skill = next(item for item in catalog if item["skill_id"] == "browser-automation")
+        self.assertEqual(
+            browser_skill["tool_names"],
+            ["playwright.browser_navigate", "playwright_mcp.browser_click"],
+        )
+        self.assertNotIn("skill.browser-automation.resolve_mcp_recipe", browser_skill["tool_names"])
+        self.assertIn("Windows or macOS", browser_skill["description"])
+        self.assertIn("open_page", browser_skill["prompt_excerpt"])
+        self.assertIn("open_and_type", browser_skill["prompt_excerpt"])
+        self.assertIn("keep user-provided file", browser_skill["prompt_excerpt"].lower())
+        self.assertNotIn("resolve_mcp_recipe", browser_skill["prompt_excerpt"])
+
+    def test_browser_automation_skill_prompt_keeps_direct_mcp_rule_and_optional_helpers(self) -> None:
+        manager = SkillManager(backend_app.ROOT_DIR)
+        record = manager.get_skill("browser-automation")
+
+        self.assertIsNotNone(record)
+        prompt_body = str(record.prompt_body)
+        self.assertIn("Prefer direct MCP calls for simple single-step actions.", prompt_body)
+        self.assertIn("Use `skill.browser-automation.compact_browser_result` only when browser output is too long", prompt_body)
+
     def test_import_local_and_delete_skill_endpoints(self) -> None:
         with _workspace_tempdir() as root:
             source_dir = _write_skill(root / "source-skill", name="Imported Skill")
@@ -295,7 +388,7 @@ class SkillsApiTests(unittest.TestCase):
             resp = self.client.post(
                 "/api/chat/stream",
                 json={
-                    "text": "帮我按 skill 工作流处理",
+                    "text": "use the skill to collect the current trend data",
                     "model": "demo",
                     "expression_mode": False,
                     "react_enabled": True,
@@ -736,7 +829,7 @@ class SkillsApiTests(unittest.TestCase):
             resp = self.client.post(
                 "/api/chat/stream",
                 json={
-                    "text": "用skill里的方式来查热点并保存",
+                    "text": "use the skill route to finish the task",
                     "model": "demo",
                     "system_prompt": "ROLEPLAY_PROMPT",
                     "expression_mode": False,
@@ -1077,7 +1170,7 @@ class SkillsApiTests(unittest.TestCase):
                     "chat_mode": "react",
                     "execution_phase": backend_app.PHASE_AGENT_LOOP,
                     "active_skill_ids": [],
-                    "user_text": "搜有没有可用的 mcp",
+                    "user_text": "閹兼粍婀佸▽鈩冩箒閸欘垳鏁ら惃?mcp",
                     "selection_origin": "none",
                     "selected_skill_ids": [],
                     "selected_tool_names": [],
@@ -1107,7 +1200,7 @@ class SkillsApiTests(unittest.TestCase):
                     "chat_mode": "react",
                     "execution_phase": backend_app.PHASE_AGENT_LOOP,
                     "active_skill_ids": [],
-                    "user_text": "搜有没有可用的 mcp",
+                    "user_text": "閹兼粍婀佸▽鈩冩箒閸欘垳鏁ら惃?mcp",
                     "selection_origin": "none",
                     "selected_skill_ids": [],
                     "selected_tool_names": [],
@@ -1258,7 +1351,7 @@ class SkillsApiTests(unittest.TestCase):
             "selected_skill_ids": [],
             "planner_excluded_skill_ids": [],
             "planner_excluded_tool_names": [],
-            "decision_messages": [{"role": "user", "content": "搜一下现在有哪些 skill"}],
+            "decision_messages": [{"role": "user", "content": "閹兼粈绔存稉瀣箛閸︺劍婀侀崫顏冪昂 skill"}],
             "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
             "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide", "calendar-skill"]}}},
             "llm_provider": "ollama",
@@ -1288,7 +1381,7 @@ class SkillsApiTests(unittest.TestCase):
             "plan_capabilities",
             side_effect=AssertionError("inventory mode should not call planner"),
         ):
-            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "搜一下现在有哪些 skill"}))
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "list available skills"}))
 
         self.assertEqual(payload["mode"], "inventory")
         self.assertEqual(payload["inventory_scope"], "skill")
@@ -1304,7 +1397,7 @@ class SkillsApiTests(unittest.TestCase):
             "selected_skill_ids": [],
             "planner_excluded_skill_ids": [],
             "planner_excluded_tool_names": [],
-            "decision_messages": [{"role": "user", "content": "搜有没有可用的 mcp"}],
+            "decision_messages": [{"role": "user", "content": "list available mcp tools"}],
             "tooling_config": {"enabled": True, "max_tool_calls_per_turn": 6},
             "settings_config": {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide"]}}},
             "llm_provider": "ollama",
@@ -1330,7 +1423,7 @@ class SkillsApiTests(unittest.TestCase):
             "plan_capabilities",
             side_effect=AssertionError("inventory mode should not call planner"),
         ):
-            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "搜有没有可用的 mcp"}))
+            payload = asyncio.run(backend_app._plan_capabilities_for_state(state, {"task": "list available mcp tools"}))
 
         self.assertEqual(payload["mode"], "inventory")
         self.assertEqual(payload["inventory_scope"], "mcp")

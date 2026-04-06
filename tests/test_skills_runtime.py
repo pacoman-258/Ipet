@@ -7,6 +7,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from backend.skills import SkillAwareToolBridge
 from backend.skills.adapters import PPTX_ADAPTER_PROFILE
 from backend.skills.manager import SkillManager
 from backend.skills.runtime import SkillRuntime, tool_name_matches_pattern
@@ -179,6 +180,136 @@ class SkillRuntimeTests(unittest.TestCase):
             self.assertIn("[Skill: Repo Guide]", resolved.prompt_text)
             self.assertEqual(resolved.tool_allowlist, ("local",))
             self.assertFalse(resolved.defaulted)
+
+    def test_builtin_browser_automation_allowlist_filters_to_browser_tools(self) -> None:
+        manager = SkillManager(Path(__file__).resolve().parents[1])
+        runtime = SkillRuntime(manager)
+        resolved = runtime.resolve_active_skills(["browser-automation"])
+
+        class _BrowserBridge:
+            def __init__(self) -> None:
+                self._tools = [
+                    Tool(
+                        name="playwright.browser_navigate",
+                        description="Navigate a page",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _arguments: {"ok": True},
+                    ),
+                    Tool(
+                        name="playwright_mcp.browser_click",
+                        description="Click a page element",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _arguments: {"ok": True},
+                    ),
+                    Tool(
+                        name="read_file",
+                        description="Read a file",
+                        input_schema={"type": "object", "properties": {}},
+                        invoke=lambda _arguments: {"ok": True},
+                    ),
+                ]
+
+            def list_registered_tools(self) -> list[Tool]:
+                return list(self._tools)
+
+        bridge = SkillAwareToolBridge(_BrowserBridge(), runtime, resolved)
+        tool_names = [tool.name for tool in bridge.list_registered_tools()]
+
+        self.assertEqual(resolved.tool_allowlist, ("playwright.", "playwright_mcp."))
+        self.assertIn("playwright.browser_navigate", tool_names)
+        self.assertIn("playwright_mcp.browser_click", tool_names)
+        self.assertIn("skill.browser-automation.resolve_mcp_recipe", tool_names)
+        self.assertIn("skill.browser-automation.compact_browser_result", tool_names)
+        self.assertNotIn("read_file", tool_names)
+
+    def test_browser_automation_resolve_mcp_recipe_prefers_visible_family_and_validates_inputs(self) -> None:
+        manager = SkillManager(Path(__file__).resolve().parents[1])
+        runtime = SkillRuntime(manager)
+        resolved = runtime.resolve_active_skills(["browser-automation"])
+        bridge = SkillAwareToolBridge(_FakeBridge(), runtime, resolved)
+
+        playwright_only = bridge.call_tool(
+            "skill.browser-automation.resolve_mcp_recipe",
+            {
+                "visible_tool_names": ["playwright.browser_navigate", "playwright.browser_type"],
+                "recipe": "open_and_type",
+                "url": "https://example.com",
+                "text": "hello",
+            },
+        )
+        playwright_mcp_only = bridge.call_tool(
+            "skill.browser-automation.resolve_mcp_recipe",
+            {
+                "visible_tool_names": ["playwright_mcp.browser_navigate", "playwright_mcp.browser_type"],
+                "recipe": "open_and_type",
+                "url": "https://example.com",
+                "text": "hello",
+            },
+        )
+        both_visible = bridge.call_tool(
+            "skill.browser-automation.resolve_mcp_recipe",
+            {
+                "visible_tool_names": [
+                    "playwright.browser_navigate",
+                    "playwright.browser_type",
+                    "playwright_mcp.browser_navigate",
+                    "playwright_mcp.browser_type",
+                ],
+                "recipe": "open_page",
+                "url": "https://example.com",
+            },
+        )
+        missing_required = bridge.call_tool(
+            "skill.browser-automation.resolve_mcp_recipe",
+            {
+                "visible_tool_names": ["playwright.browser_click"],
+                "recipe": "click_followup",
+            },
+        )
+
+        self.assertTrue(playwright_only.ok)
+        self.assertEqual(playwright_only.structured_data["family"], "playwright")
+        self.assertEqual(
+            [item["name"] for item in playwright_only.structured_data["tool_calls"]],
+            ["playwright.browser_navigate", "playwright.browser_type"],
+        )
+        self.assertTrue(playwright_mcp_only.ok)
+        self.assertEqual(playwright_mcp_only.structured_data["family"], "playwright_mcp")
+        self.assertEqual(
+            [item["name"] for item in playwright_mcp_only.structured_data["tool_calls"]],
+            ["playwright_mcp.browser_navigate", "playwright_mcp.browser_type"],
+        )
+        self.assertTrue(both_visible.ok)
+        self.assertEqual(both_visible.structured_data["family"], "playwright_mcp")
+        self.assertFalse(missing_required.ok)
+        self.assertIn("selector is required", missing_required.error)
+
+    def test_browser_automation_compact_browser_result_reduces_long_output(self) -> None:
+        manager = SkillManager(Path(__file__).resolve().parents[1])
+        runtime = SkillRuntime(manager)
+        resolved = runtime.resolve_active_skills(["browser-automation"])
+        bridge = SkillAwareToolBridge(_FakeBridge(), runtime, resolved)
+
+        result = bridge.call_tool(
+            "skill.browser-automation.compact_browser_result",
+            {
+                "raw_text": (
+                    "Result one has the main heading.\n"
+                    "Result two explains the form state in more detail.\n"
+                    "Result three repeats the success banner."
+                ),
+                "structured_data": {
+                    "title": "Example page",
+                    "status": "ready",
+                },
+                "max_items": 4,
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("Compressed raw text and structured data", result.structured_data["summary"])
+        self.assertLessEqual(len(result.structured_data["items"]), 4)
+        self.assertTrue(result.structured_data["raw_preview"].startswith("Result one"))
 
     def test_script_tools_execute_and_namespace_correctly(self) -> None:
         with _workspace_tempdir() as root:

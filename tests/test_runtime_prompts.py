@@ -121,7 +121,7 @@ class RuntimePromptsTests(unittest.TestCase):
                 "inventory_skills": [],
                 "inventory_tools": [],
             },
-            user_request="搜有没有可用 mcp",
+            user_request="鎼滄湁娌℃湁鍙敤 mcp",
         )
         reflection_prompt = runtime_prompts.tool_reflection_prompt(
             [
@@ -156,6 +156,38 @@ class RuntimePromptsTests(unittest.TestCase):
         self.assertIn("outside the visible MCP tool list", prompt)
         self.assertIn("Reason:", prompt)
 
+    def test_searcher_prompt_keeps_browser_skill_cross_platform_excerpt(self) -> None:
+        prompt = runtime_prompts.searcher_skill_match_prompt(
+            [
+                {
+                    "skill_id": "browser-automation",
+                    "display_name": "Browser Automation",
+                    "description": "Open pages, click, type, fill forms, scrape content, upload or download files, and capture browser results on Windows or macOS",
+                    "prompt_excerpt": "Common recipes + optional helper tools for browser MCP on Windows or macOS: open_page, open_and_type, click_followup, extract_or_verify. Keep user-provided file paths unchanged.",
+                }
+            ]
+        )
+
+        self.assertIn("browser-automation", prompt)
+        self.assertIn("Windows or macOS", prompt)
+        self.assertIn("open_page", prompt)
+        self.assertIn("open_and_type", prompt)
+        self.assertIn("Keep user-provided file paths unchanged", prompt)
+
+    def test_searcher_prompt_browser_recipe_excerpt_stays_recipe_first(self) -> None:
+        prompt = runtime_prompts.searcher_skill_match_prompt(
+            [
+                {
+                    "skill_id": "browser-automation",
+                    "display_name": "Browser Automation",
+                    "description": "Open pages, click, type, fill forms, scrape content, upload or download files, and capture browser results on Windows or macOS",
+                    "prompt_excerpt": "Common recipes + optional helper tools for browser MCP on Windows or macOS: open_page, open_and_type, click_followup, extract_or_verify. Keep user-provided file paths unchanged.",
+                }
+            ]
+        )
+
+        self.assertNotIn("resolve_mcp_recipe", prompt)
+        self.assertNotIn("compact_browser_result", prompt)
     def test_searcher_and_step_prompts_expose_new_step_loop_contract(self) -> None:
         searcher_prompt = runtime_prompts.searcher_skill_match_prompt(
             [
@@ -168,7 +200,7 @@ class RuntimePromptsTests(unittest.TestCase):
             ]
         )
         planner_prompt = runtime_prompts.planner_execution_plan_prompt(
-            user_text="open bilibili and type 脆弱扩",
+            user_text="open bilibili and type the query",
             searcher_result={
                 "mode": "task_types",
                 "task_types": ["browser_automation"],
@@ -180,7 +212,7 @@ class RuntimePromptsTests(unittest.TestCase):
             ],
         )
         writer_prompt = runtime_prompts.writer_step_prompt(
-            user_text="open bilibili and type 脆弱扩",
+            user_text="open bilibili and type the query",
             plan={"plan_summary": "Do the browser work."},
             step={
                 "title": "Open and type",

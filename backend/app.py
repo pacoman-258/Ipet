@@ -112,6 +112,7 @@ CHAT_MODE_CHAT = "chat"
 CHAT_MODE_SKILL = "skill"
 CHAT_MODE_VALUES = {CHAT_MODE_REACT, CHAT_MODE_CHAT, CHAT_MODE_SKILL}
 CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
+DEFAULT_ACTIVE_SKILL_IDS = ("browser-automation",)
 PHASE_SKILL_SELECTION = "skill_selection"
 PHASE_SKILL_EXECUTION = "skill_execution"
 PHASE_AGENT_LOOP = "agent_loop"
@@ -362,7 +363,7 @@ def _default_settings_config() -> dict[str, Any]:
             "tooling": json.loads(json.dumps(DEFAULT_TOOLING)),
             "skills": {
                 "enabled": True,
-                "default_active_ids": [],
+                "default_active_ids": list(DEFAULT_ACTIVE_SKILL_IDS),
             },
             "topic_history": {
                 "enabled": True,
@@ -407,6 +408,10 @@ def _canonicalize_skill_ids(values: Any, *, manager: SkillManager | None = None)
         return []
     active_manager = manager or _get_skill_manager()
     return active_manager.canonicalize_skill_ids(normalized)
+
+
+def _default_active_skill_ids(*, manager: SkillManager | None = None) -> list[str]:
+    return _canonicalize_skill_ids(list(DEFAULT_ACTIVE_SKILL_IDS), manager=manager)
 
 
 def _normalize_chat_mode(value: Any) -> str:
@@ -1172,7 +1177,7 @@ def _capability_search_tool_name_list_for_skill(
 ) -> list[str]:
     names: list[str] = []
     seen: set[str] = set()
-    for tool in [*list(resolved.resource_tools), *list(resolved.adapter_tools), *list(resolved.script_tools)]:
+    for tool in [*list(resolved.resource_tools), *list(resolved.adapter_tools)]:
         name = str(getattr(tool, "name", "") or "").strip()
         if name and name not in seen:
             seen.add(name)
@@ -1386,7 +1391,8 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(skills_cfg, dict):
         skills_cfg = {}
     skills_cfg["enabled"] = bool(skills_cfg.get("enabled", True))
-    skills_cfg["default_active_ids"] = _canonicalize_skill_ids(skills_cfg.get("default_active_ids"))
+    default_skill_ids = skills_cfg.get("default_active_ids", _default_active_skill_ids())
+    skills_cfg["default_active_ids"] = _canonicalize_skill_ids(default_skill_ids)
     chat["skills"] = skills_cfg
     topic_history_cfg = chat.get("topic_history", {})
     if not isinstance(topic_history_cfg, dict):
@@ -3000,7 +3006,7 @@ async def delete_skill(req: SkillDeleteRequest) -> dict[str, Any]:
 
     config = _load_settings_config()
     chat_cfg = config.setdefault("chat", {})
-    skills_cfg = chat_cfg.setdefault("skills", {"enabled": True, "default_active_ids": []})
+    skills_cfg = chat_cfg.setdefault("skills", {"enabled": True, "default_active_ids": _default_active_skill_ids()})
     skills_cfg["default_active_ids"] = [
         item for item in _normalize_skill_ids(skills_cfg.get("default_active_ids")) if item != skill_id
     ]
