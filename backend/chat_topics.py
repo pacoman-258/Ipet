@@ -20,9 +20,18 @@ BLOCK_RAW_MESSAGES = "raw_messages"
 BLOCK_MINI_SUMMARY = "mini_summary"
 BLOCK_MAJOR_SUMMARY = "major_summary"
 
+TOPIC_META_DEFAULTS = {
+    "last_long_term_memory_saved_marker": None,
+    "last_long_term_memory_dismissed_marker": None,
+}
+
 
 def _now_text() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _read_utf8_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _compact_text(value: Any, limit: int) -> str:
@@ -101,6 +110,7 @@ class TopicStore:
             "major_summary_count": 0,
             "pending_summary_start_assistant_turn": None,
             "pending_summary_end_assistant_turn": None,
+            **TOPIC_META_DEFAULTS,
         }
         if not persisted:
             return meta
@@ -143,17 +153,21 @@ class TopicStore:
         if not path.exists():
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(_read_utf8_text(path))
         except Exception:
             return None
-        return data if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return None
+        for key, value in TOPIC_META_DEFAULTS.items():
+            data.setdefault(key, value)
+        return data
 
     def load_full_messages(self, topic_id: str) -> list[dict[str, Any]]:
         path = self.full_path(topic_id)
         if not path.exists():
             return []
         messages: list[dict[str, Any]] = []
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
+        for raw_line in _read_utf8_text(path).splitlines():
             if not raw_line.strip():
                 continue
             try:
@@ -185,7 +199,7 @@ class TopicStore:
                 "blocks": [],
             }
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(_read_utf8_text(path))
         except Exception:
             return {
                 "topic_id": normalize_topic_id(topic_id),
@@ -237,6 +251,29 @@ class TopicStore:
             shutil.rmtree(topic_dir, ignore_errors=False)
             self._invalidate_snapshot_cache(normalized_id)
         return True
+
+    def update_long_term_memory_marker(
+        self,
+        topic_id: str,
+        *,
+        saved_marker: str | None = None,
+        dismissed_marker: str | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_id = normalize_topic_id(topic_id)
+        now_text = _now_text()
+        with self._lock:
+            meta = self.load_meta(normalized_id)
+            if meta is None:
+                return None
+            updated = deepcopy(meta)
+            if saved_marker is not None:
+                updated["last_long_term_memory_saved_marker"] = str(saved_marker or "").strip() or None
+            if dismissed_marker is not None:
+                updated["last_long_term_memory_dismissed_marker"] = str(dismissed_marker or "").strip() or None
+            updated["updated_at"] = now_text
+            self._write_json(self.meta_path(normalized_id), updated)
+            self._invalidate_snapshot_cache(normalized_id)
+            return updated
 
     def build_model_messages(self, topic_id: str) -> list[dict[str, str]]:
         summary_document = self.load_summary_document(topic_id)

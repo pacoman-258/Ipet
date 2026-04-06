@@ -108,6 +108,7 @@ decide_or_respond
 - Existing topic summaries are used to rebuild model context through one topic runtime snapshot lookup.
 - The visible UI still uses full transcript history, but `SESSION_STORE` is refreshed from the same snapshot payload.
 - `working_messages` is the active conversation state plus the current user message.
+- Topic context stays first. Long-term memory, when enabled, only adds extra context after topic context has been loaded.
 
 ### 3. Request-scoped runtime context
 
@@ -136,7 +137,16 @@ decide_or_respond
   - `delete_topic`
 - This means `/api/chat/stream` no longer separately does `has_topic()`, `build_model_messages()`, and `load_full_messages()` on the hot path.
 
-### 5. Performance metrics
+### 5. Long-term memory
+
+- Long-term memory is optional and is separate from topic history.
+- The backend should read topic context first, then read long-term memory only when the current topic does not already answer the question or the user is clearly asking about past preferences or decisions.
+- The backend should not read long-term memory on every turn.
+- The backend should write long-term memory after the turn ends, usually from a major summary or an explicit "remember this" request.
+- If the reply creates a save suggestion, the frontend can show a simple save or ignore card after the reply is done.
+- Long-term memory does not replace the raw transcript, mini summary, or major summary. Those topic files stay in place.
+
+### 6. Performance metrics
 
 - `/api/chat/stream` writes a structured backend log event named `chat_stream_perf`.
 - `/api/chat/approval` writes a structured backend log event named `chat_approval_perf`.
@@ -507,4 +517,3 @@ Update this file whenever any of the following change:
 - reject-and-follow-up behavior
 - frontend chat send, pause, or approval interaction model
 - finalization or persistence path in the chat workflow
-

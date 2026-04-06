@@ -33,6 +33,10 @@
     chatMemoryWindow: $("chat-memory-window"),
     chatTopicHistoryEnabled: $("chat-topic-history-enabled"),
     chatTopicHistorySummaryInterval: $("chat-topic-history-summary-interval"),
+    chatLongTermMemoryEnabled: $("chat-long-term-memory-enabled"),
+    chatLongTermMemoryProject: $("chat-long-term-memory-project"),
+    chatLongTermMemoryReadEnabled: $("chat-long-term-memory-read-enabled"),
+    chatLongTermMemoryAskBeforeSave: $("chat-long-term-memory-ask-before-save"),
     chatAsrEnabled: $("chat-asr-enabled"),
     chatAsrPushToTalkKey: $("chat-asr-push-to-talk-key"),
     chatAsrInterimResults: $("chat-asr-interim-results"),
@@ -116,6 +120,20 @@
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function normalizeLongTermMemoryConfig(config) {
+    const next = config && typeof config === "object" ? config : {};
+    return {
+      enabled: !!next.enabled,
+      project: String(next.project || "ipet-default").trim() || "ipet-default",
+      read_enabled: next.read_enabled !== false,
+      write_enabled: true,
+      ask_before_save: next.ask_before_save !== false,
+      prefer_topic_history: true,
+      save_from_major_summary: true,
+      save_on_explicit_request: true,
+    };
   }
 
   function setStatus(message) {
@@ -626,6 +644,7 @@
       ["模型", config?.model_path || "未设置"],
       ["TTS", config?.chat?.tts_provider || "edge_tts"],
       ["Router", config?.chat?.router_enabled ? "on" : "off"],
+      ["内建 File Tool", config?.chat?.tooling?.enabled ? "已启用" : "已停用"],
       ["第三方 MCP", config?.chat?.tooling?.third_party?.enabled ? "已启用" : "已停用"],
       ["白名单目录", `${effectiveFileAllowlist.length} 个`],
       [
@@ -778,6 +797,10 @@
     els.chatMemoryWindow.value = Number(config.chat.memory_window || 10);
     els.chatTopicHistoryEnabled.checked = config.chat?.topic_history?.enabled !== false;
     els.chatTopicHistorySummaryInterval.value = Number(config.chat?.topic_history?.summary_interval_assistant_turns || 10);
+    els.chatLongTermMemoryEnabled.checked = !!config.chat?.long_term_memory?.enabled;
+    els.chatLongTermMemoryProject.value = config.chat?.long_term_memory?.project || "ipet-default";
+    els.chatLongTermMemoryReadEnabled.checked = config.chat?.long_term_memory?.read_enabled !== false;
+    els.chatLongTermMemoryAskBeforeSave.checked = config.chat?.long_term_memory?.ask_before_save !== false;
     els.chatAsrEnabled.checked = config.chat?.asr?.enabled !== false;
     els.chatAsrPushToTalkKey.value = config.chat?.asr?.push_to_talk_key || "Alt";
     els.chatAsrInterimResults.checked = config.chat?.asr?.interim_results !== false;
@@ -842,6 +865,15 @@
         return Number.isFinite(interval) && interval > 0 ? interval : 10;
       })(),
     };
+    next.chat.long_term_memory = {
+      ...(next.chat.long_term_memory || {}),
+      ...normalizeLongTermMemoryConfig({
+        enabled: els.chatLongTermMemoryEnabled.checked,
+        project: els.chatLongTermMemoryProject.value,
+        read_enabled: els.chatLongTermMemoryReadEnabled.checked,
+        ask_before_save: els.chatLongTermMemoryAskBeforeSave.checked,
+      }),
+    };
     next.chat.asr = {
       ...(next.chat.asr || {}),
       enabled: !!els.chatAsrEnabled.checked,
@@ -887,37 +919,50 @@
     els.mcpServerList.innerHTML = "";
     if (!mcpServers.length) {
       els.mcpServerList.classList.add("empty-state");
-      els.mcpServerList.textContent = "当前还没有第三方 MCP 服务。";
+      els.mcpServerList.textContent = "当前还没有可展示的 MCP 运行时。";
       return;
     }
     els.mcpServerList.classList.remove("empty-state");
     for (const item of mcpServers) {
       const card = document.createElement("article");
       card.className = "server-card";
+      const isBuiltin = !!item.builtin || item.source_type === "builtin";
+      const canManage = !isBuiltin && item.managed !== false;
       const badgeClass = item.health_status === "failed" ? "failed" : item.enabled ? "" : "disabled";
       const tools = Array.isArray(item.tools) ? item.tools.map((tool) => tool?.function?.name || "").filter(Boolean) : [];
+      const allowlist = Array.isArray(item.allowlist) ? item.allowlist.filter(Boolean) : [];
+      const scopeMeta = isBuiltin
+        ? `<span>allowlist: ${allowlist.length} 项</span><span>管理: 由全局工具开关与允许目录控制</span>`
+        : "";
       card.innerHTML = `
         <header>
           <div class="server-title">
-            <h4>${item.name || "(unnamed)"}</h4>
+            <h4>${escapeHtml(item.name || "(unnamed)")}</h4>
             <span class="server-badge ${badgeClass}">${item.health_status || "unknown"}</span>
           </div>
           <div class="server-meta">
-            <span>runtime: ${item.runtime || "-"}</span>
-            <span>source: ${item.source_type || "-"}</span>
-            <span>install: ${item.install_status || "-"}</span>
-            <span>tools: ${tools.length ? tools.join(", ") : "-"}</span>
-            ${item.manifest_path ? `<span>manifest: ${item.manifest_path}</span>` : ""}
-            ${item.error ? `<span>error: ${item.error}</span>` : ""}
+            <span>runtime: ${escapeHtml(item.runtime || "-")}</span>
+            <span>source: ${escapeHtml(item.source_type || "-")}</span>
+            <span>install: ${escapeHtml(item.install_status || "-")}</span>
+            <span>tools: ${escapeHtml(tools.length ? tools.join(", ") : "-")}</span>
+            ${scopeMeta}
+            ${item.manifest_path ? `<span>manifest: ${escapeHtml(item.manifest_path)}</span>` : ""}
+            ${item.error ? `<span>error: ${escapeHtml(item.error)}</span>` : ""}
           </div>
         </header>
-        <div class="button-row wrap">
+        ${
+          canManage
+            ? `<div class="button-row wrap">
           <button type="button" class="pill-button" data-action="toggle">${item.enabled ? "停用" : "启用"}</button>
           <button type="button" class="ghost-button danger-button" data-action="delete">删除</button>
-        </div>
+        </div>`
+            : `<div class="field-hint">内建 file-tool 会随运行时自动注册，不支持在这里删除或单独停用。</div>`
+        }
       `;
-      card.querySelector('[data-action="toggle"]').addEventListener("click", () => wrapAction(() => toggleMcpServer(item.name, !item.enabled)));
-      card.querySelector('[data-action="delete"]').addEventListener("click", () => wrapAction(() => deleteMcpServer(item.name)));
+      if (canManage) {
+        card.querySelector('[data-action="toggle"]').addEventListener("click", () => wrapAction(() => toggleMcpServer(item.name, !item.enabled)));
+        card.querySelector('[data-action="delete"]').addEventListener("click", () => wrapAction(() => deleteMcpServer(item.name)));
+      }
       els.mcpServerList.appendChild(card);
     }
   }

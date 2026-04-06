@@ -42,10 +42,12 @@ from .agent_orchestrator import (
     execute_tool_calls,
     stream_final_reply,
 )
+from .mcp.local_server import LocalMCPServer
 from .mcp_bridge import MCPBridge
 from .mcp.third_party_manager import ThirdPartyMCPManager
 from .models import (
     ChatApprovalRequest,
+    ChatMemoryDecisionRequest,
     ChatStreamRequest,
     MCPDeleteRequest,
     MCPServerCreateRequest,
@@ -113,6 +115,12 @@ CHAT_MODE_CHAT = "chat"
 CHAT_MODE_SKILL = "skill"
 CHAT_MODE_VALUES = {CHAT_MODE_REACT, CHAT_MODE_CHAT, CHAT_MODE_SKILL}
 CHAT_MODE_TAVILY_TOOL_PREFIX = "tavily-mcp."
+LONG_TERM_MEMORY_TOOL_PREFIX = "basic_memory."
+LONG_TERM_MEMORY_TOOL_SEARCH = f"{LONG_TERM_MEMORY_TOOL_PREFIX}search_notes"
+LONG_TERM_MEMORY_TOOL_READ = f"{LONG_TERM_MEMORY_TOOL_PREFIX}read_note"
+LONG_TERM_MEMORY_TOOL_WRITE = f"{LONG_TERM_MEMORY_TOOL_PREFIX}write_note"
+LONG_TERM_MEMORY_FOLDER = "ipet"
+LONG_TERM_MEMORY_TAGS = ["ipet", "long-term-memory"]
 CHAT_MODE_NO_LIVE_SEARCH_PROMPT = (
     "Live web search is unavailable in this chat-mode turn. "
     "Answer using only the conversation context and your general built-in knowledge. "
@@ -200,6 +208,19 @@ MCP_SERVER_PRESETS = {
             }
         },
         "notes": "Uses the official Playwright MCP pattern from the repository README.",
+    },
+    "basic_memory": {
+        "label": "Basic Memory",
+        "name": "basic_memory",
+        "config": {
+            "mcpServers": {
+                "basic_memory": {
+                    "command": "uvx",
+                    "args": ["basic-memory", "mcp"],
+                }
+            }
+        },
+        "notes": "Persistent long-term memory. This is for cross-chat memory, not the current topic context.",
     }
 }
 
@@ -397,6 +418,16 @@ def _default_settings_config() -> dict[str, Any]:
                 "enabled": True,
                 "summary_interval_assistant_turns": 10,
             },
+            "long_term_memory": {
+                "enabled": False,
+                "project": "ipet-default",
+                "read_enabled": True,
+                "write_enabled": True,
+                "ask_before_save": True,
+                "prefer_topic_history": True,
+                "save_from_major_summary": True,
+                "save_on_explicit_request": True,
+            },
             "asr": json.loads(json.dumps(default_asr_config)),
             "system_prompt": "",
         },
@@ -476,6 +507,23 @@ def _topic_history_config(settings_config: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(topic_history_cfg.get("enabled", True)),
         "summary_interval_assistant_turns": interval,
         "major_summary_group_size": 3,
+    }
+
+
+def _long_term_memory_config(settings_config: dict[str, Any]) -> dict[str, Any]:
+    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
+    raw_cfg = chat_cfg.get("long_term_memory", {}) if isinstance(chat_cfg, dict) else {}
+    if not isinstance(raw_cfg, dict):
+        raw_cfg = {}
+    return {
+        "enabled": bool(raw_cfg.get("enabled", False)),
+        "project": str(raw_cfg.get("project") or "ipet-default").strip() or "ipet-default",
+        "read_enabled": bool(raw_cfg.get("read_enabled", True)),
+        "write_enabled": bool(raw_cfg.get("write_enabled", True)),
+        "ask_before_save": bool(raw_cfg.get("ask_before_save", True)),
+        "prefer_topic_history": bool(raw_cfg.get("prefer_topic_history", True)),
+        "save_from_major_summary": bool(raw_cfg.get("save_from_major_summary", True)),
+        "save_on_explicit_request": bool(raw_cfg.get("save_on_explicit_request", True)),
     }
 
 
@@ -576,6 +624,433 @@ def _extract_message_content(message: dict[str, Any]) -> str:
                     parts.append(text)
         return _sanitize_ai_text("\n".join(parts)).strip()
     return _sanitize_ai_text(str(content or "")).strip()
+
+
+def _call_basic_memory_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    tooling_cfg: dict[str, Any] | None = None,
+) -> ToolResult | None:
+    bridge = _get_mcp_bridge_for_tooling(tooling_cfg) if isinstance(tooling_cfg, dict) else _get_mcp_bridge()
+    if bridge is None:
+        return None
+    try:
+        registered = list(bridge.list_registered_tools() or [])
+    except Exception:
+        registered = []
+    names = {str(getattr(item, "name", "") or "").strip() for item in registered}
+    if str(tool_name or "").strip() not in names:
+        return None
+    return bridge.call_tool(tool_name, arguments)
+
+
+def _tool_result_payload(result: ToolResult | None) -> Any:
+    if result is None:
+        return None
+    if result.structured_data is not None:
+        return result.structured_data
+    content = str(result.content or "").strip()
+    if not content:
+        return None
+    try:
+        return json.loads(content)
+    except Exception:
+        return content
+
+
+def _flatten_memory_search_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        for key in ("results", "items", "notes", "matches", "entries"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _memory_item_identifier(item: dict[str, Any]) -> str:
+    for key in ("identifier", "permalink", "path", "slug", "url", "id", "title"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _memory_item_title(item: dict[str, Any], fallback: str = "Untitled Memory") -> str:
+    for key in ("title", "name", "path", "identifier", "slug"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return fallback
+
+
+def _memory_item_excerpt(item: dict[str, Any]) -> str:
+    for key in ("summary", "excerpt", "preview", "content", "text"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _extract_memory_note_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("content", "text", "markdown", "body", "note"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+            if isinstance(nested, dict):
+                nested_text = _extract_memory_note_text(nested)
+                if nested_text:
+                    return nested_text
+        return ""
+    return ""
+
+
+def _looks_like_explicit_memory_request(user_text: str) -> bool:
+    text = str(user_text or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "记住这个",
+        "记下来",
+        "帮我记住",
+        "请记住",
+        "别忘了",
+        "不要忘",
+        "remember this",
+        "remember that",
+        "save this",
+        "keep this in mind",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _looks_like_cross_topic_memory_query(user_text: str) -> bool:
+    text = str(user_text or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "以前说过",
+        "之前说过",
+        "之前提过",
+        "以前提过",
+        "之前定过",
+        "之前决定",
+        "还记得",
+        "我喜欢什么",
+        "我不喜欢什么",
+        "我的偏好",
+        "上次聊过",
+        "before",
+        "previously",
+        "earlier",
+        "remember about",
+        "what do i like",
+        "what did i say",
+        "what did we decide",
+        "my preference",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _should_read_long_term_memory(
+    *,
+    user_text: str,
+    topic_snapshot: Any | None,
+    long_term_memory_cfg: dict[str, Any],
+) -> bool:
+    if not long_term_memory_cfg.get("enabled") or not long_term_memory_cfg.get("read_enabled"):
+        return False
+    if not _looks_like_cross_topic_memory_query(user_text):
+        return False
+    if not long_term_memory_cfg.get("prefer_topic_history", True):
+        return True
+    if topic_snapshot is None:
+        return True
+    assistant_turn_count = int((topic_snapshot.meta or {}).get("assistant_turn_count") or 0)
+    return assistant_turn_count <= 1
+
+
+def _build_long_term_memory_message(
+    *,
+    user_text: str,
+    topic_snapshot: Any | None,
+    long_term_memory_cfg: dict[str, Any],
+    tooling_cfg: dict[str, Any],
+) -> dict[str, str] | None:
+    if not _should_read_long_term_memory(
+        user_text=user_text,
+        topic_snapshot=topic_snapshot,
+        long_term_memory_cfg=long_term_memory_cfg,
+    ):
+        return None
+    project = str(long_term_memory_cfg.get("project") or "ipet-default").strip() or "ipet-default"
+    search_result = _call_basic_memory_tool(
+        LONG_TERM_MEMORY_TOOL_SEARCH,
+        {"query": str(user_text or "").strip(), "project": project},
+        tooling_cfg=tooling_cfg,
+    )
+    if search_result is None or not search_result.ok:
+        return None
+    search_items = _flatten_memory_search_items(_tool_result_payload(search_result))[:3]
+    if not search_items:
+        return None
+    lines = ["[Long-term Memory]"]
+    for index, item in enumerate(search_items, start=1):
+        title = _memory_item_title(item, fallback=f"Memory {index}")
+        identifier = _memory_item_identifier(item)
+        note_text = ""
+        if identifier:
+            read_result = _call_basic_memory_tool(
+                LONG_TERM_MEMORY_TOOL_READ,
+                {"identifier": identifier, "project": project},
+                tooling_cfg=tooling_cfg,
+            )
+            if read_result is not None and read_result.ok:
+                note_text = _extract_memory_note_text(_tool_result_payload(read_result))
+        preview = _compact_text(note_text or _memory_item_excerpt(item), 240)
+        if not preview:
+            continue
+        lines.append(f"{index}. {title}\n{preview}")
+    if len(lines) <= 1:
+        return None
+    return {"role": "system", "content": "\n\n".join(lines)}
+
+
+def _latest_major_summary_block(summary_document: dict[str, Any]) -> dict[str, Any] | None:
+    for block in reversed(list(summary_document.get("blocks") or [])):
+        if isinstance(block, dict) and str(block.get("type") or "") == "major_summary":
+            return block
+    return None
+
+
+def _memory_lines_from_text(value: str, *, limit: int = 5) -> list[str]:
+    parts: list[str] = []
+    for raw_line in str(value or "").replace("\r", "\n").split("\n"):
+        text = str(raw_line or "").strip(" -\t")
+        if not text:
+            continue
+        for fragment in re.split(r"[。！？!?]\s*|\.\s+", text):
+            cleaned = str(fragment or "").strip(" -\t")
+            if cleaned:
+                parts.append(cleaned)
+        if len(parts) >= limit:
+            break
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in parts:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _memory_preference_lines(lines: list[str]) -> list[str]:
+    keywords = (
+        "喜欢",
+        "不喜欢",
+        "偏好",
+        "习惯",
+        "决定",
+        "需要",
+        "不要",
+        "限制",
+        "计划",
+        "prefer",
+        "like",
+        "dislike",
+        "decid",
+        "need",
+        "must",
+        "avoid",
+    )
+    selected = [item for item in lines if any(keyword in item.lower() for keyword in keywords)]
+    return selected[:3]
+
+
+def _build_long_term_memory_candidate_content(
+    *,
+    summary_text: str,
+    topic_meta: dict[str, Any],
+    marker: str,
+    start_turn: int,
+    end_turn: int,
+) -> str:
+    summary = str(summary_text or "").strip()
+    bullet_lines = _memory_lines_from_text(summary)
+    stable_lines = bullet_lines[:3]
+    preference_lines = _memory_preference_lines(bullet_lines)
+    updated_at = str(topic_meta.get("updated_at") or "")
+    title = str(topic_meta.get("title") or DEFAULT_TOPIC_TITLE).strip() or DEFAULT_TOPIC_TITLE
+    topic_id = str(topic_meta.get("topic_id") or "").strip()
+    content_lines = [
+        "# Summary",
+        summary or "No summary available.",
+        "",
+        "## Stable Facts",
+    ]
+    if stable_lines:
+        content_lines.extend([f"- {item}" for item in stable_lines])
+    else:
+        content_lines.append("- None noted.")
+    content_lines.extend(["", "## Preferences / Decisions"])
+    if preference_lines:
+        content_lines.extend([f"- {item}" for item in preference_lines])
+    else:
+        content_lines.append("- None noted.")
+    content_lines.extend(
+        [
+            "",
+            "## Source",
+            f"- topic_id: {topic_id}",
+            f"- title: {title}",
+            f"- start_turn: {int(start_turn or 0)}",
+            f"- end_turn: {int(end_turn or 0)}",
+            f"- updated_at: {updated_at}",
+            f"- marker: {marker}",
+        ]
+    )
+    return "\n".join(content_lines).strip()
+
+
+def _build_long_term_memory_candidate(
+    *,
+    topic_meta: dict[str, Any],
+    marker: str,
+    source_kind: str,
+    summary_text: str,
+    start_turn: int,
+    end_turn: int,
+) -> dict[str, Any]:
+    title = str(topic_meta.get("title") or DEFAULT_TOPIC_TITLE).strip() or DEFAULT_TOPIC_TITLE
+    return {
+        "marker": marker,
+        "title": f"{title} | {marker}",
+        "content": _build_long_term_memory_candidate_content(
+            summary_text=summary_text,
+            topic_meta=topic_meta,
+            marker=marker,
+            start_turn=start_turn,
+            end_turn=end_turn,
+        ),
+        "source_kind": str(source_kind or "").strip(),
+        "start_turn": int(start_turn or 0),
+        "end_turn": int(end_turn or 0),
+        "folder": LONG_TERM_MEMORY_FOLDER,
+        "tags": list(LONG_TERM_MEMORY_TAGS),
+    }
+
+
+def _marker_already_handled(meta: dict[str, Any], marker: str) -> bool:
+    normalized = str(marker or "").strip()
+    if not normalized:
+        return True
+    return normalized in {
+        str(meta.get("last_long_term_memory_saved_marker") or "").strip(),
+        str(meta.get("last_long_term_memory_dismissed_marker") or "").strip(),
+    }
+
+
+def _build_long_term_memory_suggestion(
+    *,
+    detail: dict[str, Any] | None,
+    previous_meta: dict[str, Any] | None,
+    user_text: str,
+    assistant_text: str,
+    long_term_memory_cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    if detail is None:
+        return None
+    topic_meta = detail.get("meta") if isinstance(detail.get("meta"), dict) else {}
+    summary_document = detail.get("summary") if isinstance(detail.get("summary"), dict) else {}
+    current_meta = topic_meta if isinstance(topic_meta, dict) else {}
+    previous = previous_meta if isinstance(previous_meta, dict) else {}
+    if long_term_memory_cfg.get("save_on_explicit_request") and _looks_like_explicit_memory_request(user_text):
+        end_turn = int(current_meta.get("assistant_turn_count") or 0)
+        marker = f"explicit:{end_turn}"
+        if not _marker_already_handled(current_meta, marker):
+            summary_text = f"User request: {str(user_text or '').strip()}\nAssistant reply: {str(assistant_text or '').strip()}".strip()
+            return _build_long_term_memory_candidate(
+                topic_meta=current_meta,
+                marker=marker,
+                source_kind="explicit",
+                summary_text=summary_text,
+                start_turn=end_turn,
+                end_turn=end_turn,
+            )
+    previous_major_count = int(previous.get("major_summary_count") or 0)
+    current_major_count = int(current_meta.get("major_summary_count") or 0)
+    if not long_term_memory_cfg.get("save_from_major_summary") or current_major_count <= previous_major_count:
+        return None
+    major_block = _latest_major_summary_block(summary_document)
+    if major_block is None:
+        return None
+    end_turn = int(major_block.get("end_assistant_turn") or 0)
+    marker = f"major:{end_turn}"
+    if _marker_already_handled(current_meta, marker):
+        return None
+    return _build_long_term_memory_candidate(
+        topic_meta=current_meta,
+        marker=marker,
+        source_kind="major",
+        summary_text=str(major_block.get("content") or "").strip(),
+        start_turn=int(major_block.get("start_assistant_turn") or 0),
+        end_turn=end_turn,
+    )
+
+
+def _save_long_term_memory_candidate(
+    *,
+    topic_id: str,
+    candidate: dict[str, Any],
+    long_term_memory_cfg: dict[str, Any],
+    tooling_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    marker = str(candidate.get("marker") or "").strip()
+    title = str(candidate.get("title") or "").strip()
+    content = str(candidate.get("content") or "").strip()
+    if not marker or not title or not content:
+        raise ValueError("memory candidate is incomplete")
+    project = str(long_term_memory_cfg.get("project") or "ipet-default").strip() or "ipet-default"
+    search_result = _call_basic_memory_tool(
+        LONG_TERM_MEMORY_TOOL_SEARCH,
+        {"query": f"{normalize_topic_id(topic_id)} {marker}", "project": project},
+        tooling_cfg=tooling_cfg,
+    )
+    if search_result is not None and search_result.ok:
+        for item in _flatten_memory_search_items(_tool_result_payload(search_result)):
+            haystack = " ".join(
+                [
+                    _memory_item_title(item, fallback=""),
+                    _memory_item_identifier(item),
+                    _memory_item_excerpt(item),
+                ]
+            ).strip()
+            if marker and normalize_topic_id(topic_id) in haystack and marker in haystack:
+                return {"ok": True, "saved": False, "duplicate": True}
+    write_result = _call_basic_memory_tool(
+        LONG_TERM_MEMORY_TOOL_WRITE,
+        {
+            "project": project,
+            "title": title,
+            "folder": str(candidate.get("folder") or LONG_TERM_MEMORY_FOLDER),
+            "tags": list(candidate.get("tags") or LONG_TERM_MEMORY_TAGS),
+            "content": content,
+        },
+        tooling_cfg=tooling_cfg,
+    )
+    if write_result is None:
+        raise RuntimeError("basic_memory.write_note is not available")
+    if not write_result.ok:
+        raise RuntimeError(str(write_result.error or "basic_memory.write_note failed"))
+    return {"ok": True, "saved": True, "duplicate": False}
 
 
 async def _generate_topic_summary_text(
@@ -708,11 +1183,13 @@ async def _finalize_chat_exchange(
     api_base_url: str,
     api_key: str,
     model: str,
-) -> None:
+) -> dict[str, Any]:
     topic_cfg = _topic_history_config(settings_config)
+    long_term_memory_cfg = _long_term_memory_config(settings_config)
     if topic_cfg["enabled"]:
         topic_id = normalize_topic_id(session_id)
         store = _get_chat_topic_store()
+        previous_meta = store.load_meta(topic_id) or {}
         store.append_exchange(topic_id, user_text=user_text, assistant_text=assistant_text)
         await _maybe_update_topic_summaries(
             topic_id=topic_id,
@@ -722,14 +1199,34 @@ async def _finalize_chat_exchange(
             api_key=api_key,
             model=model,
         )
+        detail = store.get_topic_detail(topic_id)
+        suggestion = _build_long_term_memory_suggestion(
+            detail=detail,
+            previous_meta=previous_meta,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            long_term_memory_cfg=long_term_memory_cfg,
+        )
         snapshot = store.get_runtime_snapshot(topic_id)
         if snapshot is not None:
             SESSION_STORE[topic_id] = [dict(item) for item in snapshot.full_messages]
         else:
             SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
-        return
+        if suggestion is not None and long_term_memory_cfg.get("enabled") and long_term_memory_cfg.get("write_enabled"):
+            if long_term_memory_cfg.get("ask_before_save", True):
+                return {"memory_save_suggestion": suggestion}
+            save_result = _save_long_term_memory_candidate(
+                topic_id=topic_id,
+                candidate=suggestion,
+                long_term_memory_cfg=long_term_memory_cfg,
+                tooling_cfg=_derive_runtime_tooling_config(settings_config),
+            )
+            store.update_long_term_memory_marker(topic_id, saved_marker=str(suggestion.get("marker") or ""))
+            return {"memory_saved": save_result}
+        return {}
     updated = list(working_messages) + [{"role": "assistant", "content": assistant_text}]
     SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
+    return {}
 
 
 def _skill_summaries_for_route(
@@ -1171,7 +1668,7 @@ def _list_non_skill_tools(tooling_cfg: dict[str, Any] | None = None) -> list[Too
     out: list[Tool] = []
     for tool in tools:
         name = str(getattr(tool, "name", "") or "").strip()
-        if not name or name.startswith("skill."):
+        if not name or name.startswith("skill.") or name.startswith(LONG_TERM_MEMORY_TOOL_PREFIX):
             continue
         out.append(tool)
     return out
@@ -1437,6 +1934,18 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         topic_history_cfg["summary_interval_assistant_turns"] = 10
     chat["topic_history"] = topic_history_cfg
+    long_term_memory_cfg = chat.get("long_term_memory", {})
+    if not isinstance(long_term_memory_cfg, dict):
+        long_term_memory_cfg = {}
+    long_term_memory_cfg["enabled"] = bool(long_term_memory_cfg.get("enabled", False))
+    long_term_memory_cfg["project"] = str(long_term_memory_cfg.get("project") or "ipet-default").strip() or "ipet-default"
+    long_term_memory_cfg["read_enabled"] = bool(long_term_memory_cfg.get("read_enabled", True))
+    long_term_memory_cfg["write_enabled"] = bool(long_term_memory_cfg.get("write_enabled", True))
+    long_term_memory_cfg["ask_before_save"] = bool(long_term_memory_cfg.get("ask_before_save", True))
+    long_term_memory_cfg["prefer_topic_history"] = bool(long_term_memory_cfg.get("prefer_topic_history", True))
+    long_term_memory_cfg["save_from_major_summary"] = bool(long_term_memory_cfg.get("save_from_major_summary", True))
+    long_term_memory_cfg["save_on_explicit_request"] = bool(long_term_memory_cfg.get("save_on_explicit_request", True))
+    chat["long_term_memory"] = long_term_memory_cfg
     asr_cfg = chat.get("asr", {})
     if not isinstance(asr_cfg, dict):
         asr_cfg = {}
@@ -2205,6 +2714,7 @@ def _build_chat_request_context(req: ChatStreamRequest, perf: PerfTracker) -> Ch
     raw_session_id = str(req.session_id or "").strip()
     chat_mode = _normalize_chat_mode(req.chat_mode)
     topic_history_cfg = _topic_history_config(settings_config)
+    long_term_memory_cfg = _long_term_memory_config(settings_config)
     session_id = normalize_topic_id(raw_session_id or "default") if topic_history_cfg["enabled"] else (raw_session_id or "default")
     router_cfg = _resolve_router_request_config(req, settings_config)
     resolved_skills = perf.time_call(
@@ -2226,6 +2736,16 @@ def _build_chat_request_context(req: ChatStreamRequest, perf: PerfTracker) -> Ch
     else:
         perf.add("load_topic_snapshot", 0.0)
         history_messages = _trim_messages(SESSION_STORE.get(session_id, []), req.memory_window)
+    long_term_memory_message = perf.time_call(
+        "load_long_term_memory",
+        _build_long_term_memory_message,
+        user_text=text,
+        topic_snapshot=topic_snapshot,
+        long_term_memory_cfg=long_term_memory_cfg,
+        tooling_cfg=tooling_cfg,
+    )
+    if long_term_memory_message is not None:
+        history_messages = list(history_messages) + [long_term_memory_message]
     working_messages = list(history_messages) + [{"role": "user", "content": text}]
     return ChatRequestContext(
         raw_config=raw_config,
@@ -2419,6 +2939,42 @@ def _iter_registered_mcp_server_configs() -> tuple[dict[str, Any], list[dict[str
     return third_cfg, out
 
 
+def _builtin_local_mcp_tools() -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for item in getattr(LocalMCPServer, "TOOL_SPECS", []) or []:
+        if isinstance(item, dict):
+            tools.append(json.loads(json.dumps(item, ensure_ascii=False)))
+    return tools
+
+
+def _builtin_local_mcp_server_status(tooling_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = tooling_cfg if isinstance(tooling_cfg, dict) else _load_runtime_tooling_config()
+    allowlist = [
+        str(item)
+        for item in normalize_file_allowlist(
+            cfg.get("file_allowlist"),
+            default_paths=[str(ROOT_DIR)],
+        )
+    ]
+    enabled = bool(cfg.get("enabled", True))
+    return {
+        "name": "builtin_file_tools",
+        "enabled": enabled,
+        "builtin": True,
+        "managed": False,
+        "version": "builtin",
+        "runtime": "inproc",
+        "source_type": "builtin",
+        "source": "backend.mcp.local_server",
+        "manifest_path": "",
+        "install_status": "ready",
+        "health_status": "online" if enabled else "disabled",
+        "tools": _builtin_local_mcp_tools(),
+        "allowlist": allowlist,
+        "error": "",
+    }
+
+
 def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
     third_cfg, server_cfgs = _iter_registered_mcp_server_configs()
     third_enabled = bool(third_cfg.get("enabled", False))
@@ -2432,7 +2988,7 @@ def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
         }
 
     manager = ThirdPartyMCPManager(ROOT_DIR)
-    servers: list[dict[str, Any]] = []
+    servers: list[dict[str, Any]] = [_builtin_local_mcp_server_status()]
     for server_cfg in server_cfgs:
         name = str(server_cfg.get("name") or "").strip()
         if not name:
@@ -3321,6 +3877,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
             "derive_settings_tooling",
             "resolve_skills",
             "load_topic_snapshot",
+            "load_long_term_memory",
             "router_classify",
             "build_messages",
             "graph_start",
@@ -3414,6 +3971,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
         stream_ok = False
         error_message = ""
         pending_turn = False
+        finalize_result: dict[str, Any] = {}
         runtime = _get_agent_graph_runtime()
         try:
             outcome = await perf.time_await(
@@ -3581,7 +4139,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                     full_answer += clean_delta
                     yield _sse("token", {"delta": clean_delta})
             full_answer = _sanitize_ai_text(full_answer)
-            await perf.time_await(
+            finalize_result = await perf.time_await(
                 "finalize_exchange",
                 _finalize_chat_exchange(
                     session_id=session_id,
@@ -3596,6 +4154,9 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                     model=str(req.model or "qwen3:8b"),
                 ),
             )
+            suggestion = finalize_result.get("memory_save_suggestion")
+            if isinstance(suggestion, dict):
+                yield _sse("memory_save_suggestion", {"topic_id": session_id, "candidate": suggestion})
             yield _sse("done", {"text": full_answer, "topic_id": session_id})
             stream_ok = True
         except Exception as exc:
@@ -3615,6 +4176,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 "derive_settings_tooling",
                 "resolve_skills",
                 "load_topic_snapshot",
+                "load_long_term_memory",
                 "router_classify",
                 "build_messages",
                 "graph_start",
@@ -3649,6 +4211,7 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
         stream_ok = False
         error_message = ""
         pending_turn = False
+        finalize_result: dict[str, Any] = {}
         try:
             outcome = await perf.time_await(
                 "approval_resume",
@@ -3792,7 +4355,7 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
         memory_window = int(state.get("memory_window") or 10)
         settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else _load_settings_config()
         try:
-            await perf.time_await(
+            finalize_result = await perf.time_await(
                 "finalize_exchange",
                 _finalize_chat_exchange(
                     session_id=session_id,
@@ -3807,6 +4370,9 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
                     model=str(state.get("model") or "qwen3:8b"),
                 ),
             )
+            suggestion = finalize_result.get("memory_save_suggestion")
+            if isinstance(suggestion, dict):
+                yield _sse("memory_save_suggestion", {"topic_id": session_id, "candidate": suggestion})
             yield _sse("done", {"text": full_answer, "topic_id": session_id})
             stream_ok = True
         except Exception as exc:
@@ -3820,7 +4386,7 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
                 _clear_turn_tool_bridge_cache(cleanup_turn_id)
             elif error_message and not pending_turn:
                 _clear_turn_tool_bridge_cache(req.turn_id)
-            _ensure_perf_keys(perf, "approval_resume", "finalize_exchange")
+            _ensure_perf_keys(perf, "approval_resume", "load_long_term_memory", "finalize_exchange")
             _log_perf_event(
                 "chat_approval_perf",
                 session_id=str(state.get("session_id") or "default"),
@@ -3834,6 +4400,51 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
             )
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.post("/api/chat/memory/decision")
+async def post_chat_memory_decision(req: ChatMemoryDecisionRequest) -> dict[str, Any]:
+    topic_id = str(req.topic_id or "").strip()
+    if not topic_id:
+        raise HTTPException(status_code=400, detail="topic_id is required")
+
+    detail = _get_chat_topic_store().get_topic_detail(topic_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="topic not found")
+
+    marker = str(req.candidate.marker or "").strip()
+    if not marker:
+        raise HTTPException(status_code=400, detail="candidate.marker is required")
+
+    action = str(req.action or "").strip().lower()
+    store = _get_chat_topic_store()
+    if action == "dismiss":
+        meta = store.update_long_term_memory_marker(topic_id, dismissed_marker=marker)
+        return {"ok": True, "action": "dismiss", "topic_id": topic_id, "marker": marker, "meta": meta or {}}
+
+    if action != "save":
+        raise HTTPException(status_code=400, detail="action must be save or dismiss")
+
+    settings_config = _load_settings_config()
+    long_term_memory_cfg = _long_term_memory_config(settings_config)
+    if not long_term_memory_cfg.get("enabled") or not long_term_memory_cfg.get("write_enabled"):
+        raise HTTPException(status_code=400, detail="long-term memory writing is disabled")
+    candidate_payload = req.candidate.model_dump() if hasattr(req.candidate, "model_dump") else req.candidate.dict()
+    save_result = _save_long_term_memory_candidate(
+        topic_id=topic_id,
+        candidate=candidate_payload,
+        long_term_memory_cfg=long_term_memory_cfg,
+        tooling_cfg=_derive_runtime_tooling_config(settings_config),
+    )
+    meta = store.update_long_term_memory_marker(topic_id, saved_marker=marker)
+    return {
+        "ok": True,
+        "action": "save",
+        "topic_id": topic_id,
+        "marker": marker,
+        "result": save_result,
+        "meta": meta or {},
+    }
 
 
 @app.post("/api/chat/topics")
@@ -3919,8 +4530,16 @@ async def list_mcp_servers() -> dict[str, Any]:
 
 @app.get("/api/mcp/health")
 async def mcp_health() -> dict[str, Any]:
-    bridge = _get_mcp_bridge()
-    return bridge.health()
+    tooling_cfg = _load_runtime_tooling_config()
+    bridge = _get_mcp_bridge_for_tooling(tooling_cfg)
+    payload = bridge.health()
+    servers = [_builtin_local_mcp_server_status(tooling_cfg), *list(payload.get("servers") or [])]
+    return {
+        **payload,
+        "builtin_enabled": bool(tooling_cfg.get("enabled", True)),
+        "servers": servers,
+        "online": sum(1 for item in servers if str(item.get("health_status") or "").strip().lower() == "online"),
+    }
 
 
 @app.post("/api/mcp/create-config")

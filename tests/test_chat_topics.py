@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import unittest
 from pathlib import Path
@@ -165,6 +166,114 @@ class TopicStoreTests(unittest.TestCase):
 
         self.assertTrue(self.store.delete_topic("demo-topic"))
         self.assertNotIn("demo-topic", self.store._snapshot_cache)
+
+    def test_load_meta_backfills_long_term_memory_marker_defaults(self) -> None:
+        meta = self.store.create_topic(topic_id="demo-topic")
+        meta.pop("last_long_term_memory_saved_marker", None)
+        meta.pop("last_long_term_memory_dismissed_marker", None)
+        meta_path = self.root / "demo-topic" / "meta.json"
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        loaded = self.store.load_meta("demo-topic") or {}
+
+        self.assertIn("last_long_term_memory_saved_marker", loaded)
+        self.assertIn("last_long_term_memory_dismissed_marker", loaded)
+        self.assertIsNone(loaded["last_long_term_memory_saved_marker"])
+        self.assertIsNone(loaded["last_long_term_memory_dismissed_marker"])
+
+    def test_update_long_term_memory_marker_persists_values_and_delete_cleans_state(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        self.store.append_exchange("demo-topic", user_text="hello", assistant_text="world")
+        snapshot = self.store.get_runtime_snapshot("demo-topic")
+
+        self.assertIsNotNone(snapshot)
+        self.assertIn("demo-topic", self.store._snapshot_cache)
+
+        updated = self.store.update_long_term_memory_marker(
+            "demo-topic",
+            saved_marker="major:30",
+            dismissed_marker="explicit:2",
+        )
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["last_long_term_memory_saved_marker"], "major:30")
+        self.assertEqual(updated["last_long_term_memory_dismissed_marker"], "explicit:2")
+        self.assertNotIn("demo-topic", self.store._snapshot_cache)
+
+        loaded = self.store.load_meta("demo-topic") or {}
+        self.assertEqual(loaded["last_long_term_memory_saved_marker"], "major:30")
+        self.assertEqual(loaded["last_long_term_memory_dismissed_marker"], "explicit:2")
+
+        self.assertTrue(self.store.delete_topic("demo-topic"))
+        self.assertIsNone(self.store.load_meta("demo-topic"))
+        self.assertNotIn("demo-topic", self.store._snapshot_cache)
+
+    def test_windows_utf8_bom_topic_files_are_still_readable(self) -> None:
+        meta = self.store.create_topic(topic_id="demo-topic")
+        meta["title"] = "demo-topic"
+        meta["preview"] = "world"
+        meta["persisted"] = True
+        meta["assistant_turn_count"] = 1
+        meta["pending_summary_start_assistant_turn"] = 1
+        meta["pending_summary_end_assistant_turn"] = 1
+        detail_dir = self.root / "demo-topic"
+        meta_path = detail_dir / "meta.json"
+        summary_path = detail_dir / "summary.json"
+        full_path = detail_dir / "full.jsonl"
+
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "topic_id": "demo-topic",
+                    "updated_at": meta["updated_at"],
+                    "blocks": [
+                        {
+                            "type": BLOCK_RAW_MESSAGES,
+                            "start_assistant_turn": 1,
+                            "end_assistant_turn": 1,
+                            "created_at": meta["updated_at"],
+                            "updated_at": meta["updated_at"],
+                            "messages": [
+                                {"role": "user", "content": "hello", "created_at": meta["updated_at"], "assistant_turn": 1},
+                                {
+                                    "role": "assistant",
+                                    "content": "world",
+                                    "created_at": meta["updated_at"],
+                                    "assistant_turn": 1,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8-sig",
+        )
+        full_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {"role": "user", "content": "hello", "created_at": meta["updated_at"], "assistant_turn": 1},
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {"role": "assistant", "content": "world", "created_at": meta["updated_at"], "assistant_turn": 1},
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8-sig",
+        )
+
+        topics = self.store.list_topics()
+        detail = self.store.get_topic_detail("demo-topic") or {}
+
+        self.assertEqual([item["topic_id"] for item in topics], ["demo-topic"])
+        self.assertEqual([item["content"] for item in detail["messages"]], ["hello", "world"])
+        self.assertEqual(detail["summary"]["blocks"][0]["type"], BLOCK_RAW_MESSAGES)
 
 
 if __name__ == "__main__":

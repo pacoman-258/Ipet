@@ -33,6 +33,21 @@ class ChatApprovalRequest(BaseModel):
     user_text: str = Field(default="")
 
 
+class ChatMemoryCandidate(BaseModel):
+    marker: str
+    title: str
+    content: str
+    source_kind: str = Field(default="")
+    start_turn: int = Field(default=0)
+    end_turn: int = Field(default=0)
+
+
+class ChatMemoryDecisionRequest(BaseModel):
+    topic_id: str
+    action: str
+    candidate: ChatMemoryCandidate
+
+
 class TTSRequest(BaseModel):
     text: str
     voice: str = Field(default="zh-CN-XiaoxiaoNeural")

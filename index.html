@@ -1180,6 +1180,87 @@
       color: #765260;
     }
 
+    .memory-suggestion {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(224, 185, 205, 0.92);
+      background: linear-gradient(180deg, rgba(255, 250, 252, 0.98), rgba(255, 243, 247, 0.96));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .memory-suggestion-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .memory-suggestion-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #6f4b5d;
+    }
+
+    .memory-suggestion-source {
+      font-size: 11px;
+      font-weight: 700;
+      color: #9a657b;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(235, 203, 217, 0.8);
+      border-radius: 999px;
+      padding: 3px 8px;
+    }
+
+    .memory-suggestion-preview {
+      font-size: 12px;
+      line-height: 1.65;
+      color: #66505b;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .memory-suggestion-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .memory-suggestion-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #6a4654;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.12);
+    }
+
+    .memory-suggestion-btn.save {
+      background: linear-gradient(180deg, rgba(215, 255, 233, 0.98), rgba(190, 245, 216, 0.96));
+      color: #306f50;
+    }
+
+    .memory-suggestion-btn.dismiss {
+      background: linear-gradient(180deg, rgba(255, 240, 245, 0.98), rgba(255, 220, 232, 0.96));
+      color: #8a4c68;
+    }
+
+    .memory-suggestion-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .memory-suggestion-status {
+      font-size: 12px;
+      color: #765260;
+    }
+
     #chat-input-wrap {
       border-top: 1px solid rgba(246, 203, 222, 0.9);
       padding: 14px;
@@ -1674,6 +1755,7 @@
       let thoughtSessionCounter = 0;
       const approvalBubbleRefs = new Map();
       const approvalThoughtSessionRefs = new Map();
+      const memorySuggestionRefs = new Map();
       let chatSkillCatalog = [];
       let chatSkillDefaultIds = [];
       let chatSelectedSkillIds = [];
@@ -2595,6 +2677,7 @@
           return;
         }
         chatMessagesEl.innerHTML = "";
+        memorySuggestionRefs.clear();
         for (const item of Array.isArray(messages) ? messages : []) {
           if (!item || typeof item !== "object") {
             continue;
@@ -3806,6 +3889,185 @@
         return message;
       }
 
+      function normalizeMemorySuggestion(payload = {}) {
+        const raw = payload && typeof payload === "object" ? payload : {};
+        const candidateRaw = raw.candidate && typeof raw.candidate === "object" ? raw.candidate : raw;
+        const marker = String(candidateRaw.marker || raw.marker || candidateRaw.id || raw.id || "").trim();
+        const topicId = String(raw.topic_id || candidateRaw.topic_id || currentTopicId || state.chat?.session_id || "").trim();
+        const title = String(candidateRaw.title || raw.title || "长期记忆建议").trim() || "长期记忆建议";
+        const sourceKind = String(candidateRaw.source_kind || raw.source_kind || raw.source || "topic").trim() || "topic";
+        const preview = String(
+          raw.preview ||
+            raw.summary ||
+            candidateRaw.preview ||
+            candidateRaw.summary ||
+            candidateRaw.content ||
+            raw.content ||
+            ""
+        ).trim();
+        const startTurn = Number(candidateRaw.start_turn || raw.start_turn || 0) || 0;
+        const endTurn = Number(candidateRaw.end_turn || raw.end_turn || 0) || 0;
+        const key = `${topicId || "default"}:${marker || `${sourceKind}:${endTurn || startTurn || "pending"}`}`;
+        return {
+          key,
+          topicId,
+          marker,
+          title,
+          sourceKind,
+          preview,
+          candidate: {
+            marker,
+            title,
+            content: String(candidateRaw.content || raw.content || preview || title).trim(),
+            source_kind: sourceKind,
+            start_turn: startTurn,
+            end_turn: endTurn,
+          },
+        };
+      }
+
+      async function postMemoryDecision(topicId, action, candidate) {
+        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
+        if (!backend) {
+          throw new Error("后端地址未配置");
+        }
+        const resp = await fetch(`${backend}/api/chat/memory/decision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            topic_id: String(topicId || currentTopicId || state.chat?.session_id || "").trim(),
+            action,
+            candidate,
+          }),
+        });
+        if (!resp.ok) {
+          let detail = `HTTP ${resp.status}`;
+          try {
+            const data = await resp.json();
+            detail = String(data?.detail || data?.message || detail);
+          } catch (_) {
+            try {
+              const text = await resp.text();
+              if (text) {
+                detail = text;
+              }
+            } catch (_) {}
+          }
+          throw new Error(detail);
+        }
+        return resp;
+      }
+
+      function setMemorySuggestionStatus(ref, message, disabled = false) {
+        if (!ref) {
+          return;
+        }
+        if (ref.saveBtn) {
+          ref.saveBtn.disabled = !!disabled;
+        }
+        if (ref.dismissBtn) {
+          ref.dismissBtn.disabled = !!disabled;
+        }
+        if (ref.statusEl) {
+          ref.statusEl.textContent = String(message || "");
+        }
+      }
+
+      function appendMemorySuggestionCard(payload, ensureFinalMessage) {
+        const suggestion = normalizeMemorySuggestion(payload);
+        if (!suggestion.key) {
+          return null;
+        }
+        const existing = memorySuggestionRefs.get(suggestion.key);
+        if (existing) {
+          return existing;
+        }
+        const message = typeof ensureFinalMessage === "function" ? ensureFinalMessage() : null;
+        if (!message || !message.el) {
+          return null;
+        }
+
+        const card = document.createElement("div");
+        card.className = "memory-suggestion";
+
+        const headEl = document.createElement("div");
+        headEl.className = "memory-suggestion-head";
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "memory-suggestion-title";
+        titleEl.textContent = "长期记忆建议";
+
+        const sourceEl = document.createElement("div");
+        sourceEl.className = "memory-suggestion-source";
+        sourceEl.textContent = `${suggestion.sourceKind}${suggestion.marker ? ` · ${suggestion.marker}` : ""}`;
+
+        const previewEl = document.createElement("div");
+        previewEl.className = "memory-suggestion-preview";
+        previewEl.textContent = suggestion.preview || suggestion.candidate.content || "这段内容可以保存成长期记忆。";
+
+        const actionWrap = document.createElement("div");
+        actionWrap.className = "memory-suggestion-actions";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "memory-suggestion-btn save";
+        saveBtn.textContent = "保存";
+
+        const dismissBtn = document.createElement("button");
+        dismissBtn.type = "button";
+        dismissBtn.className = "memory-suggestion-btn dismiss";
+        dismissBtn.textContent = "忽略";
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "memory-suggestion-status";
+
+        actionWrap.appendChild(saveBtn);
+        actionWrap.appendChild(dismissBtn);
+        headEl.appendChild(titleEl);
+        headEl.appendChild(sourceEl);
+        card.appendChild(headEl);
+        card.appendChild(previewEl);
+        card.appendChild(actionWrap);
+        card.appendChild(statusEl);
+        message.el.appendChild(card);
+
+        const ref = { card, saveBtn, dismissBtn, statusEl };
+        memorySuggestionRefs.set(suggestion.key, ref);
+
+        const resolveOnce = (text) => {
+          setMemorySuggestionStatus(ref, text, true);
+        };
+
+        saveBtn.addEventListener("click", async () => {
+          if (saveBtn.disabled) {
+            return;
+          }
+          setMemorySuggestionStatus(ref, "正在保存...", true);
+          try {
+            await postMemoryDecision(suggestion.topicId, "save", suggestion.candidate);
+            resolveOnce("已保存");
+          } catch (error) {
+            setMemorySuggestionStatus(ref, `保存失败：${error?.message || String(error)}`, false);
+          }
+        });
+
+        dismissBtn.addEventListener("click", async () => {
+          if (dismissBtn.disabled) {
+            return;
+          }
+          setMemorySuggestionStatus(ref, "正在忽略...", true);
+          try {
+            await postMemoryDecision(suggestion.topicId, "dismiss", suggestion.candidate);
+            resolveOnce("已忽略");
+          } catch (error) {
+            setMemorySuggestionStatus(ref, `忽略失败：${error?.message || String(error)}`, false);
+          }
+        });
+
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return ref;
+      }
+
       async function consumeChatStream(resp, options = {}) {
         if (!resp.ok) {
           let detail = `chat http ${resp.status}`;
@@ -3910,6 +4172,9 @@
               awaitingApproval = true;
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               appendApprovalBubble(payload, thoughtSessionId);
+            } else if (eventName === "memory_save_suggestion") {
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
+              appendMemorySuggestionCard(payload, ensureFinalMessage);
             } else if (eventName === "segment") {
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               receivedStructuredSegment = true;

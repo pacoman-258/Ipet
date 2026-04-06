@@ -20,7 +20,7 @@
         <a href="#model">模型</a>
         <a href="#chat">聊天与 TTS</a>
         <a href="#skills">Agent Skills</a>
-        <a href="#mcp">第三方 MCP</a>
+        <a href="#mcp">MCP 工具</a>
         <a href="#pet">形象参数</a>
         <a href="#window">窗口</a>
       </nav>
@@ -37,7 +37,7 @@
         <div class="hero-copy">
           <span class="eyebrow">Desktop Pet WebUI</span>
           <h2>可爱风设置中心</h2>
-          <p>模型切换、动作预览、TTS 预设和第三方 MCP 都能在浏览器里完成。</p>
+          <p>模型切换、动作预览、TTS 预设和 MCP 工具管理都能在浏览器里完成。</p>
         </div>
         <div class="hero-summary" id="summary-cards"></div>
 
@@ -214,9 +214,38 @@
             <span>小总结频率</span>
             <input id="chat-topic-history-summary-interval" type="number" min="1" step="1" />
           </label>
+          <label class="field">
+            <span>长期记忆</span>
+            <label class="inline-toggle">
+              <input id="chat-long-term-memory-enabled" type="checkbox" />
+              <span>启用长期记忆</span>
+            </label>
+          </label>
+          <label class="field">
+            <span>长期记忆项目名</span>
+            <input id="chat-long-term-memory-project" type="text" placeholder="ipet-default" />
+          </label>
+          <label class="field">
+            <span>读取长期记忆</span>
+            <label class="inline-toggle">
+              <input id="chat-long-term-memory-read-enabled" type="checkbox" />
+              <span>聊天时允许读取长期记忆</span>
+            </label>
+          </label>
+          <label class="field">
+            <span>保存前确认</span>
+            <label class="inline-toggle">
+              <input id="chat-long-term-memory-ask-before-save" type="checkbox" />
+              <span>保存前先确认</span>
+            </label>
+          </label>
           <div class="field wide">
             <span>说明</span>
             <span class="field-hint">大总结固定每 3 个小总结合并一次</span>
+          </div>
+          <div class="field wide">
+            <span>长期记忆说明</span>
+            <span class="field-hint">当前话题先保留在本地记录里，长期记忆只保存更稳定的偏好、决定和任务。</span>
           </div>
           <label class="field">
             <span>ASR</span>
@@ -377,8 +406,8 @@
       <section id="mcp" class="panel-card">
         <div class="section-head">
           <div>
-            <h3>第三方 MCP</h3>
-            <p>直接新建 MCP server JSON 配置来安装。前端可直接套用 `playwright-mcp` 范式，保存后会长期保留。</p>
+            <h3>MCP 工具与服务</h3>
+            <p>这里会统一展示内建 file-tool 和第三方 MCP 服务。第三方服务仍然通过 MCP server JSON 配置安装，内建 file-tool 由全局工具开关和允许目录控制。</p>
           </div>
         </div>
 
@@ -414,7 +443,7 @@
           </div>
         </div>
 
-        <div id="mcp-server-list" class="server-grid empty-state">正在加载第三方 MCP 状态...</div>
+        <div id="mcp-server-list" class="server-grid empty-state">正在加载 MCP 运行时状态...</div>
       </section>
 
       <section id="pet" class="panel-card">

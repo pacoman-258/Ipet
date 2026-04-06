@@ -36,6 +36,26 @@ class MCPServerConfigTests(unittest.TestCase):
         self.assertEqual(manifest["protocol"], "jsonline")
         self.assertEqual(manifest["install"]["type"], "none")
 
+    def test_register_server_config_from_uvx_basic_memory_shape(self) -> None:
+        root = self._workspace_temp_root()
+        manager = ThirdPartyMCPManager(root)
+        manifest_path = manager.register_server_config(
+            {
+                "mcpServers": {
+                    "basic_memory": {
+                        "command": "uvx",
+                        "args": ["basic-memory", "mcp"],
+                    }
+                }
+            }
+        )
+        manifest = manager.load_manifest(manifest_path)
+        self.assertEqual(manifest["name"], "basic_memory")
+        self.assertEqual(manifest["runtime"], "python")
+        self.assertEqual(manifest["entry"]["command"], "uvx")
+        self.assertEqual(manifest["entry"]["args"], ["basic-memory", "mcp"])
+        self.assertEqual(manifest["install"]["type"], "none")
+
     def test_delete_server_removes_managed_directory(self) -> None:
         root = self._workspace_temp_root()
         manager = ThirdPartyMCPManager(root)

@@ -295,6 +295,90 @@ class ChatSegmentedFlowTests(unittest.TestCase):
         self.assertIn("default", backend_app.SESSION_STORE)
         self.assertEqual(backend_app._get_agent_graph_runtime().pending_turn_ids(), [])
 
+    def test_chat_approval_emits_memory_save_suggestion_before_done(self) -> None:
+        async def fake_decide_turn(**_kwargs):
+            return TurnDecision(
+                needs_tool=True,
+                thought_summary="Need a tool first",
+                action_message="I should read test.txt first",
+                tool_calls=[ToolIntent(name="read_file", arguments={"path": "test.txt"})],
+            )
+
+        async def fake_stream_final_reply(**_kwargs):
+            yield {"type": "final_delta", "delta": "Final answer ready."}
+
+        fake_bridge = mock.Mock()
+        fake_bridge.list_tools.return_value = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                },
+            }
+        ]
+
+        with mock.patch.object(backend_app, "decide_turn", fake_decide_turn), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=fake_bridge), mock.patch.object(
+            backend_app, "_get_mcp_bridge_for_tooling", return_value=fake_bridge
+        ):
+            self.client.post(
+                "/api/chat/stream",
+                json={
+                    "text": "Read test.txt",
+                    "model": "demo",
+                    "expression_mode": False,
+                    "react_enabled": True,
+                    "max_reasoning_steps": 1,
+                    "router_enabled": False,
+                    "system_prompt": '{"character":{"name_cn":"Demo"}}',
+                },
+            )
+
+        turn_id = self._pending_turn_id()
+        suggestion = {
+            "marker": "major:30",
+            "title": "Demo Topic | major:30",
+            "content": "# Summary\nLong-term memory suggestion",
+            "source_kind": "major",
+            "start_turn": 1,
+            "end_turn": 30,
+        }
+        with mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "max_tool_calls_per_turn": 6},
+        ), mock.patch.object(backend_app, "_get_mcp_bridge", return_value=mock.Mock()), mock.patch.object(
+            backend_app, "_get_mcp_bridge_for_tooling", return_value=mock.Mock()
+        ), mock.patch.object(
+            backend_app,
+            "execute_tool_calls",
+            return_value=[
+                ToolExecution(
+                    name="read_file",
+                    arguments={"path": "test.txt"},
+                    ok=True,
+                    summary="read ok",
+                    payload=json.dumps({"ok": True, "result_preview": "demo"}, ensure_ascii=False),
+                )
+            ],
+        ), mock.patch.object(backend_app, "stream_final_reply", fake_stream_final_reply), mock.patch.object(
+            backend_app,
+            "_finalize_chat_exchange",
+            new=mock.AsyncMock(return_value={"memory_save_suggestion": suggestion}),
+        ):
+            resp = self.client.post("/api/chat/approval", json={"turn_id": turn_id, "approved": True})
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.text
+        self.assertIn("event: memory_save_suggestion", body)
+        self.assertIn("event: done", body)
+        self.assertLess(body.index("event: memory_save_suggestion"), body.index("event: done"))
+
     def test_chat_approval_logs_perf_metrics(self) -> None:
         async def fake_decide_turn(**_kwargs):
             return TurnDecision(
