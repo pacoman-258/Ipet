@@ -10,6 +10,14 @@
   <script src="./js/live2d.min.js"></script>
   <script src="./js/pixi.min.js"></script>
   <script src="./js/index.min.js"></script>
+  <script>
+    (() => {
+      const platform = String(navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+      if (platform.includes("mac")) {
+        document.documentElement.classList.add("platform-macos");
+      }
+    })();
+  </script>
 
   <style>
     :root {
@@ -62,6 +70,13 @@
     body {
       font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--panel-text);
+    }
+
+    html.platform-macos {
+      --window-inset: 0px;
+      --window-radius: 0px;
+      --chrome-height: 0px;
+      --shell-shadow: none;
     }
 
     #window-background {
@@ -124,6 +139,10 @@
       z-index: 13;
     }
 
+    html.platform-macos #window-frame {
+      display: none;
+    }
+
     #status {
       position: fixed;
       left: calc(var(--window-inset) + var(--sidebar-width-current) + 14px);
@@ -141,6 +160,10 @@
       white-space: pre;
       min-width: 210px;
       display: none;
+    }
+
+    html.platform-macos #status {
+      top: 18px;
     }
 
     #error {
@@ -161,6 +184,10 @@
       pointer-events: none;
     }
 
+    html.platform-macos #error {
+      bottom: 18px;
+    }
+
     #shell-app {
       position: fixed;
       inset: var(--window-inset);
@@ -179,6 +206,14 @@
       pointer-events: none;
     }
 
+    html.platform-macos #shell-app {
+      background: linear-gradient(
+        135deg,
+        rgba(255, 244, 248, 0.18),
+        rgba(237, 243, 255, 0.16)
+      );
+    }
+
     #shell-app::before {
       content: "";
       position: absolute;
@@ -186,6 +221,10 @@
       border-radius: inherit;
       border: 1px solid rgba(255, 255, 255, 0.62);
       pointer-events: none;
+    }
+
+    html.platform-macos #shell-app::before {
+      display: none;
     }
 
     #shell-app::after {
@@ -219,6 +258,10 @@
         rgba(248, 244, 255, calc(0.26 + var(--shell-overlay) * 0.28))
       );
       pointer-events: auto;
+    }
+
+    html.platform-macos #shell-chrome {
+      display: none;
     }
 
     #shell-chrome-lights {
@@ -304,6 +347,10 @@
       box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.44);
       overflow: hidden;
       pointer-events: auto;
+    }
+
+    html.platform-macos #shell-sidebar {
+      padding-top: 22px;
     }
 
     #shell-sidebar::before,
