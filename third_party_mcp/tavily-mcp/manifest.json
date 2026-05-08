@@ -1,7 +1,7 @@
 {
   "name": "tavily-mcp",
   "version": "0.1.0",
-  "enabled": true,
+  "enabled": false,
   "transport": "stdio",
   "runtime": "node",
   "workdir": ".",
@@ -22,5 +22,8 @@
     "DEFAULT_PARAMETERS": "{\"include_images\": true, \"max_results\": 15, \"search_depth\": \"advanced\"}"
   },
   "protocol": "jsonline",
-  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/tavily-mcp"
+  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/tavily-mcp",
+  "manifest_path": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/tavily-mcp/manifest.json",
+  "workdir_path": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/tavily-mcp",
+  "storage_scope": "legacy"
 }

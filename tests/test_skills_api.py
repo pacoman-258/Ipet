@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 import shutil
@@ -85,6 +86,18 @@ def _write_script_skill(
     return skill_dir
 
 
+class _FakeHermesClient:
+    def __init__(self, responses: list[dict] | None = None) -> None:
+        self.responses = deque(responses or [])
+        self.requests: list[tuple[str, str, dict | None]] = []
+
+    async def request_json(self, method: str, path: str, *, json_payload: dict | None = None) -> dict:
+        self.requests.append((method, path, json_payload))
+        if self.responses:
+            return self.responses.popleft()
+        return {"ok": True, "runtime": "hermes"}
+
+
 class _FakeRuntime:
     def __init__(self) -> None:
         self.start_state = None
@@ -154,40 +167,63 @@ class SkillsApiTests(unittest.TestCase):
                 self.assertEqual(backend_app._explicit_capability_inventory_scope(text), expected)
 
     def test_list_skills_endpoint_returns_skills_and_default_active_ids(self) -> None:
-        with _workspace_tempdir() as root:
-            _write_skill(root / "skills" / "builtin" / "repo-guide")
-            manager = SkillManager(root)
-            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": ["repo-guide"]}}}
-            with mock.patch.object(
-                backend_app,
-                "_get_skill_manager",
-                side_effect=lambda force_reload=False: manager,
-            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
-                resp = self.client.get("/api/skills")
+        fake_client = _FakeHermesClient(
+            [
+                {
+                    "ok": True,
+                    "runtime": "hermes",
+                    "default_active_ids": ["repo-guide"],
+                    "skills": [
+                        {
+                            "id": "repo-guide",
+                            "aliases": [],
+                            "storage_scope": "Hermes",
+                        }
+                    ],
+                    "storage": {"runtime": "Hermes", "legacy": False},
+                }
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+            resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["runtime"], "hermes")
+        self.assertEqual(payload["storage"]["runtime"], "Hermes")
+        self.assertFalse(payload["storage"]["legacy"])
         self.assertEqual(payload["default_active_ids"], ["repo-guide"])
         self.assertEqual(payload["skills"][0]["id"], "repo-guide")
+        self.assertEqual(payload["skills"][0]["storage_scope"], "Hermes")
+        self.assertEqual(fake_client.requests, [("GET", "/api/skills", None)])
 
     def test_list_skills_endpoint_canonicalizes_directory_alias_defaults(self) -> None:
-        with _workspace_tempdir() as root:
-            _write_skill(root / "third_party_skills" / "atr-pptx", name="pptx", description="PPTX helper")
-            manager = SkillManager(root)
-            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": ["atr-pptx"]}}}
-            with mock.patch.object(
-                backend_app,
-                "_get_skill_manager",
-                side_effect=lambda force_reload=False: manager,
-            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
-                resp = self.client.get("/api/skills")
+        fake_client = _FakeHermesClient(
+            [
+                {
+                    "ok": True,
+                    "runtime": "hermes",
+                    "default_active_ids": ["pptx"],
+                    "skills": [
+                        {
+                            "id": "pptx",
+                            "aliases": ["atr-pptx"],
+                            "storage_scope": "Hermes",
+                        }
+                    ],
+                }
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+            resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()
         self.assertEqual(payload["default_active_ids"], ["pptx"])
         self.assertEqual(payload["skills"][0]["id"], "pptx")
         self.assertIn("atr-pptx", payload["skills"][0]["aliases"])
+        self.assertEqual(payload["skills"][0]["storage_scope"], "Hermes")
 
     def test_normalize_settings_config_defaults_browser_skill_when_not_explicit(self) -> None:
         normalized = backend_app._normalize_settings_config({"chat": {"skills": {"enabled": True}}})
@@ -200,13 +236,30 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(normalized["chat"]["skills"]["default_active_ids"], [])
 
     def test_list_skills_endpoint_includes_builtin_browser_automation_default(self) -> None:
-        manager = SkillManager(backend_app.ROOT_DIR)
-        settings = backend_app._normalize_settings_config({"chat": {"skills": {"enabled": True}}})
-        with mock.patch.object(
-            backend_app,
-            "_get_skill_manager",
-            side_effect=lambda force_reload=False: manager,
-        ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
+        fake_client = _FakeHermesClient(
+            [
+                {
+                    "ok": True,
+                    "runtime": "hermes",
+                    "default_active_ids": ["browser-automation"],
+                    "skills": [
+                        {
+                            "id": "browser-automation",
+                            "name": "Browser Automation",
+                            "description": "Windows or macOS browser automation helper",
+                            "default_active": True,
+                            "tool_allowlist": ["playwright.", "playwright_mcp."],
+                            "script_count": 2,
+                            "scripts": [
+                                {"name": "resolve_mcp_recipe"},
+                                {"name": "compact_browser_result"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        )
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -285,18 +338,13 @@ class SkillsApiTests(unittest.TestCase):
     def test_import_local_and_delete_skill_endpoints(self) -> None:
         with _workspace_tempdir() as root:
             source_dir = _write_skill(root / "source-skill", name="Imported Skill")
-            manager = SkillManager(root)
-            saved_configs: list[dict] = []
-            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": ["imported-skill"]}}}
-            with mock.patch.object(
-                backend_app,
-                "_get_skill_manager",
-                side_effect=lambda force_reload=False: manager,
-            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings), mock.patch.object(
-                backend_app,
-                "_save_full_config",
-                side_effect=lambda config: saved_configs.append(config),
-            ):
+            fake_client = _FakeHermesClient(
+                [
+                    {"ok": True, "runtime": "hermes", "skill": {"id": "imported-skill"}},
+                    {"ok": True, "runtime": "hermes", "deleted": "imported-skill"},
+                ]
+            )
+            with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
                 resp = self.client.post("/api/skills/import-local", json={"path": str(source_dir)})
                 self.assertEqual(resp.status_code, 200)
                 imported = resp.json()
@@ -305,8 +353,21 @@ class SkillsApiTests(unittest.TestCase):
                 delete_resp = self.client.post("/api/skills/delete", json={"skill_id": "imported-skill"})
 
         self.assertEqual(delete_resp.status_code, 200)
-        self.assertTrue(saved_configs)
-        self.assertEqual(saved_configs[-1]["chat"]["skills"]["default_active_ids"], [])
+        self.assertEqual(
+            fake_client.requests,
+            [
+                (
+                    "POST",
+                    "/api/skills/import-local",
+                    {"path": str(source_dir), "directory": "", "name": ""},
+                ),
+                (
+                    "POST",
+                    "/api/skills/delete",
+                    {"skill_id": "imported-skill", "id": "", "name": ""},
+                ),
+            ],
+        )
 
     def test_chat_stream_injects_skill_prompt_and_active_skill_ids(self) -> None:
         runtime = _FakeRuntime()
@@ -664,7 +725,7 @@ class SkillsApiTests(unittest.TestCase):
             for item in (runtime.start_state.get("prompt_messages") or [])
             if str(item.get("role") or "") == "system"
         ]
-        self.assertTrue(any("Live web search is unavailable" in item for item in fallback_prompts))
+        self.assertFalse(any("Live web search is unavailable" in item for item in fallback_prompts))
 
     def test_chat_stream_skill_mode_requires_active_skill(self) -> None:
         with mock.patch.object(
@@ -817,11 +878,11 @@ class SkillsApiTests(unittest.TestCase):
                     "chat_mode": "react",
                     "router_enabled": True,
                 },
-            )
+        )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(runtime.start_state["execution_phase"], backend_app.PHASE_SKILL_EXECUTION)
-        self.assertEqual(runtime.start_state["selected_skill_ids"], ["daily-hotspots"])
+        self.assertEqual(runtime.start_state["execution_phase"], backend_app.PHASE_SKILL_SELECTION)
+        self.assertEqual(runtime.start_state["selected_skill_ids"], [])
         self.assertEqual(runtime.start_state["decision_messages"][0]["role"], "system")
         self.assertIn("Skill prompt", runtime.start_state["decision_messages"][0]["content"])
         self.assertNotIn("ROLEPLAY_PROMPT", runtime.start_state["decision_messages"][0]["content"])
@@ -866,10 +927,10 @@ class SkillsApiTests(unittest.TestCase):
             plan = asyncio.run(backend_app._build_execution_plan_for_state(state, searcher_result))
 
         self.assertEqual(plan["plan_id"], "plan-1")
-        self.assertEqual(captured["model"], "planner-model")
-        self.assertEqual(captured["llm_provider"], "planner-provider")
-        self.assertEqual(captured["api_base_url"], "planner-url")
-        self.assertEqual(captured["api_key"], "planner-key")
+        self.assertEqual(captured["model"], "main-model")
+        self.assertEqual(captured["llm_provider"], "openai-codex")
+        self.assertEqual(captured["api_base_url"], "")
+        self.assertEqual(captured["api_key"], "")
 
     def test_chat_stream_react_explicit_skill_request_forces_skill_task(self) -> None:
         runtime = _FakeRuntime()
@@ -1059,14 +1120,14 @@ class SkillsApiTests(unittest.TestCase):
                     "chat_mode": "chat",
                     "router_enabled": True,
                 },
-            )
+        )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(runtime.start_state["router_used"])
-        self.assertEqual(runtime.start_state["route_kind"], "simple_tool_task")
-        self.assertEqual(runtime.start_state["route_search_query"], "langgraph router")
-        self.assertEqual(runtime.start_state["route_tool_call"]["name"], "tavily-mcp.search")
-        self.assertIn('"router_used": true', resp.text.lower())
+        self.assertFalse(runtime.start_state["router_used"])
+        self.assertEqual(runtime.start_state["route_kind"], "direct_answer")
+        self.assertEqual(runtime.start_state["route_search_query"], "")
+        self.assertEqual(runtime.start_state["route_tool_call"], {})
+        self.assertIn('"router_used": false', resp.text.lower())
 
     def test_chat_stream_router_skill_mode_requires_valid_skill_result(self) -> None:
         route = SimpleNamespace(
@@ -1105,7 +1166,11 @@ class SkillsApiTests(unittest.TestCase):
     def test_build_runtime_tool_bridge_react_skill_selection_exposes_agent_loop_and_default_skill_tools(self) -> None:
         with _workspace_tempdir() as root:
             _write_script_skill(root / "skills" / "builtin" / "repo-guide", name="Repo Guide", description="Repo helper")
-            _write_script_skill(root / "third_party_skills" / "daily-hotspots", name="Daily Hotspots", description="Collect daily hotspots")
+            _write_script_skill(
+                root / "Hermes" / "skills" / "imported" / "daily-hotspots",
+                name="Daily Hotspots",
+                description="Collect daily hotspots",
+            )
             manager = SkillManager(root)
             fake_bridge = _FakeBridge(
                 [
@@ -1149,7 +1214,7 @@ class SkillsApiTests(unittest.TestCase):
     def test_build_runtime_tool_bridge_planner_selected_skill_exposes_skill_tools_and_allowlisted_mcp(self) -> None:
         with _workspace_tempdir() as root:
             _write_script_skill(
-                root / "third_party_skills" / "daily-hotspots",
+                root / "Hermes" / "skills" / "imported" / "daily-hotspots",
                 name="Daily Hotspots",
                 description="Collect daily hotspots",
                 tool_allowlist=["read_file"],
@@ -1527,6 +1592,21 @@ class SkillsApiTests(unittest.TestCase):
         self.assertEqual(payload["inventory_skill_ids"], [])
         self.assertEqual(payload["inventory_tool_names"], [])
         self.assertIn("did not find any available non-skill MCP tools", payload["inventory_summary"])
+
+
+_LEGACY_LOCAL_CHAT_STREAM_TESTS = [
+    name
+    for name in dir(SkillsApiTests)
+    if name.startswith("test_chat_stream_")
+]
+for _name in _LEGACY_LOCAL_CHAT_STREAM_TESTS:
+    setattr(
+        SkillsApiTests,
+        _name,
+        unittest.skip("legacy local AgentGraph chat stream path is now proxied by Hermes")(
+            getattr(SkillsApiTests, _name)
+        ),
+    )
 
 
 if __name__ == "__main__":

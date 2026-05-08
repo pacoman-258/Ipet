@@ -12,14 +12,24 @@ from .tool_runtime import Tool, ToolRegistry, ToolResult
 
 
 class MCPBridge:
-    def __init__(self, tooling_config: dict[str, Any], root_dir: Path) -> None:
+    def __init__(
+        self,
+        tooling_config: dict[str, Any],
+        root_dir: Path,
+        mcp_base_dir: Path | None = None,
+        legacy_mcp_base_dir: Path | None = None,
+    ) -> None:
         self.tooling_config = tooling_config or {}
         self.root_dir = root_dir
         allowlist = self.tooling_config.get("file_allowlist") or [str(root_dir)]
         net_allow = self.tooling_config.get("network_allow_domains") or []
         self.timeout_sec = int(self.tooling_config.get("tool_timeout_sec", 180))
         self.local = LocalMCPServer(file_allowlist=list(allowlist), network_allow_domains=list(net_allow))
-        self.manager = ThirdPartyMCPManager(root_dir)
+        self.manager = ThirdPartyMCPManager(
+            root_dir,
+            base_dir=mcp_base_dir,
+            legacy_base_dir=legacy_mcp_base_dir,
+        )
         self.third_party_clients: dict[str, StdioMCPClient] = {}
         self.third_party_status: dict[str, dict[str, Any]] = {}
         self.registry = ToolRegistry()
@@ -94,6 +104,7 @@ class MCPBridge:
             "name": manifest["name"],
             "manifest_path": manifest["manifest_path"],
             "runtime": manifest["runtime"],
+            "storage_scope": str(manifest.get("storage_scope", "")),
         }
 
     def register_local(self, source_path: str, name: str = "") -> dict[str, Any]:
@@ -103,6 +114,7 @@ class MCPBridge:
             "name": manifest["name"],
             "manifest_path": manifest["manifest_path"],
             "runtime": manifest["runtime"],
+            "storage_scope": str(manifest.get("storage_scope", "")),
         }
 
     def toggle_server(self, name: str, enabled: bool) -> dict[str, Any]:
@@ -132,6 +144,7 @@ class MCPBridge:
             "source_type": str(server_cfg.get("source_type", "local")),
             "source": str(server_cfg.get("source", "")),
             "manifest_path": str(server_cfg.get("manifest_path", "")),
+            "storage_scope": str(server_cfg.get("storage_scope", "")),
             "install_status": "not_installed",
             "health_status": "offline",
             "tools": [],
@@ -144,6 +157,7 @@ class MCPBridge:
                 "version": str(manifest.get("version", "")),
                 "runtime": str(manifest.get("runtime", "")),
                 "manifest_path": str(manifest.get("manifest_path", "")),
+                "storage_scope": str(manifest.get("storage_scope", status.get("storage_scope", ""))),
                 "enabled": bool(manifest.get("enabled", status.get("enabled", True))),
             }
         )

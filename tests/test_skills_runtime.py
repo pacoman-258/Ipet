@@ -347,7 +347,7 @@ class SkillRuntimeTests(unittest.TestCase):
     def test_auto_discovered_cli_script_tools_run_without_manifest(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            imported_dir = root / "third_party_skills"
+            imported_dir = root / "Hermes" / "skills" / "imported"
             _make_skill(
                 imported_dir / "pptx-helper",
                 name="PPTX Helper",
@@ -376,7 +376,7 @@ class SkillRuntimeTests(unittest.TestCase):
     def test_auto_discovered_scripts_skip_internal_helper_dirs(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            imported_dir = root / "third_party_skills"
+            imported_dir = root / "Hermes" / "skills" / "imported"
             _make_skill(
                 imported_dir / "pptx-helper",
                 name="PPTX Helper",
@@ -406,7 +406,7 @@ class SkillRuntimeTests(unittest.TestCase):
     def test_auto_discovered_office_pack_tool_accepts_structured_arguments(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            imported_dir = root / "third_party_skills"
+            imported_dir = root / "Hermes" / "skills" / "imported"
             _make_skill(
                 imported_dir / "pptx-helper",
                 name="PPTX Helper",
@@ -494,7 +494,7 @@ class SkillRuntimeTests(unittest.TestCase):
     def test_skill_aware_tool_bridge_exposes_pptx_adapter_tools(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            imported_dir = root / "third_party_skills"
+            imported_dir = root / "Hermes" / "skills" / "imported"
             _make_standard_skill(
                 imported_dir / "pptx",
                 name="PPTX",

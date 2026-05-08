@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 from pathlib import Path
 import shutil
 import uuid
@@ -29,6 +30,7 @@ class MCPServerConfigTests(unittest.TestCase):
             }
         )
         manifest = manager.load_manifest(manifest_path)
+        self.assertEqual(manifest_path.parent.parent, root / "Hermes" / "mcp")
         self.assertEqual(manifest["name"], "playwright_mcp")
         self.assertEqual(manifest["runtime"], "node")
         self.assertEqual(manifest["entry"]["command"], "npx")
@@ -73,6 +75,65 @@ class MCPServerConfigTests(unittest.TestCase):
         self.assertTrue(server_dir.exists())
         manager.delete_server(manifest_path)
         self.assertFalse(server_dir.exists())
+
+    def test_list_manifests_ignores_legacy_directory(self) -> None:
+        root = self._workspace_temp_root()
+        manager = ThirdPartyMCPManager(root)
+        legacy_server = root / "third_party_mcp" / "legacy_server"
+        legacy_server.mkdir(parents=True, exist_ok=True)
+        legacy_server.joinpath("manifest.json").write_text(
+            json.dumps(
+                {
+                    "name": "legacy_server",
+                    "runtime": "node",
+                    "transport": "stdio",
+                    "entry": {"command": "npx", "args": ["legacy-mcp"]},
+                    "install": {"type": "none"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        manifests = manager.list_manifests()
+
+        self.assertEqual(manifests, [])
+
+    def test_register_server_config_writes_to_hermes_and_ignores_legacy(self) -> None:
+        root = self._workspace_temp_root()
+        hermes_dir = root / "Hermes" / "mcp"
+        legacy_dir = root / "third_party_mcp"
+        manager = ThirdPartyMCPManager(root, base_dir=hermes_dir, legacy_base_dir=legacy_dir)
+        legacy_manifest_dir = legacy_dir / "legacy_server"
+        legacy_manifest_dir.mkdir(parents=True)
+        (legacy_manifest_dir / "manifest.json").write_text(
+            """{
+  "name": "legacy_server",
+  "version": "0.1.0",
+  "enabled": true,
+  "transport": "stdio",
+  "runtime": "node",
+  "entry": {"command": "npx", "args": ["@example/mcp"]},
+  "install": {"type": "none"}
+}""",
+            encoding="utf-8",
+        )
+
+        manifest_path = manager.register_server_config(
+            {
+                "mcpServers": {
+                    "hermes_server": {
+                        "command": "npx",
+                        "args": ["@playwright/mcp@latest"],
+                    }
+                }
+            }
+        )
+        manifests = {item["name"]: item for item in manager.list_manifests()}
+
+        self.assertEqual(manifest_path.parent.parent, hermes_dir)
+        self.assertEqual(manifests["hermes_server"]["storage_scope"], "managed")
+        self.assertNotIn("legacy_server", manifests)
 
 
 if __name__ == "__main__":

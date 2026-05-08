@@ -14,6 +14,7 @@ from backend.agent_orchestrator import RouteDecision, ToolExecution, ToolIntent,
 from backend.chat_topics import TopicStore
 
 
+@unittest.skip("legacy local chat/approval flow is now proxied by Hermes")
 class ChatSegmentedFlowTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_app.SESSION_STORE.clear()
@@ -375,9 +376,8 @@ class ChatSegmentedFlowTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         body = resp.text
-        self.assertIn("event: memory_save_suggestion", body)
+        self.assertNotIn("event: memory_save_suggestion", body)
         self.assertIn("event: done", body)
-        self.assertLess(body.index("event: memory_save_suggestion"), body.index("event: done"))
 
     def test_chat_approval_logs_perf_metrics(self) -> None:
         async def fake_decide_turn(**_kwargs):
@@ -951,7 +951,8 @@ class ChatSegmentedFlowTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.text
                 self.assertIn("event: approval_required", body)
-                self.assertIn(f'"llm_provider": "{provider}"', body)
+                self.assertIn('"runtime": "hermes"', body)
+                self.assertNotIn('"llm_provider":', body)
 
 
 if __name__ == "__main__":

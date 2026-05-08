@@ -12,6 +12,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from backend.hermes import DEFAULT_HERMES_CONFIG, normalize_hermes_config
+from backend.runtime_config import (
+    DEFAULT_RUNTIME_CONFIG,
+    RUNTIME_ASTRBOT,
+    RUNTIME_HERMES,
+    local_service_health_url,
+    mirror_runtime_compat,
+    normalize_runtime_config,
+    runtime_sidecar_config,
+)
 
 
 def _platform_name(platform_name: str | None = None) -> str:
@@ -135,7 +145,6 @@ if _prefer_pyqt_bindings():
             QHBoxLayout,
             QLabel,
             QLineEdit,
-            QInputDialog,
             QMainWindow,
             QMenu,
             QPlainTextEdit,
@@ -163,7 +172,6 @@ if _prefer_pyqt_bindings():
             QHBoxLayout,
             QLabel,
             QLineEdit,
-            QInputDialog,
             QMainWindow,
             QMenu,
             QPlainTextEdit,
@@ -192,7 +200,6 @@ else:
             QHBoxLayout,
             QLabel,
             QLineEdit,
-            QInputDialog,
             QMainWindow,
             QMenu,
             QPlainTextEdit,
@@ -220,7 +227,6 @@ else:
             QHBoxLayout,
             QLabel,
             QLineEdit,
-            QInputDialog,
             QMainWindow,
             QMenu,
             QPlainTextEdit,
@@ -237,6 +243,7 @@ RUNTIME_LOG_DIR = ROOT_DIR / ".runtime-logs"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
+DEFAULT_HERMES_MODEL = "hermes-agent"
 DEFAULT_ASR_CONFIG = _default_asr_config()
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
@@ -434,6 +441,8 @@ def _find_default_model() -> str:
 
 
 DEFAULT_CONFIG = {
+    "hermes": json.loads(json.dumps(DEFAULT_HERMES_CONFIG)),
+    "runtime": json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG)),
     "model_path": _find_default_model(),
     "window": {
         "x": 120,
@@ -456,17 +465,8 @@ DEFAULT_CONFIG = {
     },
     "chat": {
         "backend_url": DEFAULT_BACKEND_URL,
-        "llm_provider": "ollama",
-        "api_base_url": "http://127.0.0.1:11434",
-        "api_key": "",
-        "model": "qwen3:8b",
-        "router_enabled": False,
-        "router_llm_provider": "ollama",
-        "router_api_base_url": "http://127.0.0.1:11434",
-        "router_api_key": "",
-        "router_model": "qwen3:8b",
+        "model": DEFAULT_HERMES_MODEL,
         "session_id": "default",
-        "memory_window": 10,
         "voice": "zh-CN-XiaoxiaoNeural",
         "rate_pct": 0,
         "tts_provider": "edge_tts",
@@ -491,10 +491,6 @@ DEFAULT_CONFIG = {
         "skills": {
             "enabled": True,
             "default_active_ids": [],
-        },
-        "topic_history": {
-            "enabled": True,
-            "summary_interval_assistant_turns": 10,
         },
         "asr": json.loads(json.dumps(DEFAULT_ASR_CONFIG)),
         "system_prompt": "",
@@ -557,6 +553,78 @@ def _migrate_tool_timeout(tooling: dict | None) -> None:
         tooling["tool_timeout_sec"] = DEFAULT_TOOL_TIMEOUT_SEC
 
 
+LEGACY_CHAT_CONFIG_KEYS = (
+    "llm_provider",
+    "api_base_url",
+    "api_key",
+    "router_enabled",
+    "router_llm_provider",
+    "router_api_base_url",
+    "router_api_key",
+    "router_model",
+    "memory_window",
+    "topic_history",
+    "long_term_memory",
+)
+
+
+def _normalize_hermes_chat_config(config: dict) -> None:
+    chat_cfg = config.get("chat")
+    if not isinstance(chat_cfg, dict):
+        chat_cfg = {}
+        config["chat"] = chat_cfg
+    for key in LEGACY_CHAT_CONFIG_KEYS:
+        chat_cfg.pop(key, None)
+    model = str(chat_cfg.get("model") or "").strip()
+    chat_cfg["model"] = model or DEFAULT_HERMES_MODEL
+    session_id = str(chat_cfg.get("session_id") or "").strip()
+    chat_cfg["session_id"] = session_id or "default"
+
+
+def _normalize_hermes_sidecar_config(config: dict) -> None:
+    mirror_runtime_compat(config, root_dir=ROOT_DIR)
+
+
+def _runtime_display_name(runtime_id: str) -> str:
+    return "AstrBot" if runtime_id == RUNTIME_ASTRBOT else "Hermes Agent"
+
+
+def _runtime_missing_command_message(runtime_id: str, runtime_cfg: dict, *, root_dir: Path | None = None) -> str:
+    root = root_dir or ROOT_DIR
+    cwd = str(runtime_cfg.get("cwd") or "").strip() or str(root)
+    health = local_service_health_url(runtime_cfg)
+    label = _runtime_display_name(runtime_id)
+    example = (
+        'Example astrbot.command: ["uv", "run", "astrbot"]'
+        if runtime_id == RUNTIME_ASTRBOT
+        else 'Example hermes.command: ["uv", "run", "hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--tui"]'
+    )
+    return "\n".join(
+        [
+            f"{label} auto_start is enabled but no command is configured.",
+            f"cwd: {cwd}",
+            f"health: {health}",
+            example,
+        ]
+    )
+
+
+def _hermes_missing_command_message(hermes_cfg: dict, *, root_dir: Path | None = None) -> str:
+    root = root_dir or ROOT_DIR
+    cwd = str(hermes_cfg.get("cwd") or "").strip() or str(root)
+    base_url = str(hermes_cfg.get("base_url") or DEFAULT_HERMES_CONFIG["base_url"]).strip()
+    health_path = str(hermes_cfg.get("health_path") or DEFAULT_HERMES_CONFIG["health_path"]).strip()
+    return "\n".join(
+        [
+            "Hermes Agent auto_start is enabled but no command is configured.",
+            f"cwd: {cwd}",
+            f"health: {base_url.rstrip('/')}/{health_path.lstrip('/')}",
+            "Set hermes.cwd to the real Hermes Agent checkout, not the repo-local Hermes storage directory.",
+            'Example hermes.command: ["uv", "run", "hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--tui"]',
+        ]
+    )
+
+
 def load_config() -> dict:
     if not CONFIG_PATH.exists():
         return json.loads(json.dumps(DEFAULT_CONFIG))
@@ -581,6 +649,8 @@ def load_config() -> dict:
         pet_cfg["background_overlay_opacity"] = 0.42
     pet_cfg["background_overlay_opacity"] = max(0.0, min(0.9, pet_cfg["background_overlay_opacity"]))
     _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
+    _normalize_hermes_sidecar_config(config)
+    _normalize_hermes_chat_config(config)
     return config
 
 
@@ -993,15 +1063,7 @@ class ControlPanel(QWidget):
         chat_box = QGroupBox("对话")
         chat_layout = QGridLayout(chat_box)
         self.chat_model_input = QLineEdit()
-        self.chat_model_input.setPlaceholderText("qwen3:8b")
-        self.chat_llm_provider_combo = QComboBox()
-        self.chat_llm_provider_combo.addItem("ollama")
-        self.chat_llm_provider_combo.addItem("openai_compat")
-        self.chat_api_base_input = QLineEdit()
-        self.chat_api_base_input.setPlaceholderText("http://127.0.0.1:11434 或 https://api.openai.com")
-        self.chat_api_key_input = QLineEdit()
-        self.chat_api_key_input.setPlaceholderText("API Key（openai_compat 时需要）")
-        self.chat_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.chat_model_input.setPlaceholderText(DEFAULT_HERMES_MODEL)
         self.chat_voice_input = QLineEdit()
         self.chat_voice_input.setPlaceholderText("zh-CN-XiaoxiaoNeural")
         self.chat_tts_provider_combo = QComboBox()
@@ -1013,7 +1075,7 @@ class ControlPanel(QWidget):
             self.chat_tts_preset_combo.addItem(str(preset.get("label") or preset_key), preset_key)
         self.chat_tts_preset_apply_button = QPushButton("一键填入")
         self.chat_tts_provider_url_input = QLineEdit()
-        self.chat_tts_provider_url_input.setPlaceholderText("custom_http URL 或 JSON 配置")
+        self.chat_tts_provider_url_input.setPlaceholderText("自定义语音接口地址或配置")
         self.chat_tts_provider_url_input.setToolTip(
             '直接填 URL，或用“一键填入”生成 JSON 预设，再修改参考音频和提示文本'
         )
@@ -1037,36 +1099,30 @@ class ControlPanel(QWidget):
         rate_row_layout.setSpacing(6)
         rate_row_layout.addWidget(self.chat_rate_slider, 1)
         rate_row_layout.addWidget(self.chat_rate_value_label, 0)
-        chat_layout.addWidget(QLabel("模型"), 0, 0)
+        chat_layout.addWidget(QLabel("Hermes 当前模型"), 0, 0)
         chat_layout.addWidget(self.chat_model_input, 0, 1)
         chat_layout.addWidget(self.backend_test_button, 0, 2)
-        chat_layout.addWidget(QLabel("模型源"), 1, 0)
-        chat_layout.addWidget(self.chat_llm_provider_combo, 1, 1, 1, 2)
-        chat_layout.addWidget(QLabel("API Base"), 2, 0)
-        chat_layout.addWidget(self.chat_api_base_input, 2, 1, 1, 2)
-        chat_layout.addWidget(QLabel("API Key"), 3, 0)
-        chat_layout.addWidget(self.chat_api_key_input, 3, 1, 1, 2)
-        chat_layout.addWidget(QLabel("语音"), 4, 0)
-        chat_layout.addWidget(self.chat_voice_input, 4, 1, 1, 2)
-        chat_layout.addWidget(QLabel("TTS方式"), 5, 0)
-        chat_layout.addWidget(self.chat_tts_provider_combo, 5, 1, 1, 2)
-        chat_layout.addWidget(QLabel("TTS预设"), 6, 0)
-        chat_layout.addWidget(self.chat_tts_preset_combo, 6, 1)
-        chat_layout.addWidget(self.chat_tts_preset_apply_button, 6, 2)
-        chat_layout.addWidget(QLabel("TTS接口"), 7, 0)
-        chat_layout.addWidget(self.chat_tts_provider_url_input, 7, 1, 1, 2)
-        chat_layout.addWidget(QLabel("语速"), 8, 0)
-        chat_layout.addWidget(rate_row, 8, 1, 1, 2)
-        chat_layout.addWidget(QLabel("表情驱动"), 9, 0)
-        chat_layout.addWidget(self.expression_mode_check, 9, 1, 1, 2)
-        chat_layout.addWidget(QLabel("协议版本"), 10, 0)
-        chat_layout.addWidget(self.expression_format_value_label, 10, 1, 1, 2)
-        chat_layout.addWidget(QLabel("系统提示词"), 11, 0)
-        chat_layout.addWidget(self.system_prompt_input, 11, 1, 1, 2)
-        chat_layout.addWidget(QLabel("状态"), 12, 0)
-        chat_layout.addWidget(self.backend_status_label, 12, 1, 1, 2)
-        chat_layout.addWidget(QLabel("工具"), 13, 0)
-        chat_layout.addWidget(self.tooling_enabled_check, 13, 1, 1, 2)
+        chat_layout.addWidget(QLabel("语音"), 1, 0)
+        chat_layout.addWidget(self.chat_voice_input, 1, 1, 1, 2)
+        chat_layout.addWidget(QLabel("TTS方式"), 2, 0)
+        chat_layout.addWidget(self.chat_tts_provider_combo, 2, 1, 1, 2)
+        chat_layout.addWidget(QLabel("TTS预设"), 3, 0)
+        chat_layout.addWidget(self.chat_tts_preset_combo, 3, 1)
+        chat_layout.addWidget(self.chat_tts_preset_apply_button, 3, 2)
+        chat_layout.addWidget(QLabel("TTS接口"), 4, 0)
+        chat_layout.addWidget(self.chat_tts_provider_url_input, 4, 1, 1, 2)
+        chat_layout.addWidget(QLabel("语速"), 5, 0)
+        chat_layout.addWidget(rate_row, 5, 1, 1, 2)
+        chat_layout.addWidget(QLabel("表情驱动"), 6, 0)
+        chat_layout.addWidget(self.expression_mode_check, 6, 1, 1, 2)
+        chat_layout.addWidget(QLabel("协议版本"), 7, 0)
+        chat_layout.addWidget(self.expression_format_value_label, 7, 1, 1, 2)
+        chat_layout.addWidget(QLabel("系统提示词"), 8, 0)
+        chat_layout.addWidget(self.system_prompt_input, 8, 1, 1, 2)
+        chat_layout.addWidget(QLabel("状态"), 9, 0)
+        chat_layout.addWidget(self.backend_status_label, 9, 1, 1, 2)
+        chat_layout.addWidget(QLabel("工具"), 10, 0)
+        chat_layout.addWidget(self.tooling_enabled_check, 10, 1, 1, 2)
 
         mcp_box = QGroupBox("第三方 MCP")
         mcp_layout = QGridLayout(mcp_box)
@@ -1235,41 +1291,6 @@ class ControlPanel(QWidget):
         backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL))
         ok = is_backend_healthy(backend_url)
         self.backend_status_label.setText("online" if ok else "offline")
-        if not ok:
-            return
-
-        try:
-            resp = requests.post(
-                f"{backend_url.rstrip('/')}/api/models",
-                json={
-                    "llm_provider": str(chat_cfg.get("llm_provider", "ollama")),
-                    "api_base_url": str(chat_cfg.get("api_base_url", "")),
-                    "api_key": str(chat_cfg.get("api_key", "")),
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = resp.json().get("models", [])
-            if not isinstance(models, list) or not models:
-                return
-            text = [str(m).strip() for m in models if str(m).strip()]
-            if not text:
-                return
-            current = self.chat_model_input.text().strip()
-            idx = text.index(current) if current in text else 0
-            selected, accepted = QInputDialog.getItem(
-                self,
-                "选择模型",
-                "后端可用模型：",
-                text,
-                idx,
-                False,
-            )
-            if accepted and selected:
-                self.chat_model_input.setText(str(selected))
-                self.pet_window.apply_from_panel()
-        except Exception as exc:
-            print(f"获取模型列表失败: {exc}")
         self.refresh_third_party_mcp(force_reload=False)
 
     def refresh_third_party_mcp(self, force_reload: bool = False) -> None:
@@ -1424,9 +1445,6 @@ class ControlPanel(QWidget):
             self.win_h_spin,
             self.lock_window_check,
             self.motion_combo,
-            self.chat_llm_provider_combo,
-            self.chat_api_base_input,
-            self.chat_api_key_input,
             self.chat_voice_input,
             self.chat_tts_provider_combo,
             self.chat_tts_preset_combo,
@@ -1442,13 +1460,7 @@ class ControlPanel(QWidget):
         _ = blockers
 
         self.model_path_input.setText(config.get("model_path", ""))
-        self.chat_model_input.setText(config.get("chat", {}).get("model", "qwen3:8b"))
-        llm_provider = str(config.get("chat", {}).get("llm_provider", "ollama")).strip() or "ollama"
-        if llm_provider not in ("ollama", "openai_compat"):
-            llm_provider = "ollama"
-        self.chat_llm_provider_combo.setCurrentText(llm_provider)
-        self.chat_api_base_input.setText(str(config.get("chat", {}).get("api_base_url", "http://127.0.0.1:11434")))
-        self.chat_api_key_input.setText(str(config.get("chat", {}).get("api_key", "")))
+        self.chat_model_input.setText(config.get("chat", {}).get("model", DEFAULT_HERMES_MODEL))
         voice_text = str(config.get("chat", {}).get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
         self.chat_voice_input.setText(voice_text)
         provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
@@ -1526,6 +1538,10 @@ class DesktopPet(QMainWindow):
         self.runtime_model_path: Path | None = None
         self.backend_process: subprocess.Popen | None = None
         self.backend_started_by_app = False
+        self.hermes_process: subprocess.Popen | None = None
+        self.hermes_started_by_app = False
+        self.runtime_processes: dict[str, subprocess.Popen] = {}
+        self.runtime_started_by_app: dict[str, bool] = {}
         self.asr_process: subprocess.Popen | None = None
         self.asr_started_by_app = False
         self._asr_warmup_monitor_lock = threading.Lock()
@@ -1584,6 +1600,7 @@ class DesktopPet(QMainWindow):
         self.apply_window_geometry_from_config()
 
         self.refresh_motion_list(prefer_reset=False)
+        self.ensure_active_runtime_sidecar()
         self.ensure_backend_service()
         self.ensure_asr_service()
 
@@ -1888,6 +1905,7 @@ class DesktopPet(QMainWindow):
         self.window_locked = bool(self.config["window"]["locked"])
         self.apply_window_geometry_from_config()
         self.refresh_motion_list(prefer_reset=False)
+        self.ensure_active_runtime_sidecar()
         asr_cfg = self.config.get("chat", {}).get("asr", {}) if isinstance(self.config.get("chat", {}), dict) else {}
         if isinstance(asr_cfg, dict) and bool(asr_cfg.get("enabled", True)):
             self.ensure_asr_service()
@@ -1992,6 +2010,92 @@ class DesktopPet(QMainWindow):
             print(f"backend did not become ready in time; chat may be unavailable.\n{detail}")
         else:
             print("backend did not become ready in time; chat may be unavailable.")
+
+    def _hermes_health_url(self, hermes_cfg: dict) -> str:
+        return local_service_health_url(hermes_cfg)
+
+    def is_hermes_healthy(self, hermes_cfg: dict) -> bool:
+        return self.is_runtime_healthy(hermes_cfg)
+
+    def is_runtime_healthy(self, runtime_cfg: dict) -> bool:
+        if not isinstance(runtime_cfg, dict) or not bool(runtime_cfg.get("enabled", False)):
+            return False
+        try:
+            resp = requests.get(local_service_health_url(runtime_cfg), timeout=2)
+            return 200 <= resp.status_code < 300
+        except Exception:
+            return False
+
+    def ensure_hermes_sidecar(self) -> None:
+        self.config.setdefault("runtime", {}).setdefault("active", RUNTIME_HERMES)
+        self.ensure_active_runtime_sidecar()
+
+    def ensure_active_runtime_sidecar(self) -> None:
+        mirror_runtime_compat(self.config, root_dir=ROOT_DIR)
+        runtime_id, runtime_cfg = runtime_sidecar_config(self.config)
+        if not bool(runtime_cfg.get("enabled", False)):
+            self.stop_runtime_sidecar(runtime_id)
+            return
+        if self.is_runtime_healthy(runtime_cfg):
+            return
+        if not bool(runtime_cfg.get("auto_start", False)):
+            print(f"{_runtime_display_name(runtime_id)} is enabled but not reachable; auto_start is disabled.")
+            return
+        command = list(runtime_cfg.get("command") or [])
+        if not command:
+            if runtime_id == RUNTIME_HERMES:
+                print(_hermes_missing_command_message(runtime_cfg, root_dir=ROOT_DIR))
+            else:
+                print(_runtime_missing_command_message(runtime_id, runtime_cfg, root_dir=ROOT_DIR))
+            return
+        current = self.runtime_processes.get(runtime_id)
+        if current is not None and current.poll() is None:
+            return
+
+        cwd = str(runtime_cfg.get("cwd") or ROOT_DIR).strip() or str(ROOT_DIR)
+        if not Path(cwd).exists():
+            print(f"failed to start {_runtime_display_name(runtime_id)} sidecar: cwd does not exist: {cwd}")
+            return
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        runtime_log_path = _truncate_runtime_log(_runtime_log_path(runtime_id))
+        try:
+            with runtime_log_path.open("a", encoding="utf-8") as runtime_log:
+                proc = subprocess.Popen(
+                    command,
+                    cwd=cwd,
+                    stdout=runtime_log,
+                    stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+            self.runtime_processes[runtime_id] = proc
+            self.runtime_started_by_app[runtime_id] = True
+            if runtime_id == RUNTIME_HERMES:
+                self.hermes_process = proc
+                self.hermes_started_by_app = True
+        except Exception as exc:
+            print(f"failed to start {_runtime_display_name(runtime_id)} sidecar: {exc}")
+            return
+
+        deadline = time.monotonic() + float(runtime_cfg.get("startup_timeout_sec") or 20)
+        while time.monotonic() < deadline:
+            if self.is_runtime_healthy(runtime_cfg):
+                return
+            proc = self.runtime_processes.get(runtime_id)
+            if proc and proc.poll() is not None:
+                detail = _tail_runtime_log(runtime_log_path)
+                if detail:
+                    print(f"{_runtime_display_name(runtime_id)} exited early with code {proc.returncode}:\n{detail}")
+                else:
+                    print(f"{_runtime_display_name(runtime_id)} exited early with code {proc.returncode}.")
+                return
+            time.sleep(0.25)
+        detail = _tail_runtime_log(runtime_log_path)
+        if detail:
+            print(f"{_runtime_display_name(runtime_id)} did not become ready in time; chat may be unavailable.\n{detail}")
+        else:
+            print(f"{_runtime_display_name(runtime_id)} did not become ready in time; chat may be unavailable.")
 
     def ensure_asr_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
@@ -2182,6 +2286,40 @@ class DesktopPet(QMainWindow):
             self.asr_process = None
             self.asr_started_by_app = False
 
+    def stop_hermes_sidecar(self) -> None:
+        self.stop_runtime_sidecar(RUNTIME_HERMES)
+
+    def stop_runtime_sidecar(self, runtime_id: str) -> None:
+        proc = self.runtime_processes.get(runtime_id)
+        if runtime_id == RUNTIME_HERMES and proc is None:
+            proc = self.hermes_process
+        started_by_app = bool(self.runtime_started_by_app.get(runtime_id))
+        if runtime_id == RUNTIME_HERMES:
+            started_by_app = started_by_app or self.hermes_started_by_app
+        if not proc or not started_by_app:
+            return
+        if proc.poll() is not None:
+            self.runtime_processes.pop(runtime_id, None)
+            self.runtime_started_by_app[runtime_id] = False
+            if runtime_id == RUNTIME_HERMES:
+                self.hermes_process = None
+                self.hermes_started_by_app = False
+            return
+        try:
+            self._stop_managed_process(proc, started_by_app=True)
+        finally:
+            self.runtime_processes.pop(runtime_id, None)
+            self.runtime_started_by_app[runtime_id] = False
+            if runtime_id == RUNTIME_HERMES:
+                self.hermes_process = None
+                self.hermes_started_by_app = False
+
+    def stop_all_runtime_sidecars(self) -> None:
+        for runtime_id in list(self.runtime_processes):
+            self.stop_runtime_sidecar(runtime_id)
+        if self.hermes_process is not None:
+            self.stop_runtime_sidecar(RUNTIME_HERMES)
+
     def shutdown_runtime(self) -> None:
         if self._shutdown_in_progress:
             return
@@ -2243,6 +2381,7 @@ class DesktopPet(QMainWindow):
             pass
 
         self.stop_asr_service()
+        self.stop_all_runtime_sidecars()
         self.stop_backend_service()
 
     def eventFilter(self, watched, event):
@@ -2512,17 +2651,8 @@ class DesktopPet(QMainWindow):
         tooling_cfg = chat_cfg.get("tooling", {}) if isinstance(chat_cfg, dict) else {}
         self.config["chat"] = {
             "backend_url": str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)),
-            "llm_provider": panel.chat_llm_provider_combo.currentText().strip() or "ollama",
-            "api_base_url": panel.chat_api_base_input.text().strip() or "http://127.0.0.1:11434",
-            "api_key": panel.chat_api_key_input.text().strip(),
-            "model": panel.chat_model_input.text().strip() or "qwen3:8b",
-            "router_enabled": bool(chat_cfg.get("router_enabled", False)),
-            "router_llm_provider": str(chat_cfg.get("router_llm_provider", chat_cfg.get("llm_provider", "ollama"))),
-            "router_api_base_url": str(chat_cfg.get("router_api_base_url", chat_cfg.get("api_base_url", "http://127.0.0.1:11434"))),
-            "router_api_key": str(chat_cfg.get("router_api_key", "")),
-            "router_model": str(chat_cfg.get("router_model", chat_cfg.get("model", "qwen3:8b"))),
+            "model": panel.chat_model_input.text().strip() or DEFAULT_HERMES_MODEL,
             "session_id": str(chat_cfg.get("session_id", "default")),
-            "memory_window": int(chat_cfg.get("memory_window", 10)),
             "voice": panel.chat_voice_input.text().strip() or "zh-CN-XiaoxiaoNeural",
             "rate_pct": max(-50, min(100, int(panel.chat_rate_slider.value()))),
             "tts_provider": panel.chat_tts_provider_combo.currentText().strip() or "edge_tts",
@@ -2545,13 +2675,11 @@ class DesktopPet(QMainWindow):
                 "enabled": bool(chat_cfg.get("skills", {}).get("enabled", True)),
                 "default_active_ids": list(chat_cfg.get("skills", {}).get("default_active_ids", [])),
             },
-            "topic_history": json.loads(json.dumps(chat_cfg.get("topic_history", {
-                "enabled": True,
-                "summary_interval_assistant_turns": 10,
-            }))),
             "asr": json.loads(json.dumps(chat_cfg.get("asr", DEFAULT_ASR_CONFIG))),
             "system_prompt": panel.system_prompt_input.toPlainText().strip(),
         }
+        _normalize_hermes_chat_config(self.config)
+        _normalize_hermes_sidecar_config(self.config)
 
         self.config["window"] = {
             "x": int(panel.win_x_spin.value()),
@@ -2574,6 +2702,8 @@ class DesktopPet(QMainWindow):
 
     def save_config(self) -> None:
         self.config["model_path"] = normalize_model_path(self.config.get("model_path", ""))
+        _normalize_hermes_sidecar_config(self.config)
+        _normalize_hermes_chat_config(self.config)
         self.config["window"]["x"] = self.x()
         self.config["window"]["y"] = self.y()
         self.config["window"]["width"] = self.width()

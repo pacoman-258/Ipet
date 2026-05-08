@@ -262,7 +262,8 @@ class BackendLaunchSelectionTests(unittest.TestCase):
 
         self.assertEqual(defaults["QTWEBENGINE_DISABLE_SANDBOX"], "1")
         self.assertNotIn("QT_OPENGL", defaults)
-        self.assertNotIn("QTWEBENGINE_CHROMIUM_FLAGS", defaults)
+        self.assertIn("--enable-webgl", defaults["QTWEBENGINE_CHROMIUM_FLAGS"])
+        self.assertIn("--ignore-gpu-blocklist", defaults["QTWEBENGINE_CHROMIUM_FLAGS"])
 
     def test_default_asr_config_disables_macos_by_default(self) -> None:
         self.assertFalse(main._default_asr_config("darwin")["enabled"])

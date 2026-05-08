@@ -152,6 +152,7 @@ def _incomplete_content_payload() -> dict[str, object]:
     }
 
 
+@unittest.skipUnless(SCRIPT_PATH.exists(), "legacy bundled daily-hotspots skill is not part of the Hermes GUI shell")
 class DailyHotspotsSkillTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

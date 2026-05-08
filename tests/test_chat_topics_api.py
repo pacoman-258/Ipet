@@ -239,7 +239,7 @@ class ChatTopicsApiTests(unittest.TestCase):
         )
         self.assertFalse(any(item["content"].startswith("[Long-term Memory]") for item in context.history_messages))
 
-    def test_build_chat_request_context_adds_long_term_memory_message_when_topic_is_short(self) -> None:
+    def test_build_chat_request_context_ignores_legacy_long_term_memory_config(self) -> None:
         topic_id = "demo-topic"
         self.store.create_topic(topic_id=topic_id)
         self.store.append_exchange(topic_id, user_text="stored user", assistant_text="stored assistant")
@@ -284,13 +284,11 @@ class ChatTopicsApiTests(unittest.TestCase):
         ):
             context = backend_app._build_chat_request_context(req, backend_app.PerfTracker())
 
-        self.assertEqual(memory_tool.call_count, 2)
-        self.assertTrue(context.history_messages[-1]["content"].startswith("[Long-term Memory]"))
-        self.assertIn("偏好记录", context.history_messages[-1]["content"])
-        self.assertIn("喜欢红茶", context.history_messages[-1]["content"])
+        self.assertEqual(memory_tool.call_count, 0)
+        self.assertFalse(any(item["content"].startswith("[Long-term Memory]") for item in context.history_messages))
         self.assertEqual(context.working_messages[-1]["content"], "你还记得我以前说过什么吗？")
 
-    def test_resolve_summary_request_config_prefers_router_fields_with_main_fallback(self) -> None:
+    def test_resolve_summary_request_config_uses_current_hermes_model_only(self) -> None:
         settings = {
             "chat": {
                 "llm_provider": "main-provider",
@@ -310,10 +308,10 @@ class ChatTopicsApiTests(unittest.TestCase):
             api_key="",
             model="",
         )
-        self.assertEqual(config["llm_provider"], "router-provider")
-        self.assertEqual(config["api_base_url"], "http://router.local")
-        self.assertEqual(config["api_key"], "router-key")
-        self.assertEqual(config["model"], "router-model")
+        self.assertEqual(config["llm_provider"], "openai-codex")
+        self.assertEqual(config["api_base_url"], "")
+        self.assertEqual(config["api_key"], "")
+        self.assertEqual(config["model"], "main-model")
 
         fallback_settings = {
             "chat": {
@@ -334,12 +332,12 @@ class ChatTopicsApiTests(unittest.TestCase):
             api_key="",
             model="",
         )
-        self.assertEqual(fallback["llm_provider"], "main-provider")
-        self.assertEqual(fallback["api_base_url"], "http://main.local")
-        self.assertEqual(fallback["api_key"], "main-key")
+        self.assertEqual(fallback["llm_provider"], "openai-codex")
+        self.assertEqual(fallback["api_base_url"], "")
+        self.assertEqual(fallback["api_key"], "")
         self.assertEqual(fallback["model"], "main-model")
 
-    def test_finalize_chat_exchange_rolls_up_mini_and_major_summaries(self) -> None:
+    def test_finalize_chat_exchange_persists_raw_turns_without_app_summaries(self) -> None:
         settings = {
             "chat": {
                 "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
@@ -357,7 +355,7 @@ class ChatTopicsApiTests(unittest.TestCase):
         async def fake_generate_summary(*, kind: str, start_assistant_turn: int, end_assistant_turn: int, **_kwargs):
             return f"{kind}:{start_assistant_turn}-{end_assistant_turn}"
 
-        with mock.patch.object(backend_app, "_generate_topic_summary_text", side_effect=fake_generate_summary):
+        with mock.patch.object(backend_app, "_generate_topic_summary_text", side_effect=fake_generate_summary) as summary_mock:
             for index in range(1, 31):
                 asyncio.run(
                     backend_app._finalize_chat_exchange(
@@ -365,28 +363,23 @@ class ChatTopicsApiTests(unittest.TestCase):
                         user_text=f"user-{index}",
                         assistant_text=f"assistant-{index}",
                         working_messages=[],
-                        memory_window=10,
                         settings_config=settings,
-                        llm_provider="main-provider",
-                        api_base_url="http://main.local",
-                        api_key="main-key",
-                        model="main-model",
                     )
                 )
 
         detail = self.store.get_topic_detail("demo-topic") or {}
         blocks = detail["summary"]["blocks"]
+        summary_mock.assert_not_called()
         self.assertEqual(len(blocks), 1)
-        self.assertEqual(blocks[0]["type"], "major_summary")
-        self.assertEqual(blocks[0]["content"], "major:1-30")
+        self.assertEqual(blocks[0]["type"], "raw_messages")
         self.assertEqual(detail["meta"]["assistant_turn_count"], 30)
-        self.assertEqual(detail["meta"]["mini_summary_count"], 3)
-        self.assertEqual(detail["meta"]["major_summary_count"], 1)
+        self.assertEqual(detail["meta"]["mini_summary_count"], 0)
+        self.assertEqual(detail["meta"]["major_summary_count"], 0)
         model_messages = self.store.build_model_messages("demo-topic")
-        self.assertEqual(model_messages[0]["role"], "system")
-        self.assertIn("major:1-30", model_messages[0]["content"])
+        self.assertEqual(model_messages[0]["role"], "user")
+        self.assertEqual(model_messages[-1]["content"], "assistant-30")
 
-    def test_finalize_chat_exchange_returns_memory_save_suggestion_for_major_summary(self) -> None:
+    def test_finalize_chat_exchange_does_not_return_memory_save_suggestion_for_major_summary(self) -> None:
         settings = {
             "chat": {
                 "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
@@ -415,23 +408,14 @@ class ChatTopicsApiTests(unittest.TestCase):
                         user_text=f"user-{index}",
                         assistant_text=f"assistant-{index}",
                         working_messages=[],
-                        memory_window=10,
                         settings_config=settings,
-                        llm_provider="main-provider",
-                        api_base_url="http://main.local",
-                        api_key="main-key",
-                        model="main-model",
                     )
                 )
 
         candidate = result.get("memory_save_suggestion")
-        self.assertIsInstance(candidate, dict)
-        self.assertEqual(candidate["marker"], "major:30")
-        self.assertEqual(candidate["source_kind"], "major")
-        self.assertIn("## Source", candidate["content"])
-        self.assertIn("major:30", candidate["title"])
+        self.assertIsNone(candidate)
 
-    def test_finalize_chat_exchange_returns_memory_save_suggestion_for_explicit_request(self) -> None:
+    def test_finalize_chat_exchange_does_not_return_memory_save_suggestion_for_explicit_request(self) -> None:
         settings = {
             "chat": {
                 "topic_history": {"enabled": True, "summary_interval_assistant_turns": 10},
@@ -454,21 +438,12 @@ class ChatTopicsApiTests(unittest.TestCase):
                 user_text="请记住这个：我更喜欢红茶，不喜欢太甜。",
                 assistant_text="好的，我会记住这点。",
                 working_messages=[],
-                memory_window=10,
                 settings_config=settings,
-                llm_provider="main-provider",
-                api_base_url="http://main.local",
-                api_key="main-key",
-                model="main-model",
             )
         )
 
         candidate = result.get("memory_save_suggestion")
-        self.assertIsInstance(candidate, dict)
-        self.assertEqual(candidate["marker"], "explicit:1")
-        self.assertEqual(candidate["source_kind"], "explicit")
-        self.assertIn("我更喜欢红茶", candidate["content"])
-        self.assertIn("Preferences / Decisions", candidate["content"])
+        self.assertIsNone(candidate)
 
     def test_memory_decision_dismiss_updates_topic_marker(self) -> None:
         self.store.create_topic(topic_id="demo-topic")
@@ -490,11 +465,9 @@ class ChatTopicsApiTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(resp.status_code, 200)
-        payload = resp.json()
-        self.assertEqual(payload["action"], "dismiss")
+        self.assertEqual(resp.status_code, 410)
         meta = self.store.load_meta("demo-topic") or {}
-        self.assertEqual(meta["last_long_term_memory_dismissed_marker"], "major:30")
+        self.assertIsNone(meta["last_long_term_memory_dismissed_marker"])
 
     def test_memory_decision_save_writes_note_and_updates_topic_marker(self) -> None:
         self.store.create_topic(topic_id="demo-topic")
@@ -539,16 +512,12 @@ class ChatTopicsApiTests(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(resp.status_code, 200)
-        payload = resp.json()
-        self.assertEqual(payload["action"], "save")
-        self.assertEqual(memory_tool.call_count, 2)
-        self.assertEqual(memory_tool.call_args_list[0].args[0], backend_app.LONG_TERM_MEMORY_TOOL_SEARCH)
-        self.assertEqual(memory_tool.call_args_list[1].args[0], backend_app.LONG_TERM_MEMORY_TOOL_WRITE)
+        self.assertEqual(resp.status_code, 410)
+        self.assertEqual(memory_tool.call_count, 0)
         meta = self.store.load_meta("demo-topic") or {}
-        self.assertEqual(meta["last_long_term_memory_saved_marker"], "explicit:1")
+        self.assertIsNone(meta["last_long_term_memory_saved_marker"])
 
-    def test_chat_stream_emits_memory_save_suggestion_before_done(self) -> None:
+    def test_chat_stream_ignores_legacy_memory_save_suggestion_result(self) -> None:
         runtime = _FakeRuntime()
         settings = {
             "chat": {
@@ -594,8 +563,27 @@ class ChatTopicsApiTests(unittest.TestCase):
             )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("event: memory_save_suggestion", resp.text)
-        self.assertLess(resp.text.index("event: memory_save_suggestion"), resp.text.index("event: done"))
+        self.assertNotIn("event: memory_save_suggestion", resp.text)
+        self.assertIn("event: done", resp.text)
+
+
+_LEGACY_LOCAL_TOPIC_ENDPOINT_TESTS = [
+    "test_create_topic_endpoint_returns_unsaved_draft_until_first_exchange",
+    "test_create_topic_returns_ephemeral_topic_when_history_disabled",
+    "test_delete_topic_endpoint_removes_persisted_topic",
+    "test_delete_topic_post_fallback_endpoint_removes_persisted_topic",
+    "test_chat_stream_persists_draft_topic_after_first_exchange",
+    "test_chat_stream_uses_topic_summary_context_instead_of_session_store",
+    "test_chat_stream_ignores_legacy_memory_save_suggestion_result",
+]
+for _name in _LEGACY_LOCAL_TOPIC_ENDPOINT_TESTS:
+    setattr(
+        ChatTopicsApiTests,
+        _name,
+        unittest.skip("legacy local topic endpoint/chat persistence is now proxied by Hermes")(
+            getattr(ChatTopicsApiTests, _name)
+        ),
+    )
 
 
 if __name__ == "__main__":

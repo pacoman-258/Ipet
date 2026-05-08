@@ -13,6 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -21,6 +22,23 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
+from .hermes import (
+    DEFAULT_HERMES_CONFIG,
+    HermesClient,
+    HermesUnavailable,
+    hermes_config_from_raw,
+    normalize_hermes_config,
+)
+from .runtime_adapters import RuntimeUnavailable, create_runtime_adapter
+from .runtime_config import (
+    DEFAULT_RUNTIME_CONFIG,
+    RUNTIME_ASTRBOT,
+    RUNTIME_HERMES,
+    apply_runtime_secret_actions,
+    mirror_runtime_compat,
+    normalize_runtime_config,
+    redact_runtime_config,
+)
 from .asr import (
     ASRError,
     ASRService,
@@ -52,13 +70,12 @@ from .models import (
     MCPDeleteRequest,
     MCPServerCreateRequest,
     MCPToggleRequest,
-    ModelListRequest,
     SkillDeleteRequest,
     SkillImportGitRequest,
     SkillImportLocalRequest,
     TTSRequest,
 )
-from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive, list_models
+from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive
 from .runtime_prompts import (
     EXPR_PROTOCOL_PROMPT,
     REACT_SKILL_VISIBILITY_NOTE,
@@ -68,6 +85,13 @@ from .runtime_prompts import (
     continuation_recheck_prompt as _rt_continuation_recheck_prompt,
 )
 from .skills import ResolvedSkillSet, SkillAwareToolBridge, SkillManager, SkillRuntime, tool_name_matches_pattern
+from .storage_paths import (
+    hermes_mcp_dir,
+    hermes_root,
+    hermes_skills_dir,
+    legacy_third_party_mcp_dir,
+    legacy_third_party_skills_dir,
+)
 from .tool_runtime import Tool, ToolRegistry, ToolResult
 from .tooling.security import normalize_file_allowlist
 from .tts import (
@@ -94,7 +118,12 @@ SETTINGS_HTML_PATH = ROOT_DIR / "settings.html"
 SETTINGS_CSS_PATH = ROOT_DIR / "settings.css"
 SETTINGS_JS_PATH = ROOT_DIR / "settings.js"
 SKILLS_BUILTIN_DIR = ROOT_DIR / "skills" / "builtin"
-THIRD_PARTY_SKILLS_DIR = ROOT_DIR / "third_party_skills"
+HERMES_ROOT_DIR = hermes_root(ROOT_DIR)
+HERMES_SKILLS_IMPORTED_DIR = hermes_skills_dir(ROOT_DIR)
+HERMES_MCP_DIR = hermes_mcp_dir(ROOT_DIR)
+LEGACY_THIRD_PARTY_SKILLS_DIR = legacy_third_party_skills_dir(ROOT_DIR)
+LEGACY_THIRD_PARTY_MCP_DIR = legacy_third_party_mcp_dir(ROOT_DIR)
+THIRD_PARTY_SKILLS_DIR = HERMES_SKILLS_IMPORTED_DIR
 RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
 RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
 RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
@@ -128,6 +157,8 @@ CHAT_MODE_NO_LIVE_SEARCH_PROMPT = (
     "If the answer may depend on current web information, say you cannot verify it live right now."
 )
 DEFAULT_ACTIVE_SKILL_IDS = ("browser-automation",)
+DEFAULT_HERMES_MODEL = "gpt-5.4"
+HERMES_INTERNAL_PROVIDER = "openai-codex"
 PHASE_SKILL_SELECTION = "skill_selection"
 PHASE_SKILL_EXECUTION = "skill_execution"
 PHASE_AGENT_LOOP = "agent_loop"
@@ -368,6 +399,8 @@ def _find_default_model() -> str:
 def _default_settings_config() -> dict[str, Any]:
     default_asr_config = _default_asr_config()
     return {
+        "hermes": json.loads(json.dumps(DEFAULT_HERMES_CONFIG)),
+        "runtime": json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG)),
         "model_path": _find_default_model(),
         "window": {
             "x": 120,
@@ -390,17 +423,8 @@ def _default_settings_config() -> dict[str, Any]:
         },
         "chat": {
             "backend_url": DEFAULT_BACKEND_URL,
-            "llm_provider": "ollama",
-            "api_base_url": "http://127.0.0.1:11434",
-            "api_key": "",
-            "model": "qwen3:8b",
-            "router_enabled": False,
-            "router_llm_provider": "ollama",
-            "router_api_base_url": "http://127.0.0.1:11434",
-            "router_api_key": "",
-            "router_model": "qwen3:8b",
+            "model": DEFAULT_HERMES_MODEL,
             "session_id": "default",
-            "memory_window": 10,
             "voice": "zh-CN-XiaoxiaoNeural",
             "rate_pct": 0,
             "tts_provider": DEFAULT_PROVIDER,
@@ -414,20 +438,6 @@ def _default_settings_config() -> dict[str, Any]:
             "skills": {
                 "enabled": True,
                 "default_active_ids": list(DEFAULT_ACTIVE_SKILL_IDS),
-            },
-            "topic_history": {
-                "enabled": True,
-                "summary_interval_assistant_turns": 10,
-            },
-            "long_term_memory": {
-                "enabled": False,
-                "project": "ipet-default",
-                "read_enabled": True,
-                "write_enabled": True,
-                "ask_before_save": True,
-                "prefer_topic_history": True,
-                "save_from_major_summary": True,
-                "save_on_explicit_request": True,
             },
             "asr": json.loads(json.dumps(default_asr_config)),
             "system_prompt": "",
@@ -479,56 +489,72 @@ def _normalize_chat_mode(value: Any) -> str:
     return mode if mode in CHAT_MODE_VALUES else CHAT_MODE_REACT
 
 
+def _normalize_hermes_model(value: Any) -> str:
+    return str(value or DEFAULT_HERMES_MODEL).strip() or DEFAULT_HERMES_MODEL
+
+
+def _hermes_runtime_config(model: Any = "") -> dict[str, str]:
+    return {
+        "model": _normalize_hermes_model(model),
+        "llm_provider": HERMES_INTERNAL_PROVIDER,
+        "api_base_url": "",
+        "api_key": "",
+    }
+
+
+def _normalize_hermes_agent_config(config: dict[str, Any]) -> None:
+    mirror_runtime_compat(config, root_dir=ROOT_DIR)
+
+
+def _hermes_agent_config_from_raw(raw_config: dict[str, Any] | None = None):
+    source = raw_config if isinstance(raw_config, dict) else _load_full_config()
+    runtime = normalize_runtime_config(source.get("runtime"), root_dir=ROOT_DIR, legacy_hermes=source.get("hermes", {}))
+    return hermes_config_from_raw(runtime["adapters"][RUNTIME_HERMES], root_dir=ROOT_DIR)
+
+
+def _get_hermes_client(raw_config: dict[str, Any] | None = None) -> HermesClient:
+    return HermesClient(_hermes_agent_config_from_raw(raw_config))
+
+
+def _runtime_config_from_raw(raw_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    source = raw_config if isinstance(raw_config, dict) else _load_full_config()
+    return normalize_runtime_config(source.get("runtime"), root_dir=ROOT_DIR, legacy_hermes=source.get("hermes", {}))
+
+
+def _get_runtime_client(raw_config: dict[str, Any] | None = None):
+    runtime_cfg = _runtime_config_from_raw(raw_config)
+    if runtime_cfg.get("active") == RUNTIME_HERMES:
+        return _get_hermes_client(raw_config)
+    return create_runtime_adapter(runtime_cfg)
+
+
 def _resolve_router_request_config(req: ChatStreamRequest, settings_config: dict[str, Any]) -> dict[str, Any]:
     chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
-    router_enabled = chat_cfg.get("router_enabled", False) if req.router_enabled is None else req.router_enabled
-    main_provider = str(req.llm_provider or chat_cfg.get("llm_provider") or "ollama").strip() or "ollama"
-    main_base_url = str(req.api_base_url or chat_cfg.get("api_base_url") or "").strip()
-    main_api_key = str(req.api_key or chat_cfg.get("api_key") or "")
-    main_model = str(req.model or chat_cfg.get("model") or "qwen3:8b").strip() or "qwen3:8b"
-    provider = str(req.router_llm_provider or chat_cfg.get("router_llm_provider") or main_provider).strip() or main_provider
-    base_url = str(req.router_api_base_url or chat_cfg.get("router_api_base_url") or main_base_url).strip()
-    api_key = str(req.router_api_key or chat_cfg.get("router_api_key") or "")
-    model = str(req.router_model or chat_cfg.get("router_model") or main_model).strip() or main_model
+    runtime_cfg = _hermes_runtime_config(req.model or chat_cfg.get("model"))
     return {
-        "enabled": bool(router_enabled),
-        "llm_provider": provider,
-        "api_base_url": base_url,
-        "api_key": api_key,
-        "model": model,
+        "enabled": False,
+        **runtime_cfg,
     }
 
 
 def _topic_history_config(settings_config: dict[str, Any]) -> dict[str, Any]:
-    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
-    topic_history_cfg = chat_cfg.get("topic_history", {}) if isinstance(chat_cfg, dict) else {}
-    if not isinstance(topic_history_cfg, dict):
-        topic_history_cfg = {}
-    try:
-        interval = max(1, int(topic_history_cfg.get("summary_interval_assistant_turns", 10)))
-    except Exception:
-        interval = 10
     return {
-        "enabled": bool(topic_history_cfg.get("enabled", True)),
-        "summary_interval_assistant_turns": interval,
-        "major_summary_group_size": 3,
+        "enabled": True,
+        "summary_interval_assistant_turns": 0,
+        "major_summary_group_size": 0,
     }
 
 
 def _long_term_memory_config(settings_config: dict[str, Any]) -> dict[str, Any]:
-    chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
-    raw_cfg = chat_cfg.get("long_term_memory", {}) if isinstance(chat_cfg, dict) else {}
-    if not isinstance(raw_cfg, dict):
-        raw_cfg = {}
     return {
-        "enabled": bool(raw_cfg.get("enabled", False)),
-        "project": str(raw_cfg.get("project") or "ipet-default").strip() or "ipet-default",
-        "read_enabled": bool(raw_cfg.get("read_enabled", True)),
-        "write_enabled": bool(raw_cfg.get("write_enabled", True)),
-        "ask_before_save": bool(raw_cfg.get("ask_before_save", True)),
-        "prefer_topic_history": bool(raw_cfg.get("prefer_topic_history", True)),
-        "save_from_major_summary": bool(raw_cfg.get("save_from_major_summary", True)),
-        "save_on_explicit_request": bool(raw_cfg.get("save_on_explicit_request", True)),
+        "enabled": False,
+        "project": "hermes",
+        "read_enabled": False,
+        "write_enabled": False,
+        "ask_before_save": False,
+        "prefer_topic_history": False,
+        "save_from_major_summary": False,
+        "save_on_explicit_request": False,
     }
 
 
@@ -576,16 +602,7 @@ def _resolve_summary_request_config(
     model: str,
 ) -> dict[str, str]:
     chat_cfg = settings_config.get("chat", {}) if isinstance(settings_config, dict) else {}
-    main_provider = str(llm_provider or chat_cfg.get("llm_provider") or "ollama").strip() or "ollama"
-    main_base_url = str(api_base_url or chat_cfg.get("api_base_url") or "").strip()
-    main_api_key = str(api_key or chat_cfg.get("api_key") or "")
-    main_model = str(model or chat_cfg.get("model") or "qwen3:8b").strip() or "qwen3:8b"
-    return {
-        "llm_provider": str(chat_cfg.get("router_llm_provider") or main_provider).strip() or main_provider,
-        "api_base_url": str(chat_cfg.get("router_api_base_url") or main_base_url).strip(),
-        "api_key": str(chat_cfg.get("router_api_key") or main_api_key),
-        "model": str(chat_cfg.get("router_model") or main_model).strip() or main_model,
-    }
+    return _hermes_runtime_config(model or chat_cfg.get("model"))
 
 
 def _topic_summary_source_text(messages: list[dict[str, Any]]) -> str:
@@ -1124,56 +1141,7 @@ async def _maybe_update_topic_summaries(
     api_key: str,
     model: str,
 ) -> None:
-    topic_cfg = _topic_history_config(settings_config)
-    if not topic_cfg["enabled"]:
-        return
-    store = _get_chat_topic_store()
-    interval = int(topic_cfg["summary_interval_assistant_turns"] or 10)
-    major_group_size = int(topic_cfg.get("major_summary_group_size") or 3)
-    while True:
-        candidate = store.get_pending_mini_summary(topic_id, interval)
-        if candidate is None:
-            break
-        source_text = _topic_summary_source_text(list(candidate.get("messages") or []))
-        if not source_text:
-            break
-        try:
-            summary_text = await _generate_topic_summary_text(
-                kind="mini",
-                settings_config=settings_config,
-                llm_provider=llm_provider,
-                api_base_url=api_base_url,
-                api_key=api_key,
-                model=model,
-                source_text=source_text,
-                start_assistant_turn=int(candidate.get("start_assistant_turn") or 0),
-                end_assistant_turn=int(candidate.get("end_assistant_turn") or 0),
-            )
-        except Exception:
-            break
-        store.apply_mini_summary(topic_id, candidate, summary_text)
-    while True:
-        major_candidate = store.get_pending_major_summary(topic_id, major_group_size)
-        if major_candidate is None:
-            break
-        source_text = _topic_summary_blocks_text(list(major_candidate.get("blocks") or []))
-        if not source_text:
-            break
-        try:
-            summary_text = await _generate_topic_summary_text(
-                kind="major",
-                settings_config=settings_config,
-                llm_provider=llm_provider,
-                api_base_url=api_base_url,
-                api_key=api_key,
-                model=model,
-                source_text=source_text,
-                start_assistant_turn=int(major_candidate.get("start_assistant_turn") or 0),
-                end_assistant_turn=int(major_candidate.get("end_assistant_turn") or 0),
-            )
-        except Exception:
-            break
-        store.apply_major_summary(topic_id, major_candidate, summary_text)
+    return None
 
 
 async def _finalize_chat_exchange(
@@ -1182,55 +1150,12 @@ async def _finalize_chat_exchange(
     user_text: str,
     assistant_text: str,
     working_messages: list[dict[str, str]],
-    memory_window: int,
     settings_config: dict[str, Any],
-    llm_provider: str,
-    api_base_url: str,
-    api_key: str,
-    model: str,
 ) -> dict[str, Any]:
-    topic_cfg = _topic_history_config(settings_config)
-    long_term_memory_cfg = _long_term_memory_config(settings_config)
-    if topic_cfg["enabled"]:
-        topic_id = normalize_topic_id(session_id)
-        store = _get_chat_topic_store()
-        previous_meta = store.load_meta(topic_id) or {}
-        store.append_exchange(topic_id, user_text=user_text, assistant_text=assistant_text)
-        await _maybe_update_topic_summaries(
-            topic_id=topic_id,
-            settings_config=settings_config,
-            llm_provider=llm_provider,
-            api_base_url=api_base_url,
-            api_key=api_key,
-            model=model,
-        )
-        detail = store.get_topic_detail(topic_id)
-        suggestion = _build_long_term_memory_suggestion(
-            detail=detail,
-            previous_meta=previous_meta,
-            user_text=user_text,
-            assistant_text=assistant_text,
-            long_term_memory_cfg=long_term_memory_cfg,
-        )
-        snapshot = store.get_runtime_snapshot(topic_id)
-        if snapshot is not None:
-            SESSION_STORE[topic_id] = [dict(item) for item in snapshot.full_messages]
-        else:
-            SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
-        if suggestion is not None and long_term_memory_cfg.get("enabled") and long_term_memory_cfg.get("write_enabled"):
-            if long_term_memory_cfg.get("ask_before_save", True):
-                return {"memory_save_suggestion": suggestion}
-            save_result = _save_long_term_memory_candidate(
-                topic_id=topic_id,
-                candidate=suggestion,
-                long_term_memory_cfg=long_term_memory_cfg,
-                tooling_cfg=_derive_runtime_tooling_config(settings_config),
-            )
-            store.update_long_term_memory_marker(topic_id, saved_marker=str(suggestion.get("marker") or ""))
-            return {"memory_saved": save_result}
-        return {}
-    updated = list(working_messages) + [{"role": "assistant", "content": assistant_text}]
-    SESSION_STORE[session_id] = _trim_messages(updated, memory_window)
+    topic_id = normalize_topic_id(session_id)
+    store = _get_chat_topic_store()
+    store.append_exchange(topic_id, user_text=user_text, assistant_text=assistant_text)
+    SESSION_STORE[topic_id] = store.load_full_messages(topic_id)
     return {}
 
 
@@ -1886,6 +1811,7 @@ def _build_tool_name_bridge(tool_names: set[str], *, missing_message: str, base_
 
 def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     merged = _deep_merge(_default_settings_config(), config if isinstance(config, dict) else {})
+    _normalize_hermes_agent_config(merged)
     merged["model_path"] = _normalize_model_path(merged.get("model_path", ""))
 
     chat = merged.get("chat", {})
@@ -1893,20 +1819,22 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
         chat = _default_settings_config()["chat"]
         merged["chat"] = chat
     chat["backend_url"] = str(chat.get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
-    chat["llm_provider"] = str(chat.get("llm_provider") or "ollama").strip() or "ollama"
-    chat["api_base_url"] = str(chat.get("api_base_url") or "").strip()
-    chat["api_key"] = str(chat.get("api_key") or "")
-    chat["model"] = str(chat.get("model") or "qwen3:8b").strip() or "qwen3:8b"
-    chat["router_enabled"] = bool(chat.get("router_enabled", False))
-    chat["router_llm_provider"] = str(chat.get("router_llm_provider") or chat["llm_provider"]).strip() or chat["llm_provider"]
-    chat["router_api_base_url"] = str(chat.get("router_api_base_url") or chat["api_base_url"]).strip()
-    chat["router_api_key"] = str(chat.get("router_api_key") or "")
-    chat["router_model"] = str(chat.get("router_model") or chat["model"]).strip() or chat["model"]
+    chat["model"] = _normalize_hermes_model(chat.get("model"))
     chat["session_id"] = str(chat.get("session_id") or "default").strip() or "default"
-    try:
-        chat["memory_window"] = max(1, min(50, int(chat.get("memory_window", 10))))
-    except Exception:
-        chat["memory_window"] = 10
+    for legacy_key in (
+        "llm_provider",
+        "api_base_url",
+        "api_key",
+        "router_enabled",
+        "router_llm_provider",
+        "router_api_base_url",
+        "router_api_key",
+        "router_model",
+        "memory_window",
+        "topic_history",
+        "long_term_memory",
+    ):
+        chat.pop(legacy_key, None)
     chat["voice"] = str(chat.get("voice") or "zh-CN-XiaoxiaoNeural").strip() or "zh-CN-XiaoxiaoNeural"
     try:
         chat["rate_pct"] = max(-50, min(100, int(chat.get("rate_pct", 0))))
@@ -1931,27 +1859,6 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     default_skill_ids = skills_cfg.get("default_active_ids", _default_active_skill_ids())
     skills_cfg["default_active_ids"] = _canonicalize_skill_ids(default_skill_ids)
     chat["skills"] = skills_cfg
-    topic_history_cfg = chat.get("topic_history", {})
-    if not isinstance(topic_history_cfg, dict):
-        topic_history_cfg = {}
-    topic_history_cfg["enabled"] = bool(topic_history_cfg.get("enabled", True))
-    try:
-        topic_history_cfg["summary_interval_assistant_turns"] = max(1, int(topic_history_cfg.get("summary_interval_assistant_turns", 10)))
-    except Exception:
-        topic_history_cfg["summary_interval_assistant_turns"] = 10
-    chat["topic_history"] = topic_history_cfg
-    long_term_memory_cfg = chat.get("long_term_memory", {})
-    if not isinstance(long_term_memory_cfg, dict):
-        long_term_memory_cfg = {}
-    long_term_memory_cfg["enabled"] = bool(long_term_memory_cfg.get("enabled", False))
-    long_term_memory_cfg["project"] = str(long_term_memory_cfg.get("project") or "ipet-default").strip() or "ipet-default"
-    long_term_memory_cfg["read_enabled"] = bool(long_term_memory_cfg.get("read_enabled", True))
-    long_term_memory_cfg["write_enabled"] = bool(long_term_memory_cfg.get("write_enabled", True))
-    long_term_memory_cfg["ask_before_save"] = bool(long_term_memory_cfg.get("ask_before_save", True))
-    long_term_memory_cfg["prefer_topic_history"] = bool(long_term_memory_cfg.get("prefer_topic_history", True))
-    long_term_memory_cfg["save_from_major_summary"] = bool(long_term_memory_cfg.get("save_from_major_summary", True))
-    long_term_memory_cfg["save_on_explicit_request"] = bool(long_term_memory_cfg.get("save_on_explicit_request", True))
-    chat["long_term_memory"] = long_term_memory_cfg
     asr_cfg = chat.get("asr", {})
     if not isinstance(asr_cfg, dict):
         asr_cfg = {}
@@ -2036,6 +1943,13 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def _load_settings_config() -> dict[str, Any]:
     return _derive_settings_config(_load_full_config())
+
+
+def _public_settings_config(config: dict[str, Any]) -> dict[str, Any]:
+    public = json.loads(json.dumps(config if isinstance(config, dict) else {}))
+    runtime = public.get("runtime") if isinstance(public.get("runtime"), dict) else {}
+    public["runtime"] = redact_runtime_config(runtime)
+    return public
 
 
 def _derive_settings_config(raw_config: dict[str, Any]) -> dict[str, Any]:
@@ -2258,7 +2172,12 @@ def _get_mcp_bridge_for_tooling(tooling_cfg: dict[str, Any], force_reload: bool 
                 _MCP_BRIDGE.stop()
             except Exception:
                 pass
-        _MCP_BRIDGE = MCPBridge(tooling_cfg, ROOT_DIR)
+        _MCP_BRIDGE = MCPBridge(
+            tooling_cfg,
+            ROOT_DIR,
+            mcp_base_dir=HERMES_MCP_DIR,
+            legacy_mcp_base_dir=None,
+        )
         _MCP_CONFIG_SNAPSHOT = snapshot
     return _MCP_BRIDGE
 
@@ -2266,8 +2185,21 @@ def _get_mcp_bridge_for_tooling(tooling_cfg: dict[str, Any], force_reload: bool 
 def _get_skill_manager(force_reload: bool = False) -> SkillManager:
     global _SKILL_MANAGER
     if force_reload or _SKILL_MANAGER is None:
-        _SKILL_MANAGER = SkillManager(ROOT_DIR, builtin_dir=SKILLS_BUILTIN_DIR, imported_dir=THIRD_PARTY_SKILLS_DIR)
+        _SKILL_MANAGER = SkillManager(
+            ROOT_DIR,
+            builtin_dir=SKILLS_BUILTIN_DIR,
+            imported_dir=HERMES_SKILLS_IMPORTED_DIR,
+            legacy_imported_dir=None,
+        )
     return _SKILL_MANAGER
+
+
+def _get_mcp_manager() -> ThirdPartyMCPManager:
+    return ThirdPartyMCPManager(
+        ROOT_DIR,
+        base_dir=HERMES_MCP_DIR,
+        legacy_base_dir=None,
+    )
 
 
 def _get_chat_topic_store(force_reload: bool = False) -> TopicStore:
@@ -2493,7 +2425,7 @@ def _resolve_capability_planner_config(state: dict[str, Any]) -> dict[str, str]:
         llm_provider=str(state.get("llm_provider") or "ollama"),
         api_base_url=str(state.get("api_base_url") or ""),
         api_key=str(state.get("api_key") or ""),
-        model=str(state.get("model") or "qwen3:8b"),
+        model=str(state.get("model") or DEFAULT_HERMES_MODEL),
     )
 
 
@@ -2720,9 +2652,10 @@ def _build_chat_request_context(req: ChatStreamRequest, perf: PerfTracker) -> Ch
     raw_session_id = str(req.session_id or "").strip()
     chat_mode = _normalize_chat_mode(req.chat_mode)
     topic_history_cfg = _topic_history_config(settings_config)
-    long_term_memory_cfg = _long_term_memory_config(settings_config)
-    session_id = normalize_topic_id(raw_session_id or "default") if topic_history_cfg["enabled"] else (raw_session_id or "default")
+    session_id = normalize_topic_id(raw_session_id or "default")
     router_cfg = _resolve_router_request_config(req, settings_config)
+    runtime_cfg = _hermes_runtime_config(req.model or settings_config.get("chat", {}).get("model"))
+    req.model = runtime_cfg["model"]
     resolved_skills = perf.time_call(
         "resolve_skills",
         _resolve_request_skills,
@@ -2731,27 +2664,22 @@ def _build_chat_request_context(req: ChatStreamRequest, perf: PerfTracker) -> Ch
         chat_mode=chat_mode,
     )
     topic_snapshot = None
-    if topic_history_cfg["enabled"]:
-        store = _get_chat_topic_store()
-        topic_snapshot = perf.time_call("load_topic_snapshot", store.get_runtime_snapshot, session_id)
-        if topic_snapshot is not None:
-            history_messages = [dict(item) for item in topic_snapshot.model_messages]
-            SESSION_STORE[session_id] = [dict(item) for item in topic_snapshot.full_messages]
-        else:
-            history_messages = _trim_messages(SESSION_STORE.get(session_id, []), req.memory_window)
+    store = _get_chat_topic_store()
+    topic_snapshot = perf.time_call("load_topic_snapshot", store.get_runtime_snapshot, session_id)
+    if topic_snapshot is not None:
+        SESSION_STORE[session_id] = [dict(item) for item in topic_snapshot.full_messages]
+        history_messages = [
+            {"role": str(item.get("role") or ""), "content": str(item.get("content") or "")}
+            for item in topic_snapshot.full_messages
+            if str(item.get("role") or "") in {"user", "assistant"} and str(item.get("content") or "")
+        ]
     else:
-        perf.add("load_topic_snapshot", 0.0)
-        history_messages = _trim_messages(SESSION_STORE.get(session_id, []), req.memory_window)
-    long_term_memory_message = perf.time_call(
-        "load_long_term_memory",
-        _build_long_term_memory_message,
-        user_text=text,
-        topic_snapshot=topic_snapshot,
-        long_term_memory_cfg=long_term_memory_cfg,
-        tooling_cfg=tooling_cfg,
-    )
-    if long_term_memory_message is not None:
-        history_messages = list(history_messages) + [long_term_memory_message]
+        history_messages = [
+            {"role": str(item.get("role") or ""), "content": str(item.get("content") or "")}
+            for item in SESSION_STORE.get(session_id, [])
+            if isinstance(item, dict) and str(item.get("role") or "") in {"user", "assistant"} and str(item.get("content") or "")
+        ]
+    perf.add("load_long_term_memory", 0.0)
     working_messages = list(history_messages) + [{"role": "user", "content": text}]
     return ChatRequestContext(
         raw_config=raw_config,
@@ -2909,13 +2837,53 @@ def _has_chat_mode_tavily_tools(tooling_cfg: dict[str, Any] | None = None) -> bo
     return bool(bridge.list_tools())
 
 
+def _mcp_storage_scope(manifest_or_status: dict[str, Any]) -> str:
+    scope = str(manifest_or_status.get("storage_scope") or "").strip().lower()
+    if scope == "managed":
+        return "hermes"
+    return scope
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _skill_storage_scope(skill: Any, *, manager: SkillManager | None = None) -> str:
+    if str(getattr(skill, "source_type", "") or "").strip().lower() == "builtin":
+        return "builtin"
+    root_path = Path(getattr(skill, "package_root", None) or getattr(skill, "root_path", ""))
+    imported_dir = Path(getattr(manager, "imported_dir", HERMES_SKILLS_IMPORTED_DIR))
+    raw_legacy_imported_dir = getattr(manager, "legacy_imported_dir", None)
+    legacy_imported_dir = Path(raw_legacy_imported_dir) if raw_legacy_imported_dir else None
+    if _path_is_under(root_path, imported_dir):
+        return "hermes"
+    if legacy_imported_dir is not None and _path_is_under(root_path, legacy_imported_dir):
+        return "legacy"
+    return "external"
+
+
+def _skill_summary_payload(
+    skill: Any,
+    *,
+    default_active: bool = False,
+    manager: SkillManager | None = None,
+) -> dict[str, Any]:
+    summary = skill.to_summary(default_active=default_active)
+    summary["storage_scope"] = _skill_storage_scope(skill, manager=manager)
+    return summary
+
+
 def _iter_registered_mcp_server_configs() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     tooling_cfg = _load_runtime_tooling_config()
     third_cfg = tooling_cfg.get("third_party", {})
     if not isinstance(third_cfg, dict):
         third_cfg = {"enabled": False, "servers": []}
     configured = third_cfg.get("servers", [])
-    manager = ThirdPartyMCPManager(ROOT_DIR)
+    manager = _get_mcp_manager()
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     if isinstance(configured, list):
@@ -2940,6 +2908,7 @@ def _iter_registered_mcp_server_configs() -> tuple[dict[str, Any], list[dict[str
                 "source": str(manifest.get("server_dir", "")),
                 "manifest_path": str(manifest.get("manifest_path", "")),
                 "runtime": str(manifest.get("runtime", "")),
+                "storage_scope": _mcp_storage_scope(manifest),
             }
         )
     return third_cfg, out
@@ -2973,6 +2942,7 @@ def _builtin_local_mcp_server_status(tooling_cfg: dict[str, Any] | None = None) 
         "source_type": "builtin",
         "source": "backend.mcp.local_server",
         "manifest_path": "",
+        "storage_scope": "builtin",
         "install_status": "ready",
         "health_status": "online" if enabled else "disabled",
         "tools": _builtin_local_mcp_tools(),
@@ -2993,7 +2963,7 @@ def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
             if isinstance(status, dict)
         }
 
-    manager = ThirdPartyMCPManager(ROOT_DIR)
+    manager = _get_mcp_manager()
     servers: list[dict[str, Any]] = [_builtin_local_mcp_server_status()]
     for server_cfg in server_cfgs:
         name = str(server_cfg.get("name") or "").strip()
@@ -3002,6 +2972,8 @@ def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
         if name in cached_status:
             cached = dict(cached_status[name])
             cached.setdefault("name", name)
+            if cached.get("storage_scope"):
+                cached["storage_scope"] = _mcp_storage_scope(cached)
             servers.append(cached)
             continue
 
@@ -3013,6 +2985,7 @@ def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
             "source_type": str(server_cfg.get("source_type", "local")),
             "source": str(server_cfg.get("source", "")),
             "manifest_path": str(server_cfg.get("manifest_path", "")),
+            "storage_scope": str(server_cfg.get("storage_scope", "")),
             "install_status": "ready" if str(server_cfg.get("runtime", "")).strip() else "unknown",
             "health_status": "disabled" if (not third_enabled or not bool(server_cfg.get("enabled", True))) else "not_loaded",
             "tools": [],
@@ -3024,6 +2997,7 @@ def _lightweight_mcp_server_list() -> list[dict[str, Any]]:
             status["runtime"] = str(manifest.get("runtime", status["runtime"]))
             status["enabled"] = bool(manifest.get("enabled", status["enabled"]))
             status["manifest_path"] = str(manifest.get("manifest_path", status["manifest_path"]))
+            status["storage_scope"] = _mcp_storage_scope(manifest)
             if not third_enabled or not status["enabled"]:
                 status["health_status"] = "disabled"
             else:
@@ -3138,7 +3112,7 @@ def _ensure_mcp_server_from_draft(name: str, config_json: str) -> dict[str, Any]
     )
     if existing:
         return existing
-    manager = ThirdPartyMCPManager(ROOT_DIR)
+    manager = _get_mcp_manager()
     manifest_path = manager.register_server_config(config_payload, inferred_name)
     try:
         tooling_cfg = _load_runtime_tooling_config()
@@ -3158,6 +3132,7 @@ def _ensure_mcp_server_from_draft(name: str, config_json: str) -> dict[str, Any]
         "source": "frontend_config",
         "manifest_path": manifest["manifest_path"],
         "runtime": manifest["runtime"],
+        "storage_scope": _mcp_storage_scope(manifest),
     }
     _update_third_party_config(entry)
     return entry
@@ -3409,9 +3384,145 @@ def _skills_response_payload() -> dict[str, Any]:
         "ok": True,
         "enabled": enabled,
         "default_active_ids": default_active_ids,
-        "skills": [item.to_summary(default_active=item.skill_id in default_active_ids) for item in records],
+        "skills": [
+            _skill_summary_payload(
+                item,
+                default_active=item.skill_id in default_active_ids,
+                manager=manager,
+            )
+            for item in records
+        ],
         "config": settings,
+        "runtime": "hermes",
+        "storage": {
+            "runtime": "Hermes",
+            "imported_dir": str(HERMES_SKILLS_IMPORTED_DIR),
+            "legacy": False,
+        },
     }
+
+
+def _chat_request_payload(req: ChatStreamRequest) -> dict[str, Any]:
+    if hasattr(req, "model_dump"):
+        return req.model_dump()
+    return req.dict()
+
+
+def _approval_request_payload(req: ChatApprovalRequest) -> dict[str, Any]:
+    if hasattr(req, "model_dump"):
+        return req.model_dump()
+    return req.dict()
+
+
+async def _runtime_json_or_unavailable(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    client = _get_runtime_client()
+    try:
+        return await client.request_json(method, path, json_payload=payload)
+    except (HermesUnavailable, RuntimeUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Runtime request failed: {exc}") from exc
+
+
+async def _hermes_json_or_unavailable(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    client = _get_hermes_client()
+    try:
+        return await client.request_json(method, path, json_payload=payload)
+    except HermesUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Hermes request failed: {exc}") from exc
+
+
+def _unavailable_inventory_payload(kind: str, detail: str) -> dict[str, Any]:
+    key = "skills" if kind == "skills" else "servers"
+    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
+    runtime_label = "AstrBot" if runtime_id == RUNTIME_ASTRBOT else "Hermes Agent"
+    return {
+        "ok": False,
+        "runtime": runtime_id,
+        "detail": detail,
+        key: [],
+        "storage": {
+            "runtime": runtime_label,
+            "proxied": True,
+            "legacy": False,
+        },
+    }
+
+
+async def _chat_stream_via_runtime(req: ChatStreamRequest) -> StreamingResponse:
+    client = _get_runtime_client()
+    payload = _chat_request_payload(req)
+
+    async def event_gen():
+        try:
+            async for event, data in client.stream_sse("/api/chat/stream", payload):
+                yield _sse(event, data)
+        except (HermesUnavailable, RuntimeUnavailable) as exc:
+            yield _sse("error", {"message": str(exc), "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})
+        except Exception as exc:
+            yield _sse("error", {"message": f"Runtime stream failed: {exc}", "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+async def _chat_stream_via_hermes(req: ChatStreamRequest) -> StreamingResponse:
+    client = _get_hermes_client()
+    payload = _chat_request_payload(req)
+
+    async def event_gen():
+        try:
+            async for event, data in client.stream_sse("/api/chat/stream", payload):
+                yield _sse(event, data)
+        except HermesUnavailable as exc:
+            yield _sse("error", {"message": str(exc), "runtime": "hermes"})
+        except Exception as exc:
+            yield _sse("error", {"message": f"Hermes stream failed: {exc}", "runtime": "hermes"})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+async def _chat_approval_via_runtime(req: ChatApprovalRequest) -> StreamingResponse:
+    client = _get_runtime_client()
+    payload = _approval_request_payload(req)
+
+    async def event_gen():
+        try:
+            async for event, data in client.stream_sse("/api/chat/approval", payload):
+                yield _sse(event, data)
+        except (HermesUnavailable, RuntimeUnavailable) as exc:
+            yield _sse("error", {"message": str(exc), "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})
+        except Exception as exc:
+            yield _sse("error", {"message": f"Runtime approval failed: {exc}", "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+async def _chat_approval_via_hermes(req: ChatApprovalRequest) -> StreamingResponse:
+    client = _get_hermes_client()
+    payload = _approval_request_payload(req)
+
+    async def event_gen():
+        try:
+            async for event, data in client.stream_sse("/api/chat/approval", payload):
+                yield _sse(event, data)
+        except HermesUnavailable as exc:
+            yield _sse("error", {"message": str(exc), "runtime": "hermes"})
+        except Exception as exc:
+            yield _sse("error", {"message": f"Hermes approval failed: {exc}", "runtime": "hermes"})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @app.on_event("shutdown")
@@ -3503,12 +3614,33 @@ async def settings_js() -> FileResponse:
 
 @app.get("/api/settings/config")
 async def get_settings_config() -> dict[str, Any]:
+    config = _load_settings_config()
     return {
-        "config": _load_settings_config(),
-        "defaults": _default_settings_config(),
+        "config": _public_settings_config(config),
+        "defaults": _public_settings_config(_normalize_settings_config(_default_settings_config())),
         "tts_presets": TTS_PRESETS,
         "mcp_server_presets": MCP_SERVER_PRESETS,
     }
+
+
+@app.get("/api/runtime/status")
+async def get_runtime_status() -> dict[str, Any]:
+    client = _get_runtime_client()
+    try:
+        return await client.status()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "available": False,
+            "configured": False,
+            "runtime": _runtime_config_from_raw().get("active", RUNTIME_HERMES),
+            "detail": str(exc),
+        }
+
+
+@app.get("/api/hermes/status")
+async def get_hermes_status() -> dict[str, Any]:
+    return await _get_hermes_client().status()
 
 
 @app.put("/api/settings/config")
@@ -3519,20 +3651,24 @@ async def put_settings_config(payload: dict[str, Any] = Body(...)) -> dict[str, 
             draft_name = str(draft.get("name") or "").strip()
             draft_json = str(draft.get("config_json") or "")
             if draft_json.strip():
-                _ensure_mcp_server_from_draft(draft_name, draft_json)
+                await _runtime_json_or_unavailable(
+                    "POST",
+                    "/api/mcp/create-config",
+                    payload={"name": draft_name, "config_json": draft_json},
+                )
     previous = _load_settings_config()
     raw_config = payload.get("config", payload) if isinstance(payload, dict) else {}
     if not isinstance(raw_config, dict):
         raise HTTPException(status_code=400, detail="settings payload must be an object")
     merged = _deep_merge(_load_settings_config(), raw_config)
+    apply_runtime_secret_actions(merged, raw_config, previous)
     normalized = _normalize_settings_config(merged)
     _save_full_config(normalized)
     if normalized.get("model_path") and normalized.get("model_path") != previous.get("model_path"):
         _write_runtime_command("load_model", {"model_path": normalized["model_path"]})
-    _get_mcp_bridge(force_reload=True)
     return {
-        "config": normalized,
-        "defaults": _default_settings_config(),
+        "config": _public_settings_config(normalized),
+        "defaults": _public_settings_config(_normalize_settings_config(_default_settings_config())),
         "tts_presets": TTS_PRESETS,
         "mcp_server_presets": MCP_SERVER_PRESETS,
     }
@@ -3540,78 +3676,41 @@ async def put_settings_config(payload: dict[str, Any] = Body(...)) -> dict[str, 
 
 @app.get("/api/skills")
 async def list_skills() -> dict[str, Any]:
-    return _skills_response_payload()
+    client = _get_runtime_client()
+    try:
+        return await client.request_json("GET", "/api/skills")
+    except Exception as exc:
+        return _unavailable_inventory_payload("skills", f"Runtime skills are unavailable: {exc}")
 
 
 @app.post("/api/skills/import-local")
 async def import_local_skill(req: SkillImportLocalRequest) -> dict[str, Any]:
-    source_dir = str(req.path or req.directory or "").strip()
-    if not source_dir:
-        raise HTTPException(status_code=400, detail="path is required")
-    try:
-        result = _get_skill_manager(force_reload=True).import_local_directory(source_dir, name=req.name)
-        _get_skill_manager(force_reload=True)
-    except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=f"skill already exists: {exc}") from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {
-        "ok": True,
-        "skill": result.skill.to_summary(),
-        "target_path": str(result.target_path),
-        **_skills_response_payload(),
-    }
+    return await _runtime_json_or_unavailable("POST", "/api/skills/import-local", payload={
+        "path": req.path,
+        "directory": req.directory,
+        "name": req.name,
+    })
 
 
 @app.post("/api/skills/import-git")
 async def import_git_skill(req: SkillImportGitRequest) -> dict[str, Any]:
-    repo_url = str(req.repo_url or req.url or "").strip()
-    if not repo_url:
-        raise HTTPException(status_code=400, detail="repo_url is required")
-    ref = str(req.ref or req.branch or "").strip()
-    try:
-        result = _get_skill_manager(force_reload=True).install_from_git(
-            repo_url,
-            name=req.name,
-            ref=ref,
-            subdir=req.subdir,
-        )
-        _get_skill_manager(force_reload=True)
-    except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=f"skill already exists: {exc}") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except subprocess.CalledProcessError as exc:
-        raise HTTPException(status_code=500, detail=f"git import failed: {exc}") from exc
-    return {
-        "ok": True,
-        "skill": result.skill.to_summary(),
-        "target_path": str(result.target_path),
-        **_skills_response_payload(),
-    }
+    return await _runtime_json_or_unavailable("POST", "/api/skills/import-git", payload={
+        "url": req.url,
+        "repo_url": req.repo_url,
+        "name": req.name,
+        "ref": req.ref,
+        "branch": req.branch,
+        "subdir": req.subdir,
+    })
 
 
 @app.post("/api/skills/delete")
 async def delete_skill(req: SkillDeleteRequest) -> dict[str, Any]:
-    skill_id = _get_skill_manager().canonicalize_skill_id(str(req.skill_id or req.id or req.name or "").strip())
-    if not skill_id:
-        raise HTTPException(status_code=400, detail="skill_id is required")
-    try:
-        _get_skill_manager(force_reload=True).delete_imported_skill(skill_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    config = _load_settings_config()
-    chat_cfg = config.setdefault("chat", {})
-    skills_cfg = chat_cfg.setdefault("skills", {"enabled": True, "default_active_ids": _default_active_skill_ids()})
-    skills_cfg["default_active_ids"] = [
-        item for item in _normalize_skill_ids(skills_cfg.get("default_active_ids")) if item != skill_id
-    ]
-    _save_full_config(_normalize_settings_config(config))
-    _get_skill_manager(force_reload=True)
-    return {"ok": True, "skill_id": skill_id, **_skills_response_payload()}
+    return await _runtime_json_or_unavailable("POST", "/api/skills/delete", payload={
+        "skill_id": req.skill_id,
+        "id": req.id,
+        "name": req.name,
+    })
 
 
 @app.post("/api/settings/file-allowlist/pick")
@@ -3718,6 +3817,8 @@ async def post_settings_preview_action(payload: dict[str, Any] = Body(...)) -> d
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
+    return await _chat_stream_via_runtime(req)
+
     chat_mode = _normalize_chat_mode(req.chat_mode)
     perf = PerfTracker()
     text = req.text.strip()
@@ -3741,6 +3842,7 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
         tooling_cfg = context.tooling_cfg
         topic_history_cfg = context.topic_history_cfg
         router_cfg = context.router_cfg
+        runtime_cfg = _hermes_runtime_config(router_cfg.get("model"))
         resolved_skills = context.resolved_skills
         session_id = context.session_id
         topic_history_enabled = bool(topic_history_cfg["enabled"])
@@ -3835,6 +3937,9 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 route_tool_call = {}
                 route_search_needed = False
                 route_search_query = ""
+
+        if chat_mode == CHAT_MODE_CHAT and not route_kind:
+            route_kind = "direct_answer"
 
         inventory_scope = _explicit_capability_inventory_scope(text)
         if chat_mode == CHAT_MODE_REACT and inventory_scope and route_kind in {"", "direct_answer"}:
@@ -3956,15 +4061,13 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                 "session_id": session_id,
                 "topic_id": session_id,
                 "topic_history_enabled": topic_history_enabled,
-                "model": req.model,
-                "llm_provider": req.llm_provider,
+                "model": runtime_cfg["model"],
+                "runtime": "hermes",
                 "tool_mode": req.tool_mode,
                 "tools_enabled": tools_enabled,
                 "chat_mode": chat_mode,
                 "router_used": router_used,
                 "route_kind": route_kind,
-                "router_model": router_cfg["model"],
-                "router_llm_provider": router_cfg["llm_provider"],
                 "react_enabled": bool(req.react_enabled),
                 "react_visibility": str(req.react_visibility or "inline"),
                 "pet_display_name": pet_display_name,
@@ -3995,11 +4098,10 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                         "route_tool_call": dict(route_tool_call),
                         "route_search_needed": route_search_needed,
                         "route_search_query": route_search_query,
-                        "memory_window": int(req.memory_window),
-                        "model": req.model,
-                        "llm_provider": req.llm_provider,
-                        "api_base_url": req.api_base_url,
-                        "api_key": req.api_key,
+                        "model": runtime_cfg["model"],
+                        "llm_provider": runtime_cfg["llm_provider"],
+                        "api_base_url": runtime_cfg["api_base_url"],
+                        "api_key": runtime_cfg["api_key"],
                         "system_prompt": req.system_prompt,
                         "active_skill_ids": list(resolved_skills.skill_ids),
                         "skill_prompt_text": skill_prompt_text,
@@ -4073,10 +4175,10 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
             cleanup_turn_id = outcome.turn_id
             event_stream = stream_final_reply(
                 messages=outcome.final_messages or prompt_msgs,
-                model=req.model,
-                llm_provider=req.llm_provider,
-                api_base_url=req.api_base_url,
-                api_key=req.api_key,
+                model=runtime_cfg["model"],
+                llm_provider=runtime_cfg["llm_provider"],
+                api_base_url=runtime_cfg["api_base_url"],
+                api_key=runtime_cfg["api_key"],
             )
             use_ndjson = bool(req.expression_mode) and str(req.expression_output_format or "") == EXPR_OUTPUT_FORMAT
             if use_ndjson:
@@ -4152,17 +4254,9 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
                     user_text=text,
                     assistant_text=full_answer,
                     working_messages=list(context.working_messages),
-                    memory_window=int(req.memory_window),
                     settings_config=settings_config,
-                    llm_provider=str(req.llm_provider or "ollama"),
-                    api_base_url=str(req.api_base_url or ""),
-                    api_key=str(req.api_key or ""),
-                    model=str(req.model or "qwen3:8b"),
                 ),
             )
-            suggestion = finalize_result.get("memory_save_suggestion")
-            if isinstance(suggestion, dict):
-                yield _sse("memory_save_suggestion", {"topic_id": session_id, "candidate": suggestion})
             yield _sse("done", {"text": full_answer, "topic_id": session_id})
             stream_ok = True
         except Exception as exc:
@@ -4205,6 +4299,8 @@ async def chat_stream(req: ChatStreamRequest) -> StreamingResponse:
 
 @app.post("/api/chat/approval")
 async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
+    return await _chat_approval_via_runtime(req)
+
     runtime = _get_agent_graph_runtime()
     if runtime.get_pending_approval(req.turn_id) is None:
         raise HTTPException(status_code=404, detail="pending turn not found or already handled")
@@ -4277,7 +4373,7 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
 
             event_stream = stream_final_reply(
                 messages=outcome.final_messages or list(state.get("prompt_messages") or []),
-                model=str(state.get("model") or "qwen3:8b"),
+                model=str(state.get("model") or DEFAULT_HERMES_MODEL),
                 llm_provider=str(state.get("llm_provider") or "ollama"),
                 api_base_url=str(state.get("api_base_url") or ""),
                 api_key=str(state.get("api_key") or ""),
@@ -4358,7 +4454,6 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
 
         full_answer = _sanitize_ai_text(full_answer)
         session_id = str(state.get("session_id") or "default")
-        memory_window = int(state.get("memory_window") or 10)
         settings_config = state.get("settings_config") if isinstance(state.get("settings_config"), dict) else _load_settings_config()
         try:
             finalize_result = await perf.time_await(
@@ -4368,17 +4463,9 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
                     user_text=str(state.get("user_text") or ""),
                     assistant_text=full_answer,
                     working_messages=list(state.get("working_messages") or []),
-                    memory_window=memory_window,
                     settings_config=settings_config,
-                    llm_provider=str(state.get("llm_provider") or "ollama"),
-                    api_base_url=str(state.get("api_base_url") or ""),
-                    api_key=str(state.get("api_key") or ""),
-                    model=str(state.get("model") or "qwen3:8b"),
                 ),
             )
-            suggestion = finalize_result.get("memory_save_suggestion")
-            if isinstance(suggestion, dict):
-                yield _sse("memory_save_suggestion", {"topic_id": session_id, "candidate": suggestion})
             yield _sse("done", {"text": full_answer, "topic_id": session_id})
             stream_ok = True
         except Exception as exc:
@@ -4410,191 +4497,93 @@ async def chat_approval(req: ChatApprovalRequest) -> StreamingResponse:
 
 @app.post("/api/chat/memory/decision")
 async def post_chat_memory_decision(req: ChatMemoryDecisionRequest) -> dict[str, Any]:
-    topic_id = str(req.topic_id or "").strip()
-    if not topic_id:
-        raise HTTPException(status_code=400, detail="topic_id is required")
-
-    detail = _get_chat_topic_store().get_topic_detail(topic_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="topic not found")
-
-    marker = str(req.candidate.marker or "").strip()
-    if not marker:
-        raise HTTPException(status_code=400, detail="candidate.marker is required")
-
-    action = str(req.action or "").strip().lower()
-    store = _get_chat_topic_store()
-    if action == "dismiss":
-        meta = store.update_long_term_memory_marker(topic_id, dismissed_marker=marker)
-        return {"ok": True, "action": "dismiss", "topic_id": topic_id, "marker": marker, "meta": meta or {}}
-
-    if action != "save":
-        raise HTTPException(status_code=400, detail="action must be save or dismiss")
-
-    settings_config = _load_settings_config()
-    long_term_memory_cfg = _long_term_memory_config(settings_config)
-    if not long_term_memory_cfg.get("enabled") or not long_term_memory_cfg.get("write_enabled"):
-        raise HTTPException(status_code=400, detail="long-term memory writing is disabled")
-    candidate_payload = req.candidate.model_dump() if hasattr(req.candidate, "model_dump") else req.candidate.dict()
-    save_result = _save_long_term_memory_candidate(
-        topic_id=topic_id,
-        candidate=candidate_payload,
-        long_term_memory_cfg=long_term_memory_cfg,
-        tooling_cfg=_derive_runtime_tooling_config(settings_config),
-    )
-    meta = store.update_long_term_memory_marker(topic_id, saved_marker=marker)
-    return {
-        "ok": True,
-        "action": "save",
-        "topic_id": topic_id,
-        "marker": marker,
-        "result": save_result,
-        "meta": meta or {},
-    }
+    raise HTTPException(status_code=410, detail="Hermes manages memory internally; app-level memory decisions are disabled.")
 
 
 @app.post("/api/chat/topics")
 async def create_chat_topic(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    settings_config = _load_settings_config()
-    topic_cfg = _topic_history_config(settings_config)
-    requested_topic_id = ""
-    requested_title = DEFAULT_TOPIC_TITLE
-    if isinstance(payload, dict):
-        requested_topic_id = str(payload.get("topic_id") or payload.get("session_id") or "").strip()
-        requested_title = str(payload.get("title") or DEFAULT_TOPIC_TITLE).strip() or DEFAULT_TOPIC_TITLE
-    meta = _get_chat_topic_store().create_topic(
-        topic_id=requested_topic_id or None,
-        persisted=False,
-        title=requested_title,
-    )
-    topic_id = str(meta.get("topic_id") or "")
-    if topic_id:
-        SESSION_STORE.setdefault(topic_id, [])
-    return {
-        "ok": True,
-        "topic": meta,
-        "topic_id": topic_id,
-        "persisted": bool(meta.get("persisted", False)),
-    }
+    return await _runtime_json_or_unavailable("POST", "/api/chat/topics", payload=payload if isinstance(payload, dict) else {})
 
 
 @app.get("/api/chat/topics")
 async def list_chat_topics() -> dict[str, Any]:
-    settings_config = _load_settings_config()
-    topic_cfg = _topic_history_config(settings_config)
-    topics = _get_chat_topic_store().list_topics()
-    return {
-        "ok": True,
-        "enabled": bool(topic_cfg["enabled"]),
-        "topics": topics,
-    }
+    client = _get_runtime_client()
+    try:
+        return await client.request_json("GET", "/api/chat/topics")
+    except Exception as exc:
+        runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
+        return {
+            "ok": False,
+            "runtime": runtime_id,
+            "enabled": False,
+            "topics": [],
+            "detail": f"Runtime sessions are unavailable: {exc}",
+        }
 
 
 @app.get("/api/chat/topics/{topic_id}")
 async def get_chat_topic(topic_id: str) -> dict[str, Any]:
-    detail = _get_chat_topic_store().get_topic_detail(normalize_topic_id(topic_id))
-    if detail is None:
-        raise HTTPException(status_code=404, detail="topic not found")
-    return {
-        "ok": True,
-        "meta": detail.get("meta") or {},
-        "messages": detail.get("messages") or [],
-        "summary": detail.get("summary") or {},
-    }
+    target = quote(normalize_topic_id(topic_id), safe="")
+    return await _runtime_json_or_unavailable("GET", f"/api/chat/topics/{target}")
 
 
 @app.delete("/api/chat/topics/{topic_id}")
 @app.post("/api/chat/topics/{topic_id}/delete")
 async def delete_chat_topic(topic_id: str) -> dict[str, Any]:
-    normalized_topic_id = normalize_topic_id(topic_id)
-    store = _get_chat_topic_store()
-    deleted = store.delete_topic(normalized_topic_id)
-    session_deleted = SESSION_STORE.pop(normalized_topic_id, None) is not None
-    if not deleted and not session_deleted:
-        raise HTTPException(status_code=404, detail="topic not found")
-    return {
-        "ok": True,
-        "topic_id": normalized_topic_id,
-        "deleted": True,
-        "topics": store.list_topics(),
-    }
+    target = quote(normalize_topic_id(topic_id), safe="")
+    return await _runtime_json_or_unavailable("DELETE", f"/api/chat/topics/{target}")
 
 
 @app.post("/api/models")
-async def models(req: ModelListRequest) -> dict[str, Any]:
-    try:
-        items = await list_models(provider=req.llm_provider, base_url=req.api_base_url, api_key=req.api_key)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"list models failed: {exc}") from exc
-    return {"models": items}
+async def models() -> dict[str, Any]:
+    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
+    return {
+        "models": [],
+        "runtime": runtime_id,
+        "deprecated": True,
+        "detail": "Model listing is managed by the active runtime; settings only store the current model/session hint.",
+    }
 
 
 @app.get("/api/mcp/servers")
 async def list_mcp_servers() -> dict[str, Any]:
-    return {"servers": _lightweight_mcp_server_list()}
+    client = _get_runtime_client()
+    try:
+        return await client.request_json("GET", "/api/mcp/servers")
+    except Exception as exc:
+        return _unavailable_inventory_payload("mcp", f"Runtime MCP is unavailable: {exc}")
 
 
 @app.get("/api/mcp/health")
 async def mcp_health() -> dict[str, Any]:
-    tooling_cfg = _load_runtime_tooling_config()
-    bridge = _get_mcp_bridge_for_tooling(tooling_cfg)
-    payload = bridge.health()
-    servers = [_builtin_local_mcp_server_status(tooling_cfg), *list(payload.get("servers") or [])]
-    return {
-        **payload,
-        "builtin_enabled": bool(tooling_cfg.get("enabled", True)),
-        "servers": servers,
-        "online": sum(1 for item in servers if str(item.get("health_status") or "").strip().lower() == "online"),
-    }
+    client = _get_runtime_client()
+    try:
+        return await client.request_json("GET", "/api/mcp/health")
+    except Exception as exc:
+        return _unavailable_inventory_payload("mcp", f"Runtime MCP health is unavailable: {exc}")
 
 
 @app.post("/api/mcp/create-config")
 async def create_mcp_from_config(req: MCPServerCreateRequest) -> dict[str, Any]:
-    try:
-        result = _ensure_mcp_server_from_draft(req.name, req.config_json)
-        bridge = _get_mcp_bridge(force_reload=True)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"create mcp from config failed: {exc}") from exc
-    if not result:
-        raise HTTPException(status_code=400, detail="empty mcp server config")
-    return {"ok": True, "server": next((s for s in bridge.list_servers() if s.get("name") == result["name"]), result)}
+    return await _runtime_json_or_unavailable("POST", "/api/mcp/create-config", payload={
+        "config_json": req.config_json,
+        "name": req.name,
+    })
 
 
 @app.post("/api/mcp/delete")
 async def delete_mcp(req: MCPDeleteRequest) -> dict[str, Any]:
-    try:
-        bridge = _get_mcp_bridge()
-        server_cfg = bridge.get_server_config(req.name)
-        if not server_cfg:
-            raise FileNotFoundError(f"server not found: {req.name}")
-        manifest_path = str(server_cfg.get("manifest_path") or "").strip()
-        if not manifest_path:
-            raise FileNotFoundError(f"manifest path missing for server: {req.name}")
-        bridge.stop()
-        bridge.manager.delete_server(manifest_path)
-        _remove_third_party_config(req.name)
-        bridge = _get_mcp_bridge(force_reload=True)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"delete mcp failed: {exc}") from exc
-    return {"ok": True, "name": req.name, "servers": bridge.list_servers()}
+    return await _runtime_json_or_unavailable("POST", "/api/mcp/delete", payload={"name": req.name})
 
 
 @app.post("/api/mcp/toggle")
 async def toggle_mcp(req: MCPToggleRequest) -> dict[str, Any]:
-    try:
-        bridge = _get_mcp_bridge()
-        result = bridge.toggle_server(req.name, req.enabled)
-        _set_third_party_enabled(req.name, req.enabled)
-        bridge = _get_mcp_bridge(force_reload=True)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"toggle mcp failed: {exc}") from exc
-    return {"ok": True, "server": next((s for s in bridge.list_servers() if s.get("name") == result["name"]), result)}
+    return await _runtime_json_or_unavailable("POST", "/api/mcp/toggle", payload={"name": req.name, "enabled": req.enabled})
 
 
 @app.post("/api/mcp/reload")
 async def reload_mcp() -> dict[str, Any]:
-    bridge = _get_mcp_bridge(force_reload=True)
-    return {"ok": True, "servers": bridge.list_servers()}
+    return await _runtime_json_or_unavailable("POST", "/api/mcp/reload", payload={})
 
 
 @app.post("/api/asr/warmup")

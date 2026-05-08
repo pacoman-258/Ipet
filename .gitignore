@@ -13,6 +13,7 @@ wheels/
 # Local runtime state
 backend/agent_graph_state.pkl
 backend/audio_cache/
+.runtime-logs/
 .cache/
 tmp_*.log
 data/chat_topics/
@@ -37,6 +38,7 @@ model/**/*.autogen.model3.json
 model/**/Thumbs.db
 
 # Third-party MCP local installs
+Hermes/mcp/
 third_party_mcp/jmmcp/
 third_party_mcp/*/node_modules/
 third_party_mcp/*/.npm-cache/
@@ -47,4 +49,5 @@ third_party_mcp/*/.uv-cache/
 third_party_mcp/*/.uv-tools/
 
 # Imported third-party skills
+Hermes/skills/imported/
 third_party_skills/

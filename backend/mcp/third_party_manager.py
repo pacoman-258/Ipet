@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from ..storage_paths import hermes_mcp_dir, legacy_third_party_mcp_dir
 from .stdio_client import StdioMCPClient
 
 
@@ -77,19 +78,32 @@ IGNORED_DISCOVERY_DIRS = {
 
 
 class ThirdPartyMCPManager:
-    def __init__(self, root_dir: Path) -> None:
-        self.root_dir = root_dir
-        self.base_dir = root_dir / "third_party_mcp"
+    def __init__(
+        self,
+        root_dir: Path,
+        base_dir: Path | None = None,
+        legacy_base_dir: Path | None = None,
+    ) -> None:
+        self.root_dir = Path(root_dir)
+        self.base_dir = Path(base_dir or hermes_mcp_dir(self.root_dir))
+        self.legacy_base_dir = None
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def list_manifests(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for path in self.base_dir.glob("*/manifest.json"):
-            try:
-                manifest = self.load_manifest(path)
-                out.append(manifest)
-            except Exception:
-                continue
+        seen_names: set[str] = set()
+        for base_dir in self._manifest_roots():
+            for path in base_dir.glob("*/manifest.json"):
+                try:
+                    manifest = self.load_manifest(path)
+                    name = str(manifest.get("name") or "").strip()
+                    if name and name in seen_names:
+                        continue
+                    if name:
+                        seen_names.add(name)
+                    out.append(manifest)
+                except Exception:
+                    continue
         return out
 
     def load_manifest(self, manifest_path: str | Path) -> dict[str, Any]:
@@ -101,6 +115,7 @@ class ThirdPartyMCPManager:
         manifest["manifest_path"] = str(path.resolve())
         manifest["server_dir"] = str(path.parent.resolve())
         manifest["workdir_path"] = str(self._manifest_workdir_path(manifest).resolve())
+        manifest["storage_scope"] = self._storage_scope_for_path(path)
         return manifest
 
     def validate_manifest(self, manifest: dict[str, Any], server_dir: Path | None = None) -> dict[str, Any]:
@@ -293,8 +308,8 @@ class ThirdPartyMCPManager:
     def delete_server(self, manifest_path: str | Path) -> None:
         manifest = self.load_manifest(manifest_path)
         server_dir = Path(str(manifest.get("server_dir") or "")).resolve()
-        base_dir = self.base_dir.resolve()
-        if base_dir == server_dir or base_dir not in server_dir.parents:
+        managed_roots = [item.resolve() for item in self._manifest_roots()]
+        if not any(root != server_dir and root in server_dir.parents for root in managed_roots):
             raise ValueError(f"refusing to delete non-managed server directory: {server_dir}")
         shutil.rmtree(server_dir, ignore_errors=False)
 
@@ -887,6 +902,30 @@ class ThirdPartyMCPManager:
     def _tool_cache_path(self, manifest_path: str | Path) -> Path:
         path = Path(manifest_path)
         return path.parent / ".tool_cache.json"
+
+    def _manifest_roots(self) -> list[Path]:
+        dirs: list[Path] = []
+        seen: set[Path] = set()
+        for item in (self.base_dir, self.legacy_base_dir):
+            if item is None:
+                continue
+            resolved = item.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            dirs.append(item)
+        return dirs
+
+    def _storage_scope_for_path(self, manifest_path: Path) -> str:
+        path = manifest_path.resolve()
+        base_dir = self.base_dir.resolve()
+        if path == base_dir or base_dir in path.parents:
+            return "managed"
+        if self.legacy_base_dir is not None:
+            legacy_dir = self.legacy_base_dir.resolve()
+            if path == legacy_dir or legacy_dir in path.parents:
+                return "legacy"
+        return "external"
 
     def _apply_node_runtime_env(self, env: dict[str, str], server_dir: Path, manifest: dict[str, Any]) -> None:
         runtime = str(manifest.get("runtime") or "").strip().lower()

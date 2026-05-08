@@ -1,4 +1,72 @@
 {
+  "hermes": {
+    "enabled": false,
+    "auto_start": false,
+    "command": [
+      "uv",
+      "run",
+      "hermes",
+      "dashboard",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "9119",
+      "--no-open",
+      "--tui"
+    ],
+    "cwd": "../hermes-agent",
+    "base_url": "http://127.0.0.1:9119",
+    "health_path": "/api/status",
+    "startup_timeout_sec": 20
+  },
+  "runtime": {
+    "active": "hermes",
+    "adapters": {
+      "hermes": {
+        "enabled": false,
+        "auto_start": false,
+        "command": [
+          "uv",
+          "run",
+          "hermes",
+          "dashboard",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "9119",
+          "--no-open",
+          "--tui"
+        ],
+        "cwd": "../hermes-agent",
+        "base_url": "http://127.0.0.1:9119",
+        "health_path": "/api/status",
+        "startup_timeout_sec": 20
+      },
+      "astrbot": {
+        "enabled": false,
+        "auto_start": false,
+        "command": [],
+        "cwd": "../AstrBot",
+        "base_url": "http://127.0.0.1:6185",
+        "health_path": "/",
+        "startup_timeout_sec": 20,
+        "api_key": "",
+        "api_key_env": "ASTRBOT_API_KEY",
+        "username": "ipet",
+        "napcat_qq": {
+          "enabled": false,
+          "adapter_name": "aiocqhttp",
+          "adapter_type": "OneBot v11",
+          "reverse_ws_host": "127.0.0.1",
+          "reverse_ws_port": 6199,
+          "reverse_ws_url": "ws://127.0.0.1:6199/ws",
+          "webui_url": "",
+          "token_configured": false,
+          "guide_url": "https://docs.astrbot.app/platform/aiocqhttp.html"
+        }
+      }
+    }
+  },
   "model_path": "",
   "window": {
     "x": 120,
@@ -18,12 +86,8 @@
   },
   "chat": {
     "backend_url": "http://127.0.0.1:8008",
-    "llm_provider": "ollama",
-    "api_base_url": "http://127.0.0.1:11434",
-    "api_key": "",
-    "model": "qwen3:8b",
+    "model": "hermes-agent",
     "session_id": "default",
-    "memory_window": 10,
     "voice": "zh-CN-XiaoxiaoNeural",
     "rate_pct": 0,
     "tts_provider": "edge_tts",

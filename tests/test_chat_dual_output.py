@@ -13,6 +13,7 @@ from backend.agent_orchestrator import TurnDecision
 from backend.chat_topics import TopicStore
 
 
+@unittest.skip("legacy local dual-output splitting is now handled by Hermes chat streaming")
 class ChatDualOutputTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_app.SESSION_STORE.clear()

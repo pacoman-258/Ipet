@@ -1,20 +1,21 @@
 # AI Assistant Desktop Pet
 
-这是一个以本地运行优先的桌宠助手项目，使用 Python、Qt WebEngine、FastAPI 与 Live2D 风格资源构建。项目把桌宠宿主、聊天、TTS、表情控制和基于 MCP 的工具系统整合在一起，适合继续演进为可控的桌面 Agent。
+这是一个以本地运行优先的桌宠助手项目，使用 Python、Qt WebEngine、FastAPI 与 Live2D 风格资源构建。项目把桌宠宿主、聊天、TTS、表情控制和可切换 Agent 运行时整合在一起，适合继续演进为可控的桌面 Agent。
 
 ## 主要特性
 
 - 基于 Qt / WebEngine 的桌宠宿主与悬浮窗口
-- 基于 FastAPI 的聊天后端，支持 `ollama` 与 OpenAI 兼容接口
-- 基于 LangGraph 的 Agent 内核，支持工具审批、暂停恢复和状态持久化
+- 基于 FastAPI 的聊天后端，支持 Hermes 与 AstrBot 运行时切换
+- Hermes 模式支持审批、技能、MCP 和工具运行时代理
+- AstrBot 模式支持 HTTP API 聊天与会话列表，插件、知识库、MCP 和 QQ 平台配置留在 AstrBot WebUI 管理
 - 支持 `edge_tts` 与自定义 HTTP TTS
-- 支持本地 MCP 与第三方 MCP 服务接入
+- 支持 Hermes MCP 管理，并在 AstrBot 模式给出兼容状态提示
 - 支持 ReAct 轨迹展示与分段流式输出
 
 ## 目录说明
 
 - `main.py`：桌宠宿主程序
-- `backend/`：后端接口、Agent 编排、MCP 桥接、TTS 与模型相关逻辑
+- `backend/`：后端接口、运行时适配器、MCP 桥接、TTS 与模型相关逻辑
 - `index.html`、`settings.html`、`settings.css`、`settings.js`：前端入口页面，当前仍保留在根目录以兼容桌宠宿主与后端加载路径
 - `tests/`：回归测试与集成风格单元测试
 - `scripts/debug/`：一次性调试脚本与接口冒烟脚本
@@ -27,8 +28,9 @@
 - Python 3.12+
 - 当前代码主要面向 Windows 环境
 - 可选依赖：
-  - Ollama
-  - OpenAI 兼容接口服务
+  - Hermes Agent
+  - AstrBot v4.18+ HTTP API
+  - NapCatQQ，通过 AstrBot 的 OneBot v11 反向 WebSocket 接入 QQ
   - Edge TTS 或自定义 HTTP TTS 服务
   - 放在 `model/` 目录下的本地模型资源
 
@@ -46,7 +48,7 @@ uv sync
 Copy-Item pet_config.example.json pet_config.json
 ```
 
-3. 按你的本地环境修改 `pet_config.json`，包括模型路径、接口地址、API key 和可选的 MCP 服务。
+3. 按你的本地环境修改 `pet_config.json`，包括模型路径、`runtime.active`、Hermes 或 AstrBot 地址/API key，以及可选的 MCP 服务。
 
 4. 启动桌宠程序。
 
@@ -59,6 +61,8 @@ python main.py
 ## 配置说明
 
 - `pet_config.json` 已加入忽略列表，只保留在本地，不应提交
+- 默认运行时仍是 Hermes；如需 AstrBot，设置 `runtime.active` 为 `astrbot`
+- NapCatQQ 由 AstrBot 托管，Ipet 只记录和展示 `ws://127.0.0.1:6199/ws` 这类连接指引，不读取或发送 QQ 消息
 - `model/` 下的本地模型资源不会随仓库发布
 - 第三方 MCP 的安装目录、`node_modules`、缓存、下载文件和音频缓存都不会被跟踪
 - 安全示例配置见 `pet_config.example.json`

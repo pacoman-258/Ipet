@@ -1,7 +1,7 @@
 {
   "name": "playwright_mcp",
   "version": "0.1.0",
-  "enabled": true,
+  "enabled": false,
   "transport": "stdio",
   "runtime": "node",
   "workdir": ".",
@@ -19,5 +19,8 @@
   "description": "Created from frontend MCP server config",
   "env": {},
   "protocol": "jsonline",
-  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/playwright_mcp"
+  "server_dir": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/playwright_mcp",
+  "manifest_path": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/playwright_mcp/manifest.json",
+  "workdir_path": "/Users/lyj/lyj/third_round/Ipet/Ipet/third_party_mcp/playwright_mcp",
+  "storage_scope": "legacy"
 }

@@ -66,7 +66,8 @@ class ASRApiTests(unittest.TestCase):
         self.assertIn("type=start", error["message"])
 
     def test_normalize_settings_config_includes_asr_defaults(self) -> None:
-        normalized = backend_app._normalize_settings_config({"chat": {"asr": {"push_to_talk_key": "BadKey"}}})
+        with mock.patch.object(backend_app, "_is_macos", return_value=False):
+            normalized = backend_app._normalize_settings_config({"chat": {"asr": {"push_to_talk_key": "BadKey"}}})
 
         self.assertTrue(normalized["chat"]["asr"]["enabled"])
         self.assertEqual(normalized["chat"]["asr"]["provider"], "funasr")

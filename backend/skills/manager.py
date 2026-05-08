@@ -14,6 +14,7 @@ from .discovery import discover_builtin_candidates, discover_imported_candidates
 from .models import SkillDiscoveryCandidate, SkillImportResult, SkillManifest, SkillRecord, SkillScriptDefinition
 from .normalizer import discover_resource_entries, manifest_allowlist_from_sources, normalize_skill_record, safe_skill_id
 from .parsers import build_site_metadata, load_clawhub_metadata, load_source_metadata, parse_frontmatter, parse_simple_yaml, write_source_metadata
+from ..storage_paths import hermes_skills_dir, legacy_third_party_skills_dir
 
 
 
@@ -203,10 +204,17 @@ def _discover_auto_script_entries(root_path: Path, *, existing_names: set[str]) 
 
 
 class SkillManager:
-    def __init__(self, root_dir: Path, builtin_dir: Path | None = None, imported_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        root_dir: Path,
+        builtin_dir: Path | None = None,
+        imported_dir: Path | None = None,
+        legacy_imported_dir: Path | None = None,
+    ) -> None:
         self.root_dir = Path(root_dir)
         self.builtin_dir = Path(builtin_dir or (self.root_dir / "skills" / "builtin"))
-        self.imported_dir = Path(imported_dir or (self.root_dir / "third_party_skills"))
+        self.imported_dir = Path(imported_dir or hermes_skills_dir(self.root_dir))
+        self.legacy_imported_dir = None
         self.builtin_dir.mkdir(parents=True, exist_ok=True)
         self.imported_dir.mkdir(parents=True, exist_ok=True)
 
@@ -234,10 +242,9 @@ class SkillManager:
     def list_skills(self) -> list[SkillRecord]:
         items: list[SkillRecord] = []
         seen_ids: set[str] = set()
-        candidates = [
-            *discover_builtin_candidates(self.builtin_dir),
-            *discover_imported_candidates(self.imported_dir),
-        ]
+        candidates = [*discover_builtin_candidates(self.builtin_dir)]
+        for imported_dir in self._imported_read_dirs():
+            candidates.extend(discover_imported_candidates(imported_dir))
         for candidate in candidates:
             item = self._load_skill(candidate)
             if item.skill_id in seen_ids:
@@ -502,3 +509,15 @@ class SkillManager:
         if self.get_skill(skill_id) is not None:
             raise FileExistsError(skill_id)
 
+    def _imported_read_dirs(self) -> list[Path]:
+        dirs: list[Path] = []
+        seen: set[Path] = set()
+        for item in (self.imported_dir, self.legacy_imported_dir):
+            if item is None:
+                continue
+            resolved = item.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            dirs.append(item)
+        return dirs

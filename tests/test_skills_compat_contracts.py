@@ -103,6 +103,16 @@ def _fake_git_run_factory(source_repo: Path):
     return _fake_run
 
 
+class _FakeHermesClient:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.requests: list[tuple[str, str, dict | None]] = []
+
+    async def request_json(self, method: str, path: str, *, json_payload: dict | None = None) -> dict:
+        self.requests.append((method, path, json_payload))
+        return dict(self.payload)
+
+
 class SkillsCompatibilityContractsTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_app.SESSION_STORE.clear()
@@ -171,16 +181,23 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
         self.assertIn("resource not available", read_bad.error)
 
     def test_recursive_imported_skill_package_is_exposed_via_api(self) -> None:
-        with _workspace_tempdir() as root:
-            _write_skill(root / "third_party_skills" / "vendor" / "2025.02" / "skillsmp-skill", name="SkillsMP Skill")
-            manager = SkillManager(root)
-            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": []}}}
-            with mock.patch.object(
-                backend_app,
-                "_get_skill_manager",
-                side_effect=lambda force_reload=False: manager,
-            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
-                resp = self.client.get("/api/skills")
+        fake = _FakeHermesClient(
+            {
+                "ok": True,
+                "runtime": "hermes",
+                "skills": [
+                    {
+                        "id": "skillsmp-skill",
+                        "platform": "standard",
+                        "capabilities": ["prompt"],
+                        "package_root": "Hermes/skills/imported/vendor",
+                        "discovery_root": "Hermes/skills/imported/vendor/2025.02/skillsmp-skill",
+                    }
+                ],
+            }
+        )
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+            resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()
@@ -192,29 +209,21 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
         self.assertTrue(skill["discovery_root"].endswith("skillsmp-skill"))
 
     def test_clawhub_skill_summary_exposes_site_metadata(self) -> None:
-        with _workspace_tempdir() as root:
-            skill_dir = _write_skill(root / "third_party_skills" / "obsidian-package" / "obsidian-direct", name="Obsidian Direct")
-            (skill_dir / ".clawhub").mkdir(exist_ok=True)
-            (skill_dir / ".clawhub" / "origin.json").write_text(
-                json.dumps(
+        fake = _FakeHermesClient(
+            {
+                "ok": True,
+                "runtime": "hermes",
+                "skills": [
                     {
-                        "source_platform": "clawhub",
-                        "package_name": "obsidian-direct",
-                        "author": "openclaw",
-                        "source_url": "https://clawhub-skills.example/obsidian-direct",
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-            manager = SkillManager(root)
-            settings = {"chat": {"skills": {"enabled": True, "default_active_ids": []}}}
-            with mock.patch.object(
-                backend_app,
-                "_get_skill_manager",
-                side_effect=lambda force_reload=False: manager,
-            ), mock.patch.object(backend_app, "_load_settings_config", return_value=settings):
-                resp = self.client.get("/api/skills")
+                        "id": "obsidian-direct",
+                        "platform": "clawhub",
+                        "site_metadata": {"author": "openclaw"},
+                    }
+                ],
+            }
+        )
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+            resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
         skill = resp.json()["skills"][0]
@@ -224,7 +233,7 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
     def test_pptx_adapter_tools_are_registered_and_missing_dependency_is_clear(self) -> None:
         with _workspace_tempdir() as root:
             skill_dir = _write_skill(
-                root / "third_party_skills" / "pptx",
+                root / "Hermes" / "skills" / "imported" / "pptx",
                 name="PPTX",
                 description="PPTX helper",
                 with_resources=True,
@@ -257,32 +266,34 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
         self.assertIn("pptx file not found", result.error)
 
     def test_import_git_endpoint_forwards_subdir(self) -> None:
-        with _workspace_tempdir() as root:
-            manager = SkillManager(root)
-            imported_skill = manager.validate_skill_dir(_write_skill(root / "source", with_resources=True), source_type="imported")
-            install_mock = mock.Mock(
-                return_value=SkillImportResult(
-                    skill=imported_skill,
-                    target_path=root / "third_party_skills" / imported_skill.skill_id,
-                    metadata={},
-                )
+        fake = _FakeHermesClient({"ok": True, "runtime": "hermes", "skill": {"id": "pptx-helper"}})
+        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+            resp = self.client.post(
+                "/api/skills/import-git",
+                json={
+                    "repo_url": "https://github.com/anthropics/skills.git",
+                    "subdir": "skills/pptx",
+                },
             )
-            with mock.patch.object(backend_app, "_get_skill_manager", return_value=manager), mock.patch.object(
-                manager,
-                "install_from_git",
-                install_mock,
-            ):
-                resp = self.client.post(
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            fake.requests,
+            [
+                (
+                    "POST",
                     "/api/skills/import-git",
-                    json={
+                    {
+                        "url": "",
                         "repo_url": "https://github.com/anthropics/skills.git",
+                        "name": "",
+                        "ref": "",
+                        "branch": "",
                         "subdir": "skills/pptx",
                     },
                 )
-
-        self.assertEqual(resp.status_code, 200)
-        install_mock.assert_called_once()
-        self.assertEqual(install_mock.call_args.kwargs["subdir"], "skills/pptx")
+            ],
+        )
 
     def test_settings_page_contains_skill_git_subdir_field(self) -> None:
         resp = self.client.get("/settings")

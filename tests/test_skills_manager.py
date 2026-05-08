@@ -188,8 +188,10 @@ class SkillManagerTests(unittest.TestCase):
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
             _write_skill(root / "skills" / "builtin" / "repo-guide", name="Repo Guide")
-            _write_skill(root / "third_party_skills" / "vendor-a" / "skill-alpha", name="Skill Alpha")
-            _write_skill(root / "third_party_skills" / "vendor-b" / "2025.01" / "skill-beta", name="Skill Beta")
+            imported_root = root / "Hermes" / "skills" / "imported"
+            _write_skill(imported_root / "vendor-a" / "skill-alpha", name="Skill Alpha")
+            _write_skill(imported_root / "vendor-b" / "2025.01" / "skill-beta", name="Skill Beta")
+            _write_skill(root / "third_party_skills" / "legacy-skill", name="Legacy Skill")
 
             skills = manager.list_skills()
             by_id = {item.skill_id: item for item in skills}
@@ -197,6 +199,7 @@ class SkillManagerTests(unittest.TestCase):
             self.assertIn("repo-guide", by_id)
             self.assertIn("skill-alpha", by_id)
             self.assertIn("skill-beta", by_id)
+            self.assertNotIn("legacy-skill", by_id)
             self.assertEqual(by_id["skill-alpha"].package_root.name, "vendor-a")
             self.assertEqual(by_id["skill-beta"].package_root.name, "vendor-b")
             self.assertTrue(str(by_id["skill-beta"].discovery_root).endswith("skill-beta"))
@@ -204,7 +207,10 @@ class SkillManagerTests(unittest.TestCase):
     def test_list_skills_ignores_nested_dirs_after_skill_root(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            parent_skill = _write_skill(root / "third_party_skills" / "package" / "skill-root", name="Skill Root")
+            parent_skill = _write_skill(
+                root / "Hermes" / "skills" / "imported" / "package" / "skill-root",
+                name="Skill Root",
+            )
             _write_skill(parent_skill / "nested-child", name="Should Not Load")
 
             skills = manager.list_skills()
@@ -263,12 +269,28 @@ class SkillManagerTests(unittest.TestCase):
             installed_path = result.target_path
 
             self.assertTrue(installed_path.exists())
+            self.assertEqual(installed_path.parent, root / "Hermes" / "skills" / "imported")
             self.assertEqual(result.skill.source_type, "imported")
             self.assertIn(result.skill.skill_id, {item.skill_id for item in manager.list_skills()})
 
             manager.delete_imported_skill(result.skill.skill_id)
 
             self.assertFalse(installed_path.exists())
+
+    def test_import_local_directory_writes_to_hermes_and_ignores_legacy(self) -> None:
+        with _workspace_tempdir() as root:
+            hermes_dir = root / "Hermes" / "skills" / "imported"
+            legacy_dir = root / "third_party_skills"
+            manager = SkillManager(root, imported_dir=hermes_dir, legacy_imported_dir=legacy_dir)
+            _write_skill(legacy_dir / "legacy-skill", name="Legacy Skill")
+            source_dir = _write_skill(root / "source-skill", name="Hermes Skill")
+
+            result = manager.import_local_directory(source_dir)
+
+            self.assertEqual(result.target_path.parent, hermes_dir)
+            self.assertTrue((hermes_dir / "hermes-skill").exists())
+            self.assertIsNone(manager.get_skill("legacy-skill"))
+            self.assertIsNotNone(manager.get_skill("hermes-skill"))
 
     def test_install_from_git_clones_into_managed_directory(self) -> None:
         with _workspace_tempdir() as root:
@@ -286,12 +308,13 @@ class SkillManagerTests(unittest.TestCase):
             self.assertTrue(run_mock.called)
             self.assertEqual(result.skill.skill_id, "git-skill")
             self.assertTrue(result.target_path.exists())
+            self.assertEqual(result.target_path.parent, root / "Hermes" / "skills" / "imported")
             self.assertEqual(result.metadata["repo_url"], "https://example.com/repo.git")
 
     def test_get_skill_accepts_directory_name_alias(self) -> None:
         with _workspace_tempdir() as root:
             manager = SkillManager(root)
-            imported_dir = root / "third_party_skills" / "atr-pptx"
+            imported_dir = root / "Hermes" / "skills" / "imported" / "atr-pptx"
             _write_skill(imported_dir, name="pptx", description="PPTX helper")
 
             by_id = manager.get_skill("pptx")

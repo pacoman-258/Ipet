@@ -4,8 +4,7 @@ from pydantic import BaseModel, Field
 class ChatStreamRequest(BaseModel):
     session_id: str = Field(default="default")
     text: str
-    model: str = Field(default="qwen3:8b")
-    memory_window: int = Field(default=10, ge=1, le=50)
+    model: str = Field(default="gpt-5.4")
     system_prompt: str = Field(default="")
     expression_mode: bool = Field(default=True)
     expression_output_format: str = Field(default="ndjson_v1")
@@ -15,14 +14,6 @@ class ChatStreamRequest(BaseModel):
     react_enabled: bool = Field(default=True)
     react_visibility: str = Field(default="inline")
     max_reasoning_steps: int = Field(default=10, ge=1)
-    llm_provider: str = Field(default="ollama")
-    api_base_url: str = Field(default="")
-    api_key: str = Field(default="")
-    router_enabled: bool | None = Field(default=None)
-    router_llm_provider: str = Field(default="")
-    router_api_base_url: str = Field(default="")
-    router_api_key: str = Field(default="")
-    router_model: str = Field(default="")
     chat_mode: str = Field(default="react")
     skill_ids: list[str] = Field(default_factory=list)
 
@@ -55,12 +46,6 @@ class TTSRequest(BaseModel):
     volume: str = Field(default="+0%")
     provider: str = Field(default="edge_tts")
     provider_url: str = Field(default="")
-
-
-class ModelListRequest(BaseModel):
-    llm_provider: str = Field(default="ollama")
-    api_base_url: str = Field(default="")
-    api_key: str = Field(default="")
 
 
 class MCPServerCreateRequest(BaseModel):

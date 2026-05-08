@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Live2D Desktop Pet</title>
+  <title>Live2D 桌宠助手</title>
 
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
   <script src="./js/live2dcubismcore.min.js"></script>
@@ -534,7 +534,7 @@
 
     #chat-panel.open {
       display: grid;
-      grid-template-rows: 56px auto 1fr auto;
+      grid-template-rows: 54px auto 1fr auto;
     }
 
     #chat-header {
@@ -555,6 +555,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     #chat-skills-toggle,
@@ -585,15 +587,15 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      padding: 12px 16px 10px;
+      padding: 10px 14px;
       border-bottom: 1px solid rgba(246, 203, 222, 0.78);
       background: linear-gradient(180deg, rgba(255, 245, 249, 0.96), rgba(255, 251, 252, 0.94));
     }
 
     .chat-mode-btn {
       border: none;
-      border-radius: 999px;
-      padding: 8px 12px;
+      border-radius: 10px;
+      padding: 8px 11px;
       font-size: 12px;
       font-weight: 700;
       color: #7b5466;
@@ -674,6 +676,7 @@
       flex-wrap: wrap;
       gap: 8px;
       padding: 12px 14px 10px;
+      justify-content: flex-start;
     }
 
     #chat-history-status {
@@ -797,12 +800,13 @@
       flex-wrap: wrap;
       gap: 8px;
       padding: 12px 14px 10px;
+      justify-content: flex-start;
     }
 
     .chat-skill-action {
       border: none;
-      border-radius: 999px;
-      padding: 7px 12px;
+      border-radius: 10px;
+      padding: 8px 11px;
       font-size: 12px;
       font-weight: 700;
       color: #74475b;
@@ -1227,92 +1231,11 @@
       color: #765260;
     }
 
-    .memory-suggestion {
-      margin-top: 12px;
-      padding: 12px 14px;
-      border-radius: 16px;
-      border: 1px solid rgba(224, 185, 205, 0.92);
-      background: linear-gradient(180deg, rgba(255, 250, 252, 0.98), rgba(255, 243, 247, 0.96));
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .memory-suggestion-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .memory-suggestion-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: #6f4b5d;
-    }
-
-    .memory-suggestion-source {
-      font-size: 11px;
-      font-weight: 700;
-      color: #9a657b;
-      background: rgba(255, 255, 255, 0.78);
-      border: 1px solid rgba(235, 203, 217, 0.8);
-      border-radius: 999px;
-      padding: 3px 8px;
-    }
-
-    .memory-suggestion-preview {
-      font-size: 12px;
-      line-height: 1.65;
-      color: #66505b;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .memory-suggestion-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .memory-suggestion-btn {
-      border: none;
-      border-radius: 999px;
-      padding: 8px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      color: #6a4654;
-      background: rgba(255, 255, 255, 0.82);
-      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.12);
-    }
-
-    .memory-suggestion-btn.save {
-      background: linear-gradient(180deg, rgba(215, 255, 233, 0.98), rgba(190, 245, 216, 0.96));
-      color: #306f50;
-    }
-
-    .memory-suggestion-btn.dismiss {
-      background: linear-gradient(180deg, rgba(255, 240, 245, 0.98), rgba(255, 220, 232, 0.96));
-      color: #8a4c68;
-    }
-
-    .memory-suggestion-btn:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
-
-    .memory-suggestion-status {
-      font-size: 12px;
-      color: #765260;
-    }
-
     #chat-input-wrap {
       border-top: 1px solid rgba(246, 203, 222, 0.9);
       padding: 14px;
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
       background: linear-gradient(180deg, rgba(255, 247, 250, 0.96), rgba(255, 240, 246, 0.94));
     }
@@ -1353,7 +1276,7 @@
     #chat-stop {
       align-self: end;
       border: none;
-      border-radius: 999px;
+      border-radius: 10px;
       color: #744b5e;
       padding: 10px 14px;
       cursor: pointer;
@@ -1368,6 +1291,7 @@
 
     #chat-stop {
       background: linear-gradient(180deg, rgba(240, 252, 247, 0.98), rgba(217, 244, 232, 0.96));
+      grid-column: 2;
     }
 
     .chat-resizer-handle {
@@ -1477,7 +1401,7 @@
 
     #chat-mode-bar {
       gap: 10px;
-      padding: 14px 18px 12px;
+      padding: 12px 16px;
       background: linear-gradient(180deg, #f5f8fc, #eef3f8);
       border-bottom: 1px solid rgba(215, 225, 236, 0.95);
     }
@@ -1523,10 +1447,42 @@
     }
 
     #chat-input-wrap {
-      padding: 16px 18px 18px;
+      padding: 14px 16px 16px;
       gap: 10px;
       background: linear-gradient(180deg, #f5f8fc, #eef3f8);
       border-top: 1px solid rgba(215, 225, 236, 0.95);
+    }
+
+    @media (max-width: 380px) {
+      #chat-panel.open {
+        grid-template-rows: auto auto 1fr auto;
+      }
+
+      #chat-header {
+        min-height: 54px;
+        padding: 10px 12px;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      #chat-mode-bar {
+        gap: 6px;
+        padding: 10px 12px;
+      }
+
+      .chat-mode-btn {
+        flex: 1 1 92px;
+      }
+
+      #chat-input-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      #chat-send,
+      #chat-stop {
+        grid-column: 1;
+        width: 100%;
+      }
     }
 
     #chat-input {
@@ -1584,34 +1540,34 @@
         <span class="chrome-light"></span>
         <span class="chrome-light"></span>
       </div>
-      <div id="shell-title-pill">My Desktop Pet</div>
+      <div id="shell-title-pill">桌宠助手</div>
       <div id="shell-window-actions">
-        <button id="window-minimize" class="window-action-button" type="button" aria-label="Minimize window">-</button>
-        <button id="window-close" class="window-action-button" type="button" aria-label="Close window">x</button>
+        <button id="window-minimize" class="window-action-button" type="button" aria-label="最小化窗口">-</button>
+        <button id="window-close" class="window-action-button" type="button" aria-label="关闭窗口">x</button>
       </div>
     </div>
-    <aside id="shell-sidebar" aria-label="Desktop pet shortcuts">
+    <aside id="shell-sidebar" aria-label="桌宠快捷操作">
       <button id="nav-settings" class="shell-nav-button" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M19.14 12.94a7.48 7.48 0 0 0 .05-.94 7.48 7.48 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 1h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 7.48a.5.5 0 0 0 .12.64l2.03 1.58a7.48 7.48 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.25A3.25 3.25 0 1 1 12 8.75a3.25 3.25 0 0 1 0 6.5Z" />
         </svg>
-        <span>Settings</span>
+        <span>设置</span>
       </button>
       <button id="nav-history" class="shell-nav-button" type="button" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 2.75a9.25 9.25 0 1 0 8.83 12h-1.62a7.75 7.75 0 1 1-1.78-8.07H15.5a.75.75 0 0 0 0 1.5H21a.75.75 0 0 0 .75-.75V2a.75.75 0 0 0-1.5 0v2.58A9.2 9.2 0 0 0 12 2.75Zm-.75 4.5a.75.75 0 0 1 1.5 0v4.19l2.96 1.7a.75.75 0 1 1-.74 1.3l-3.34-1.91a.75.75 0 0 1-.38-.65Z" />
         </svg>
-        <span>Chat History</span>
+        <span>历史</span>
       </button>
       <button id="nav-chat" class="shell-nav-button" type="button" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 3.25a.75.75 0 0 1 .75.75v7.25H20a.75.75 0 0 1 0 1.5h-7.25V20a.75.75 0 0 1-1.5 0v-7.25H4a.75.75 0 0 1 0-1.5h7.25V4a.75.75 0 0 1 .75-.75Z" />
         </svg>
-        <span>New Chat</span>
+        <span>新对话</span>
       </button>
     </aside>
     <div id="shell-stage" aria-hidden="true"></div>
-    <div id="status">loading...</div>
+    <div id="status">正在加载...</div>
     <div id="error"></div>
   </div>
   <div id="window-frame"></div>
@@ -1624,13 +1580,13 @@
       </div>
     </div>
     <div id="chat-mode-bar">
-      <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct模式</button>
+      <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct 模式</button>
       <button class="chat-mode-btn" data-chat-mode="chat">聊天模式</button>
-      <button class="chat-mode-btn" data-chat-mode="skill">Skill模式</button>
+      <button class="chat-mode-btn" data-chat-mode="skill">技能模式</button>
     </div>
     <div id="chat-history-drawer">
       <div class="chat-history-head">
-        <strong>Topic History</strong>
+        <strong>话题历史</strong>
         <span id="chat-history-current">当前话题：未创建</span>
       </div>
       <div class="chat-history-actions">
@@ -1641,8 +1597,8 @@
     </div>
     <div id="chat-skills-drawer">
       <div class="chat-skills-head">
-        <strong>Agent Skills</strong>
-        <span>这里管理当前聊天会话生效的技能。不会立即改写配置文件。</span>
+        <strong>智能技能</strong>
+        <span>这里管理当前聊天会话生效的技能，不会立即改写配置文件。</span>
       </div>
       <div class="chat-skills-actions">
         <button id="chat-skills-refresh" class="chat-skill-action">刷新技能</button>
@@ -1683,17 +1639,8 @@
         background_overlay_opacity: 0.42,
         chat: {
           backend_url: "http://127.0.0.1:8008",
-          llm_provider: "ollama",
-          api_base_url: "http://127.0.0.1:11434",
-          api_key: "",
-          model: "qwen3:8b",
-          router_enabled: false,
-          router_llm_provider: "ollama",
-          router_api_base_url: "http://127.0.0.1:11434",
-          router_api_key: "",
-          router_model: "qwen3:8b",
+          model: "hermes-agent",
           session_id: "default",
-          memory_window: 10,
           voice: "zh-CN-XiaoxiaoNeural",
           rate_pct: 0,
           tts_provider: "edge_tts",
@@ -1714,10 +1661,6 @@
           skills: {
             enabled: true,
             default_active_ids: [],
-          },
-          topic_history: {
-            enabled: true,
-            summary_interval_assistant_turns: 10,
           },
           asr: {
             enabled: true,
@@ -1783,6 +1726,7 @@
       let ttsPlaying = false;
       let streamFinished = false;
       let pendingSpeakBuffer = "";
+      let pendingSpeakExpr = null;
       let speakFlushTimer = 0;
       let receivedStructuredSegment = false;
       let chatPanelPositioned = false;
@@ -1802,7 +1746,6 @@
       let thoughtSessionCounter = 0;
       const approvalBubbleRefs = new Map();
       const approvalThoughtSessionRefs = new Map();
-      const memorySuggestionRefs = new Map();
       let chatSkillCatalog = [];
       let chatSkillDefaultIds = [];
       let chatSelectedSkillIds = [];
@@ -1850,7 +1793,7 @@
       });
 
       function showError(msg) {
-        errorEl.textContent = String(msg || "unknown error");
+        errorEl.textContent = String(msg || "未知错误");
         errorEl.style.display = "block";
       }
 
@@ -2065,15 +2008,15 @@
         const skillsEnabled = currentChatMode !== "chat";
         if (chatSkillsToggleEl) {
           chatSkillsToggleEl.disabled = !skillsEnabled;
-          chatSkillsToggleEl.title = skillsEnabled ? "管理当前会话技能" : "聊天模式不使用 Skills";
+          chatSkillsToggleEl.title = skillsEnabled ? "管理当前会话技能" : "聊天模式不使用技能";
         }
         if (!skillsEnabled) {
           chatSkillsDrawerEl.classList.remove("open");
-          setChatSkillsStatus("当前是聊天模式，只允许联网搜索工具，不使用 Skills。");
+          setChatSkillsStatus("当前是聊天模式，只允许联网搜索工具，不使用技能。");
           return;
         }
         if (currentChatMode === "skill") {
-          setChatSkillsStatus(`Skill模式当前启用 ${activeChatSkillIds().length} 个技能。`);
+          setChatSkillsStatus(`技能模式当前启用 ${activeChatSkillIds().length} 个技能。`);
           return;
         }
         if (chatSkillsLoaded) {
@@ -2533,7 +2476,7 @@
               return;
             }
             if (type === "error") {
-              lastSocketErrorMessage = String(payload?.message || "ASR error");
+              lastSocketErrorMessage = String(payload?.message || "ASR 错误");
               fail(new Error(lastSocketErrorMessage));
             }
           };
@@ -2544,7 +2487,7 @@
 
           socket.onclose = () => {
             if (!settled && token === asrRunToken && (asrStarting || asrRecording || asrAwaitingFinal)) {
-              fail(new Error(lastSocketErrorMessage || (sawSocketError ? "ASR websocket error" : "ASR connection closed")));
+              fail(new Error(lastSocketErrorMessage || (sawSocketError ? "ASR WebSocket 连接错误" : "ASR 连接已关闭")));
             }
           };
         });
@@ -2670,7 +2613,7 @@
         syncChatInputAvailability();
         setAsrStatus("\u6b63\u5728\u8bc6\u522b...", "active");
         if (!asrSocket || asrSocket.readyState !== WebSocket.OPEN) {
-          handleAsrError(new Error("ASR connection unavailable"));
+          handleAsrError(new Error("ASR 连接不可用"));
           return;
         }
         try {
@@ -2681,7 +2624,7 @@
       }
 
       function topicHistoryEnabled() {
-        return state.chat?.topic_history?.enabled !== false;
+        return true;
       }
 
       function setChatHistoryStatus(message) {
@@ -2724,7 +2667,6 @@
           return;
         }
         chatMessagesEl.innerHTML = "";
-        memorySuggestionRefs.clear();
         for (const item of Array.isArray(messages) ? messages : []) {
           if (!item || typeof item !== "object") {
             continue;
@@ -2777,7 +2719,7 @@
         }
         chatHistoryListEl.innerHTML = "";
         if (!topicHistoryEnabled()) {
-          setChatHistoryStatus("当前未启用话题保存。你仍然可以点击 New Chat 创建临时会话。");
+          setChatHistoryStatus("当前未启用话题保存。你仍然可以点击“新对话”创建临时会话。");
           syncTopicIndicator();
           return;
         }
@@ -2857,12 +2799,6 @@
           if (!resp.ok) {
             throw new Error(payload.detail || `HTTP ${resp.status}`);
           }
-          if (payload.enabled === false) {
-            state.chat.topic_history = {
-              ...(state.chat.topic_history || {}),
-              enabled: false,
-            };
-          }
           topicHistoryItems = (Array.isArray(payload.topics) ? payload.topics : [])
             .map(normalizeTopicRecord)
             .filter(Boolean);
@@ -2930,7 +2866,7 @@
           }
           return topic;
         } catch (error) {
-          appendMessage("error", `创建新话题失败: ${error?.message || String(error)}`, { speakerName: "系统" });
+          appendMessage("error", `创建新话题失败：${error?.message || String(error)}`, { speakerName: "系统" });
           return null;
         }
       }
@@ -2962,7 +2898,7 @@
           renderTopicHistoryList();
           updateShellButtons();
         } catch (error) {
-          appendMessage("error", `读取历史话题失败: ${error?.message || String(error)}`, { speakerName: "系统" });
+          appendMessage("error", `读取历史话题失败：${error?.message || String(error)}`, { speakerName: "系统" });
         }
       }
 
@@ -3027,7 +2963,7 @@
           setChatHistoryStatus(`\u5df2\u5220\u9664\u8bdd\u9898\uff1a${displayTitle}`);
         } catch (error) {
           clearPendingDeleteTopic(false);
-          setChatHistoryStatus(`\u5220\u9664\u5386\u53f2\u8bdd\u9898\u5931\u8d25\uff1a${error?.message || String(error)}\u3002\u5982\u679c\u4ecd\u662f Method Not Allowed\uff0c\u8bf7\u91cd\u542f\u684c\u5ba0\u4ee5\u52a0\u8f7d\u65b0\u7248\u540e\u7aef\u3002`);
+          setChatHistoryStatus(`\u5220\u9664\u5386\u53f2\u8bdd\u9898\u5931\u8d25\uff1a${error?.message || String(error)}\u3002\u5982\u679c\u4ecd\u662f 405\uff08\u65b9\u6cd5\u4e0d\u5141\u8bb8\uff09\uff0c\u8bf7\u91cd\u542f\u684c\u5ba0\u4ee5\u52a0\u8f7d\u65b0\u7248\u540e\u7aef\u3002`);
           renderTopicHistoryList();
         }
       }
@@ -3174,7 +3110,7 @@
 
       function toggleChatSkillsDrawer(forceOpen = null) {
         if (currentChatMode === "chat") {
-          setChatSkillsStatus("\u5f53\u524d\u662f\u804a\u5929\u6a21\u5f0f\uff0c\u53ea\u5141\u8bb8\u8054\u7f51\u641c\u7d22\u5de5\u5177\uff0c\u4e0d\u4f7f\u7528 Skills\u3002");
+          setChatSkillsStatus("\u5f53\u524d\u662f\u804a\u5929\u6a21\u5f0f\uff0c\u53ea\u5141\u8bb8\u8054\u7f51\u641c\u7d22\u5de5\u5177\uff0c\u4e0d\u4f7f\u7528\u6280\u80fd\u3002");
           chatSkillsDrawerEl.classList.remove("open");
           updateShellButtons();
           return;
@@ -3210,10 +3146,19 @@
 
       function thoughtRoleLabel(role) {
         const value = String(role || "").trim().toLowerCase();
-        if (value === "decider" || value === "searcher" || value === "planner" || value === "writer") {
-          return value;
+        if (value === "decider") {
+          return "决策";
         }
-        return "thought";
+        if (value === "searcher") {
+          return "搜索";
+        }
+        if (value === "planner") {
+          return "规划";
+        }
+        if (value === "writer") {
+          return "写作";
+        }
+        return "思考";
       }
 
       function formatStepMeta(payload) {
@@ -3223,13 +3168,13 @@
         const batchId = String(payload?.batch_id || "").trim();
         const parts = [];
         if (stepIndex > 0) {
-          parts.push(stepTitle ? `Step ${stepIndex}: ${stepTitle}` : `Step ${stepIndex}`);
+          parts.push(stepTitle ? `步骤 ${stepIndex}：${stepTitle}` : `步骤 ${stepIndex}`);
         }
         if (batchSize > 0) {
-          parts.push(`Batch: ${batchSize} tool call${batchSize === 1 ? "" : "s"}`);
+          parts.push(`批次：${batchSize} 次工具调用`);
         }
         if (batchId) {
-          parts.push(`Batch ID: ${batchId}`);
+          parts.push(`批次 ID：${batchId}`);
         }
         return parts.join("\n");
       }
@@ -3437,6 +3382,7 @@
         }
         ttsQueue = [];
         pendingSpeakBuffer = "";
+        pendingSpeakExpr = null;
         ttsPlaying = false;
         streamFinished = true;
         if (activeAudio) {
@@ -3696,44 +3642,20 @@
         }
       }
 
-      function feedSpeakBuffer(delta, force = false) {
+      function feedSpeakBuffer(delta, force = false, expr = null) {
         pendingSpeakBuffer += delta || "";
-        const punct = /[。！？!?；;\n]/;
-
-        while (true) {
-          const m = pendingSpeakBuffer.match(punct);
-          if (!m || m.index === undefined) {
-            break;
-          }
-          const end = m.index + 1;
-          const chunk = pendingSpeakBuffer.slice(0, end);
-          pendingSpeakBuffer = pendingSpeakBuffer.slice(end);
-          enqueueTTSChunk(chunk, null);
+        if (expr) {
+          pendingSpeakExpr = String(expr).trim() || pendingSpeakExpr;
         }
-
-        if (!force && pendingSpeakBuffer.length >= 20 && ttsQueue.length <= 1 && !ttsPlaying) {
-          const chunk = pendingSpeakBuffer.slice(0, 20);
-          pendingSpeakBuffer = pendingSpeakBuffer.slice(20);
-          enqueueTTSChunk(chunk, null);
-        }
-
         if (!force) {
-          if (speakFlushTimer) {
-            clearTimeout(speakFlushTimer);
-          }
-          speakFlushTimer = setTimeout(() => {
-            speakFlushTimer = 0;
-            if (pendingSpeakBuffer.trim()) {
-              const chunk = pendingSpeakBuffer;
-              pendingSpeakBuffer = "";
-              enqueueTTSChunk(chunk, null);
-            }
-          }, 120);
+          return;
         }
-
-        if (force && pendingSpeakBuffer.trim()) {
-          enqueueTTSChunk(pendingSpeakBuffer, null);
-          pendingSpeakBuffer = "";
+        const finalText = pendingSpeakBuffer.trim();
+        const finalExpr = pendingSpeakExpr;
+        pendingSpeakBuffer = "";
+        pendingSpeakExpr = null;
+        if (finalText) {
+          enqueueTTSChunk(finalText, finalExpr);
         }
       }
 
@@ -3789,21 +3711,25 @@
               const errData = await resp.json();
               detail = errData?.detail || detail;
             } catch (_) {}
-            appendMessage("error", `TTS失败: ${detail}`);
-            showError(`TTS失败: ${detail}`);
-            await fallbackSpeakByBrowser(nextText);
+            appendMessage("error", `TTS 失败：${detail}`);
+            showError(`TTS 失败：${detail}`);
+            ttsQueue = [];
             ttsPlaying = false;
-            await playNextTTSChunk();
+            if (streamFinished) {
+              setChatState("idle");
+            }
             return;
           }
 
           const data = await resp.json();
           if (!data || !data.audio_url) {
-            appendMessage("error", "TTS失败: 后端未返回 audio_url");
-            showError("TTS失败: 后端未返回 audio_url");
-            await fallbackSpeakByBrowser(nextText);
+            appendMessage("error", "TTS 失败：后端未返回 audio_url");
+            showError("TTS 失败：后端未返回 audio_url");
+            ttsQueue = [];
             ttsPlaying = false;
-            await playNextTTSChunk();
+            if (streamFinished) {
+              setChatState("idle");
+            }
             return;
           }
 
@@ -3811,9 +3737,11 @@
           if (!audioResp.ok) {
             appendMessage("error", `音频下载失败: HTTP ${audioResp.status}`);
             showError(`音频下载失败: HTTP ${audioResp.status}`);
-            await fallbackSpeakByBrowser(nextText);
+            ttsQueue = [];
             ttsPlaying = false;
-            await playNextTTSChunk();
+            if (streamFinished) {
+              setChatState("idle");
+            }
             return;
           }
 
@@ -3843,7 +3771,7 @@
               () => {
                 stopLipSyncLoop();
                 URL.revokeObjectURL(blobUrl);
-                reject(new Error("audio playback error"));
+                reject(new Error("音频播放失败"));
               },
               { once: true },
             );
@@ -3854,9 +3782,9 @@
               .catch(reject);
           });
         } catch (err) {
-          appendMessage("error", `音频播放失败，已切换浏览器语音: ${err?.message || err}`);
-          showError(`音频播放失败: ${err?.message || err}`);
-          await fallbackSpeakByBrowser(nextText);
+          appendMessage("error", `音频播放失败：${err?.message || err}`);
+          showError(`音频播放失败：${err?.message || err}`);
+          ttsQueue = [];
           stopLipSyncLoop();
         }
 
@@ -3936,185 +3864,6 @@
         return message;
       }
 
-      function normalizeMemorySuggestion(payload = {}) {
-        const raw = payload && typeof payload === "object" ? payload : {};
-        const candidateRaw = raw.candidate && typeof raw.candidate === "object" ? raw.candidate : raw;
-        const marker = String(candidateRaw.marker || raw.marker || candidateRaw.id || raw.id || "").trim();
-        const topicId = String(raw.topic_id || candidateRaw.topic_id || currentTopicId || state.chat?.session_id || "").trim();
-        const title = String(candidateRaw.title || raw.title || "长期记忆建议").trim() || "长期记忆建议";
-        const sourceKind = String(candidateRaw.source_kind || raw.source_kind || raw.source || "topic").trim() || "topic";
-        const preview = String(
-          raw.preview ||
-            raw.summary ||
-            candidateRaw.preview ||
-            candidateRaw.summary ||
-            candidateRaw.content ||
-            raw.content ||
-            ""
-        ).trim();
-        const startTurn = Number(candidateRaw.start_turn || raw.start_turn || 0) || 0;
-        const endTurn = Number(candidateRaw.end_turn || raw.end_turn || 0) || 0;
-        const key = `${topicId || "default"}:${marker || `${sourceKind}:${endTurn || startTurn || "pending"}`}`;
-        return {
-          key,
-          topicId,
-          marker,
-          title,
-          sourceKind,
-          preview,
-          candidate: {
-            marker,
-            title,
-            content: String(candidateRaw.content || raw.content || preview || title).trim(),
-            source_kind: sourceKind,
-            start_turn: startTurn,
-            end_turn: endTurn,
-          },
-        };
-      }
-
-      async function postMemoryDecision(topicId, action, candidate) {
-        const backend = (state.chat?.backend_url || "").replace(/\/$/, "");
-        if (!backend) {
-          throw new Error("后端地址未配置");
-        }
-        const resp = await fetch(`${backend}/api/chat/memory/decision`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            topic_id: String(topicId || currentTopicId || state.chat?.session_id || "").trim(),
-            action,
-            candidate,
-          }),
-        });
-        if (!resp.ok) {
-          let detail = `HTTP ${resp.status}`;
-          try {
-            const data = await resp.json();
-            detail = String(data?.detail || data?.message || detail);
-          } catch (_) {
-            try {
-              const text = await resp.text();
-              if (text) {
-                detail = text;
-              }
-            } catch (_) {}
-          }
-          throw new Error(detail);
-        }
-        return resp;
-      }
-
-      function setMemorySuggestionStatus(ref, message, disabled = false) {
-        if (!ref) {
-          return;
-        }
-        if (ref.saveBtn) {
-          ref.saveBtn.disabled = !!disabled;
-        }
-        if (ref.dismissBtn) {
-          ref.dismissBtn.disabled = !!disabled;
-        }
-        if (ref.statusEl) {
-          ref.statusEl.textContent = String(message || "");
-        }
-      }
-
-      function appendMemorySuggestionCard(payload, ensureFinalMessage) {
-        const suggestion = normalizeMemorySuggestion(payload);
-        if (!suggestion.key) {
-          return null;
-        }
-        const existing = memorySuggestionRefs.get(suggestion.key);
-        if (existing) {
-          return existing;
-        }
-        const message = typeof ensureFinalMessage === "function" ? ensureFinalMessage() : null;
-        if (!message || !message.el) {
-          return null;
-        }
-
-        const card = document.createElement("div");
-        card.className = "memory-suggestion";
-
-        const headEl = document.createElement("div");
-        headEl.className = "memory-suggestion-head";
-
-        const titleEl = document.createElement("div");
-        titleEl.className = "memory-suggestion-title";
-        titleEl.textContent = "长期记忆建议";
-
-        const sourceEl = document.createElement("div");
-        sourceEl.className = "memory-suggestion-source";
-        sourceEl.textContent = `${suggestion.sourceKind}${suggestion.marker ? ` · ${suggestion.marker}` : ""}`;
-
-        const previewEl = document.createElement("div");
-        previewEl.className = "memory-suggestion-preview";
-        previewEl.textContent = suggestion.preview || suggestion.candidate.content || "这段内容可以保存成长期记忆。";
-
-        const actionWrap = document.createElement("div");
-        actionWrap.className = "memory-suggestion-actions";
-
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button";
-        saveBtn.className = "memory-suggestion-btn save";
-        saveBtn.textContent = "保存";
-
-        const dismissBtn = document.createElement("button");
-        dismissBtn.type = "button";
-        dismissBtn.className = "memory-suggestion-btn dismiss";
-        dismissBtn.textContent = "忽略";
-
-        const statusEl = document.createElement("div");
-        statusEl.className = "memory-suggestion-status";
-
-        actionWrap.appendChild(saveBtn);
-        actionWrap.appendChild(dismissBtn);
-        headEl.appendChild(titleEl);
-        headEl.appendChild(sourceEl);
-        card.appendChild(headEl);
-        card.appendChild(previewEl);
-        card.appendChild(actionWrap);
-        card.appendChild(statusEl);
-        message.el.appendChild(card);
-
-        const ref = { card, saveBtn, dismissBtn, statusEl };
-        memorySuggestionRefs.set(suggestion.key, ref);
-
-        const resolveOnce = (text) => {
-          setMemorySuggestionStatus(ref, text, true);
-        };
-
-        saveBtn.addEventListener("click", async () => {
-          if (saveBtn.disabled) {
-            return;
-          }
-          setMemorySuggestionStatus(ref, "正在保存...", true);
-          try {
-            await postMemoryDecision(suggestion.topicId, "save", suggestion.candidate);
-            resolveOnce("已保存");
-          } catch (error) {
-            setMemorySuggestionStatus(ref, `保存失败：${error?.message || String(error)}`, false);
-          }
-        });
-
-        dismissBtn.addEventListener("click", async () => {
-          if (dismissBtn.disabled) {
-            return;
-          }
-          setMemorySuggestionStatus(ref, "正在忽略...", true);
-          try {
-            await postMemoryDecision(suggestion.topicId, "dismiss", suggestion.candidate);
-            resolveOnce("已忽略");
-          } catch (error) {
-            setMemorySuggestionStatus(ref, `忽略失败：${error?.message || String(error)}`, false);
-          }
-        });
-
-        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-        return ref;
-      }
-
       async function consumeChatStream(resp, options = {}) {
         if (!resp.ok) {
           let detail = `chat http ${resp.status}`;
@@ -4132,7 +3881,7 @@
           throw new Error(detail);
         }
         if (!resp.body) {
-          throw new Error("chat response missing body");
+          throw new Error("聊天响应缺少内容");
         }
 
         const decoder = new TextDecoder();
@@ -4195,14 +3944,8 @@
                 currentTopicMeta = topicHistoryItems.find((item) => item.topic_id === currentTopicId) || currentTopicMeta;
                 syncTopicIndicator();
               }
-              if (payload.topic_history_enabled !== undefined) {
-                state.chat.topic_history = {
-                  ...(state.chat.topic_history || {}),
-                  enabled: !!payload.topic_history_enabled,
-                };
-                renderTopicHistoryList();
-                updateShellButtons();
-              }
+              renderTopicHistoryList();
+              updateShellButtons();
             } else if (eventName === "phase") {
               const phase = String(payload.phase || "");
               const text = String(payload.text || "");
@@ -4219,16 +3962,13 @@
               awaitingApproval = true;
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               appendApprovalBubble(payload, thoughtSessionId);
-            } else if (eventName === "memory_save_suggestion") {
-              removeEmptyPendingThoughtGroup(thoughtSessionId);
-              appendMemorySuggestionCard(payload, ensureFinalMessage);
             } else if (eventName === "segment") {
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               receivedStructuredSegment = true;
               const segText = String(payload.text || "");
               const segExpr = payload.expr == null ? null : String(payload.expr || "");
               if (segText) {
-                enqueueTTSChunk(segText, segExpr);
+                feedSpeakBuffer(segText, false, segExpr);
               }
             } else if (eventName === "display_segment") {
               removeEmptyPendingThoughtGroup(thoughtSessionId);
@@ -4253,6 +3993,9 @@
               if (receivedStructuredSegment && !receivedDisplaySegment && !full) {
                 full = "(\u8bed\u97f3\u8f93\u51fa\u5df2\u5b8c\u6210)";
               }
+              if (!receivedStructuredSegment && !pendingSpeakBuffer.trim() && full.trim()) {
+                pendingSpeakBuffer = full;
+              }
               updateMessageText(ensureFinalMessage(), full || "(\u7a7a\u54cd\u5e94)");
               if (topicHistoryEnabled()) {
                 await loadTopicHistory(true);
@@ -4260,7 +4003,7 @@
               clearActiveThoughtSession(thoughtSessionId);
             } else if (eventName === "error") {
               clearActiveThoughtSession(thoughtSessionId);
-              throw new Error(payload.message || "chat stream error");
+              throw new Error(payload.message || "聊天流返回错误");
             }
           }
         }
@@ -4282,6 +4025,7 @@
         streamFinished = false;
         receivedStructuredSegment = false;
         pendingSpeakBuffer = "";
+        pendingSpeakExpr = null;
         ttsQueue = [];
         ttsPlaying = false;
         const turnKey = String(turnId || "").trim();
@@ -4302,9 +4046,7 @@
           approvalThoughtSessionRefs.delete(turnKey);
           if (!result.awaitingApproval) {
             streamFinished = true;
-            if (!receivedStructuredSegment) {
-              feedSpeakBuffer("", true);
-            }
+            feedSpeakBuffer("", true);
             if (!ttsPlaying && ttsQueue.length === 0) {
               setChatState("idle");
             }
@@ -4312,7 +4054,7 @@
         } catch (err) {
           approvalThoughtSessionRefs.delete(turnKey);
           clearActiveThoughtSession(thoughtSessionId);
-          appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
+          appendMessage("error", `对话失败：${err?.message || String(err)}`, {
             speakerName: "系统",
           });
           setChatState("idle");
@@ -4345,7 +4087,7 @@
         if (currentChatMode === "skill") {
           await loadChatSkills(false);
           if (!activeChatSkillIds().length) {
-            appendMessage("error", "Skill模式至少需要启用一个技能。请先打开“技能”面板，或去设置页启用默认技能。", {
+            appendMessage("error", "技能模式至少需要启用一个技能。请先打开“技能”面板，或去设置页启用默认技能。", {
               speakerName: "系统",
             });
             toggleChatSkillsDrawer(true);
@@ -4358,6 +4100,7 @@
         streamFinished = false;
         receivedStructuredSegment = false;
         pendingSpeakBuffer = "";
+        pendingSpeakExpr = null;
         ttsQueue = [];
         ttsPlaying = false;
         activeApprovalId = "";
@@ -4369,8 +4112,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               session_id: state.chat.session_id || "default",
-              model: state.chat.model || "qwen3:8b",
-              memory_window: Number(state.chat.memory_window || 10),
+              model: state.chat.model || "hermes-agent",
               system_prompt: state.chat.system_prompt || "",
               expression_mode: !!state.chat.expression_mode,
               expression_output_format: state.chat.expression_output_format || "ndjson_v1",
@@ -4382,14 +4124,6 @@
               react_enabled: state.chat.react_enabled !== false,
               react_visibility: state.chat.react_visibility || "inline",
               max_reasoning_steps: Number(state.chat.max_reasoning_steps || 10),
-              llm_provider: state.chat.llm_provider || "ollama",
-              api_base_url: state.chat.api_base_url || "",
-              api_key: state.chat.api_key || "",
-              router_enabled: !!state.chat.router_enabled,
-              router_llm_provider: state.chat.router_llm_provider || "",
-              router_api_base_url: state.chat.router_api_base_url || "",
-              router_api_key: state.chat.router_api_key || "",
-              router_model: state.chat.router_model || "",
               chat_mode: currentChatMode,
               skill_ids: currentChatMode === "chat" ? [] : activeChatSkillIds(),
               text: userText,
@@ -4403,7 +4137,7 @@
           }
         } catch (err) {
           clearActiveThoughtSession(thoughtSessionId);
-          appendMessage("error", `对话失败: ${err?.message || String(err)}`, {
+          appendMessage("error", `对话失败：${err?.message || String(err)}`, {
             speakerName: "系统",
           });
           setChatState("idle");
@@ -4411,9 +4145,7 @@
         }
 
         streamFinished = true;
-        if (!receivedStructuredSegment) {
-          feedSpeakBuffer("", true);
-        }
+        feedSpeakBuffer("", true);
         if (!ttsPlaying && ttsQueue.length === 0) {
           setChatState("idle");
         }
@@ -4586,7 +4318,7 @@
         }
 
         if (!window.PIXI || !window.PIXI.live2d || !window.PIXI.live2d.Live2DModel) {
-          throw new Error("PIXI.live2d.Live2DModel is unavailable. Check JS library files.");
+          throw new Error("PIXI Live2D 模型组件不可用，请检查 JS 资源文件。");
         }
 
         clearError();
@@ -4638,11 +4370,6 @@
         }
         if (incoming.chat && typeof incoming.chat === "object") {
           Object.assign(state.chat, incoming.chat);
-          state.chat.topic_history = {
-            ...(state.chat.topic_history || {}),
-            enabled: state.chat?.topic_history?.enabled !== false,
-            summary_interval_assistant_turns: Number(state.chat?.topic_history?.summary_interval_assistant_turns || 10),
-          };
           state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});
           const configuredDefaults = Array.isArray(incoming.chat.skills?.default_active_ids)
             ? incoming.chat.skills.default_active_ids
@@ -4685,7 +4412,7 @@
             try {
               await loadModel(state.model_url);
             } catch (err) {
-              showError(`load model failed: ${err?.message || String(err)}`);
+              showError(`加载模型失败：${err?.message || String(err)}`);
             }
           } else {
             applyModelTransform();
@@ -4699,7 +4426,7 @@
 
       async function init() {
         if (!window.PIXI) {
-          showError("PIXI failed to load.");
+          showError("PIXI 加载失败。");
           return;
         }
 
@@ -4912,13 +4639,13 @@
             try {
               await loadModel(state.model_url);
             } catch (err) {
-              showError(`reload model failed: ${err?.message || String(err)}`);
+              showError(`重新加载模型失败：${err?.message || String(err)}`);
             }
           }
         },
         playMotion(group, index = 0) {
           if (!playMotionCompat(group, index)) {
-            showError(`motion error: unable to play ${String(group)}[${Number(index) || 0}]`);
+            showError(`动作播放失败：无法播放 ${String(group)}[${Number(index) || 0}]`);
           }
         },
         playExpression(name) {
@@ -4928,7 +4655,7 @@
           try {
             model.expression(name);
           } catch (err) {
-            showError(`expression error: ${String(err)}`);
+            showError(`表情切换失败：${String(err)}`);
           }
         },
         getState() {
@@ -4945,6 +4672,7 @@
           stopSpeaking(false);
           streamFinished = true;
           pendingSpeakBuffer = "";
+          pendingSpeakExpr = null;
           ttsQueue = [];
           ttsPlaying = false;
           enqueueTTSChunk(content, null);

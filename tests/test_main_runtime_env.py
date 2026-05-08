@@ -87,3 +87,53 @@ class MainRuntimeEnvTests(unittest.TestCase):
     def test_macos_prefers_pyqt_bindings(self) -> None:
         self.assertTrue(main._prefer_pyqt_bindings("darwin"))
         self.assertFalse(main._prefer_pyqt_bindings("win32"))
+
+    def test_load_config_normalizes_hermes_sidecar_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir(parents=True, exist_ok=True)
+            config_path = root / "pet_config.json"
+            config_path.write_text(
+                """
+                {
+                  "hermes": {
+                    "enabled": true,
+                    "auto_start": true,
+                    "command": "uv run hermes-agent",
+                    "cwd": "Hermes",
+                    "base_url": "http://127.0.0.1:9100/",
+                    "health_path": "healthz",
+                    "startup_timeout_sec": "7"
+                  }
+                }
+                """,
+                encoding="utf-8",
+            )
+            with mock.patch.object(main, "ROOT_DIR", root), mock.patch.object(main, "CONFIG_PATH", config_path):
+                config = main.load_config()
+        hermes = config["hermes"]
+        self.assertTrue(hermes["enabled"])
+        self.assertTrue(hermes["auto_start"])
+        self.assertEqual(hermes["command"], ["uv", "run", "hermes-agent"])
+        self.assertEqual(hermes["cwd"], str((root / "Hermes").resolve()))
+        self.assertEqual(hermes["base_url"], "http://127.0.0.1:9100")
+        self.assertEqual(hermes["health_path"], "/healthz")
+        self.assertEqual(hermes["startup_timeout_sec"], 7.0)
+
+    def test_hermes_missing_command_message_names_real_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            message = main._hermes_missing_command_message(
+                {
+                    "cwd": "",
+                    "base_url": "http://127.0.0.1:9119",
+                    "health_path": "/api/status",
+                },
+                root_dir=root,
+            )
+
+        self.assertIn("no command is configured", message)
+        self.assertIn("real Hermes Agent checkout", message)
+        self.assertIn("not the repo-local Hermes storage directory", message)
+        self.assertIn("uv\", \"run\", \"hermes\", \"dashboard", message)
+        self.assertIn("http://127.0.0.1:9119/api/status", message)

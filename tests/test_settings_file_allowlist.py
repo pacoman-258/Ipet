@@ -70,7 +70,7 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         payload = resp.json()
         self.assertEqual(payload["config"]["chat"]["tooling"]["file_allowlist"], [str(backend_app.ROOT_DIR.resolve())])
 
-    def test_put_settings_config_keeps_router_fields(self) -> None:
+    def test_put_settings_config_drops_legacy_router_fields(self) -> None:
         with mock.patch.object(backend_app, "_save_full_config"), mock.patch.object(
             backend_app,
             "_get_mcp_bridge",
@@ -93,11 +93,82 @@ class SettingsFileAllowlistTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()["config"]["chat"]
-        self.assertTrue(payload["router_enabled"])
-        self.assertEqual(payload["router_llm_provider"], "openai_compat")
-        self.assertEqual(payload["router_api_base_url"], "https://example.test/v1")
-        self.assertEqual(payload["router_api_key"], "secret")
-        self.assertEqual(payload["router_model"], "router-model")
+        self.assertNotIn("router_enabled", payload)
+        self.assertNotIn("router_llm_provider", payload)
+        self.assertNotIn("router_api_base_url", payload)
+        self.assertNotIn("router_api_key", payload)
+        self.assertNotIn("router_model", payload)
+
+    def test_put_settings_config_keeps_hermes_model_and_tts_asr_contract(self) -> None:
+        with mock.patch.object(backend_app, "_save_full_config"), mock.patch.object(
+            backend_app,
+            "_get_mcp_bridge",
+            return_value=mock.Mock(),
+        ):
+            resp = self.client.put(
+                "/api/settings/config",
+                json={
+                    "config": {
+                        "chat": {
+                            "llm_provider": "openai_compat",
+                            "api_base_url": "https://example.test/v1",
+                            "api_key": "main-secret",
+                            "model": "main-model",
+                            "tts_provider": "edge_tts",
+                            "tts_provider_url": "http://tts.local",
+                            "voice": "zh-CN-XiaoxiaoNeural",
+                            "asr": {
+                                "enabled": True,
+                                "provider": "funasr",
+                                "api_base_url": "http://127.0.0.1:8012",
+                                "push_to_talk_key": "Ctrl",
+                                "interim_results": False,
+                            },
+                        }
+                    }
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()["config"]["chat"]
+        self.assertNotIn("llm_provider", payload)
+        self.assertNotIn("api_base_url", payload)
+        self.assertNotIn("api_key", payload)
+        self.assertEqual(payload["model"], "main-model")
+        self.assertEqual(payload["tts_provider"], "edge_tts")
+        self.assertEqual(payload["tts_provider_url"], "http://tts.local")
+        self.assertEqual(payload["voice"], "zh-CN-XiaoxiaoNeural")
+        self.assertTrue(payload["asr"]["enabled"])
+        self.assertEqual(payload["asr"]["provider"], "funasr")
+        self.assertEqual(payload["asr"]["api_base_url"], "http://127.0.0.1:8012")
+        self.assertEqual(payload["asr"]["push_to_talk_key"], "Ctrl")
+        self.assertFalse(payload["asr"]["interim_results"])
+
+    def test_models_endpoint_is_hermes_compatibility_noop(self) -> None:
+        with mock.patch("backend.ollama_client.list_models", new_callable=mock.AsyncMock) as list_models_mock:
+            resp = self.client.post(
+                "/api/models",
+                json={
+                    "llm_provider": "openai_compat",
+                    "api_base_url": "https://example.test/v1",
+                    "api_key": "secret",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertEqual(payload["models"], [])
+        self.assertEqual(payload["runtime"], "hermes")
+        self.assertTrue(payload["deprecated"])
+        list_models_mock.assert_not_called()
+
+    def test_settings_models_local_remains_available_for_hermes_shortcuts(self) -> None:
+        local_models = [{"path": "model/demo/runtime/demo.model3.json", "label": "demo"}]
+        with mock.patch.object(backend_app, "_list_local_models", return_value=local_models):
+            resp = self.client.get("/api/settings/models-local")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["models"], local_models)
 
     def test_put_settings_config_keeps_pet_background_fields(self) -> None:
         with mock.patch.object(backend_app, "_save_full_config"), mock.patch.object(
@@ -289,15 +360,22 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         self.assertIn("function looksLikeWindowsPath(value)", body)
         self.assertIn('normalized = normalized.replace(/\\\\/g, "/");', body)
 
-    def test_settings_js_binds_router_model_controls(self) -> None:
+    def test_settings_js_binds_single_hermes_model_controls(self) -> None:
         resp = self.client.get("/settings.js")
 
         self.assertEqual(resp.status_code, 200)
         body = resp.text
-        self.assertIn('chatRouterEnabled: $("chat-router-enabled")', body)
-        self.assertIn('chatRouterModel: $("chat-router-model")', body)
-        self.assertIn('async function fetchRouterModels()', body)
-        self.assertIn('els.fetchRouterModelsBtn.addEventListener("click", () => wrapAction(fetchRouterModels));', body)
+        self.assertIn('chatModel: $("chat-model")', body)
+        self.assertIn('runtimeMainModelPresets: $("runtime-main-model-presets")', body)
+        self.assertIn('runtimeSessionPresets: $("runtime-session-presets")', body)
+        self.assertIn("function renderHermesRuntimeModelPresets()", body)
+        self.assertIn("function renderHermesSessionPresets()", body)
+        self.assertIn('els.chatModel.addEventListener("input", renderHermesRuntimeModelPresets);', body)
+        self.assertIn('els.chatSessionId.addEventListener("input", renderHermesSessionPresets);', body)
+        self.assertNotIn("fetchRouterModels", body)
+        self.assertNotIn("fetchRouterModelsBtn", body)
+        self.assertNotIn("chatRouterModel", body)
+        self.assertNotIn("chatRouterEnabled", body)
 
     def test_settings_assets_include_pet_background_controls(self) -> None:
         html_resp = self.client.get("/settings")
