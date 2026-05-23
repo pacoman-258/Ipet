@@ -16,6 +16,7 @@ class ChatStreamRequest(BaseModel):
     max_reasoning_steps: int = Field(default=10, ge=1)
     chat_mode: str = Field(default="react")
     skill_ids: list[str] = Field(default_factory=list)
+    memory_mode: str = Field(default="persistent")
 
 
 class ChatApprovalRequest(BaseModel):

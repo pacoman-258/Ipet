@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
 from .active_vision import build_active_observe_metadata, decide_active_observation, normalize_active_observation_config
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
+from .conversation_store import ConversationStore, normalize_conversation_id
 from .hermes import (
     DEFAULT_HERMES_CONFIG,
     HermesClient,
@@ -118,6 +119,8 @@ from .vision import (
     should_force_grounding,
 )
 from .vision_analyzer import VisionAnalyzer, merge_analysis_into_payload, merge_unknowns, normalize_analyzer_config
+from .ipet_memory_store import IpetMemoryStore
+from .memory_harness import MemoryHarness
 
 
 app = FastAPI(title="Desktop Pet Backend", version="0.2.0")
@@ -280,6 +283,8 @@ _MCP_CONFIG_SNAPSHOT = ""
 _AGENT_GRAPH_RUNTIME: AgentGraphRuntime | None = None
 _SKILL_MANAGER: SkillManager | None = None
 _CHAT_TOPIC_STORE: TopicStore | None = None
+_CONVERSATION_STORE: ConversationStore | None = None
+_IPET_MEMORY_STORE: IpetMemoryStore | None = None
 _ASR_SERVICE: ASRService | None = None
 _ASR_WARMUP_TASK: asyncio.Task[str] | None = None
 _VISION_SERVICE: VisionService | None = None
@@ -2284,6 +2289,20 @@ def _get_chat_topic_store(force_reload: bool = False) -> TopicStore:
     return _CHAT_TOPIC_STORE
 
 
+def _get_conversation_store(force_reload: bool = False) -> ConversationStore:
+    global _CONVERSATION_STORE
+    if force_reload or _CONVERSATION_STORE is None:
+        _CONVERSATION_STORE = ConversationStore(ROOT_DIR / "data" / "ipet_conversations")
+    return _CONVERSATION_STORE
+
+
+def _get_ipet_memory_store(force_reload: bool = False) -> IpetMemoryStore:
+    global _IPET_MEMORY_STORE
+    if force_reload or _IPET_MEMORY_STORE is None:
+        _IPET_MEMORY_STORE = IpetMemoryStore(ROOT_DIR / "data" / "ipet_memory")
+    return _IPET_MEMORY_STORE
+
+
 def _get_asr_service(force_reload: bool = False) -> ASRService:
     global _ASR_SERVICE
     if force_reload or _ASR_SERVICE is None:
@@ -2900,10 +2919,12 @@ def _get_agent_graph_runtime(force_reload: bool = False) -> AgentGraphRuntime:
 
 
 def _reset_agent_graph_runtime() -> None:
-    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK
+    global _AGENT_GRAPH_RUNTIME, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _CONVERSATION_STORE, _IPET_MEMORY_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK
     _AGENT_GRAPH_RUNTIME = None
     _SKILL_MANAGER = None
     _CHAT_TOPIC_STORE = None
+    _CONVERSATION_STORE = None
+    _IPET_MEMORY_STORE = None
     _ASR_SERVICE = None
     _ASR_WARMUP_TASK = None
     _TURN_TOOL_BRIDGE_CACHE.clear()
@@ -4270,6 +4291,7 @@ async def _chat_stream_via_runtime(req: ChatStreamRequest) -> StreamingResponse:
     forced = should_force_grounding(req.text, vision_cfg)
     active_context: dict[str, Any] | None = None
     active_result: dict[str, Any] | None = None
+    original_text = req.text
     if (
         forced
         and vision_cfg.get("enabled")
@@ -4286,10 +4308,16 @@ async def _chat_stream_via_runtime(req: ChatStreamRequest) -> StreamingResponse:
             active_context = context
     payload = _with_active_runtime_vision_frame(payload, active_result)
     payload = _with_ipet_visual_evidence_payload(payload, req, settings_config, forced_context=active_context)
+    payload["original_text"] = original_text
+    harness = MemoryHarness(
+        conversation_store=_get_conversation_store(),
+        memory_store=_get_ipet_memory_store(),
+        runtime_client=client,
+    )
 
     async def event_gen():
         try:
-            runtime_events = client.stream_sse("/api/chat/stream", payload)
+            runtime_events = harness.stream_chat(payload)
             async for event, data in realtime_stream_events(
                 runtime_events,
                 request_text=req.text,
@@ -4355,7 +4383,7 @@ async def _chat_approval_via_hermes(req: ChatApprovalRequest) -> StreamingRespon
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK, _VISION_SERVICE
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _CONVERSATION_STORE, _IPET_MEMORY_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK, _VISION_SERVICE
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
@@ -4365,6 +4393,8 @@ async def on_shutdown() -> None:
     _AGENT_GRAPH_RUNTIME = None
     _SKILL_MANAGER = None
     _CHAT_TOPIC_STORE = None
+    _CONVERSATION_STORE = None
+    _IPET_MEMORY_STORE = None
     _ASR_SERVICE = None
     _ASR_WARMUP_TASK = None
     _VISION_SERVICE = None
@@ -5546,42 +5576,56 @@ async def post_chat_memory_decision(req: ChatMemoryDecisionRequest) -> dict[str,
 
 @app.post("/api/chat/topics")
 async def create_chat_topic(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    return await _runtime_json_or_unavailable("POST", "/api/chat/topics", payload=payload if isinstance(payload, dict) else {})
+    source = payload if isinstance(payload, dict) else {}
+    store = _get_conversation_store()
+    topic = store.create_conversation(
+        conversation_id=str(source.get("session_id") or source.get("topic_id") or source.get("conversation_id") or ""),
+        title=str(source.get("title") or ""),
+        memory_mode=str(source.get("memory_mode") or "persistent"),
+        persisted=True,
+        runtime="",
+    )
+    return {
+        "ok": True,
+        "runtime": "ipet",
+        "enabled": True,
+        "topic_id": topic["topic_id"],
+        "session_id": topic["session_id"],
+        "conversation_id": topic["conversation_id"],
+        "persisted": bool(topic.get("persisted", True)),
+        "topic": topic,
+    }
 
 
 @app.get("/api/chat/topics")
 async def list_chat_topics() -> dict[str, Any]:
-    client = _get_runtime_client()
-    try:
-        return await client.request_json("GET", "/api/chat/topics")
-    except Exception as exc:
-        runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
-        return {
-            "ok": False,
-            "runtime": runtime_id,
-            "enabled": False,
-            "topics": [],
-            "detail": f"Runtime sessions are unavailable: {exc}",
-        }
+    return {
+        "ok": True,
+        "runtime": "ipet",
+        "enabled": True,
+        "topics": _get_conversation_store().list_topics(),
+    }
 
 
 @app.get("/api/chat/topics/{topic_id}")
 async def get_chat_topic(topic_id: str) -> dict[str, Any]:
-    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
-    raw_topic_id = str(topic_id or "").strip()
-    target_value = raw_topic_id if runtime_id == RUNTIME_ASTRBOT else normalize_topic_id(raw_topic_id)
-    target = quote(target_value, safe="")
-    return await _runtime_json_or_unavailable("GET", f"/api/chat/topics/{target}")
+    detail = _get_conversation_store().get_topic_detail(normalize_conversation_id(topic_id))
+    if detail is None:
+        raise HTTPException(status_code=404, detail="chat topic not found")
+    return detail
 
 
 @app.delete("/api/chat/topics/{topic_id}")
 @app.post("/api/chat/topics/{topic_id}/delete")
 async def delete_chat_topic(topic_id: str) -> dict[str, Any]:
-    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
-    raw_topic_id = str(topic_id or "").strip()
-    target_value = raw_topic_id if runtime_id == RUNTIME_ASTRBOT else normalize_topic_id(raw_topic_id)
-    target = quote(target_value, safe="")
-    return await _runtime_json_or_unavailable("DELETE", f"/api/chat/topics/{target}")
+    conversation_id = normalize_conversation_id(topic_id)
+    SESSION_STORE.pop(conversation_id, None)
+    payload = _get_conversation_store().delete_conversation(conversation_id)
+    return {
+        **payload,
+        "runtime": "ipet",
+        "deleted": True,
+    }
 
 
 @app.post("/api/models")

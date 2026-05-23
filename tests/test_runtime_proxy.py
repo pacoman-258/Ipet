@@ -11,6 +11,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from backend.conversation_store import ConversationStore
+from backend.ipet_memory_store import IpetMemoryStore
 from backend.runtime_adapters import (
     AstrBotRuntimeAdapter,
     HermesRuntimeAdapter,
@@ -112,8 +114,28 @@ class RuntimeDefaultsTests(unittest.TestCase):
 class RuntimeProxyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(backend_app.app)
+        self._ipet_store_tmp = tempfile.TemporaryDirectory()
+        root = Path(self._ipet_store_tmp.name)
+        self._ipet_store_patchers = [
+            mock.patch.object(
+                backend_app,
+                "_get_conversation_store",
+                return_value=ConversationStore(root / "ipet_conversations"),
+            ),
+            mock.patch.object(
+                backend_app,
+                "_get_ipet_memory_store",
+                return_value=IpetMemoryStore(root / "ipet_memory"),
+            ),
+        ]
+        for patcher in self._ipet_store_patchers:
+            patcher.start()
 
     def tearDown(self) -> None:
+        for patcher in reversed(getattr(self, "_ipet_store_patchers", [])):
+            patcher.stop()
+        if hasattr(self, "_ipet_store_tmp"):
+            self._ipet_store_tmp.cleanup()
         self.client.close()
 
     def test_settings_config_redacts_astrbot_api_key(self) -> None:
@@ -382,25 +404,48 @@ class RuntimeProxyTests(unittest.TestCase):
         ]
         self.assertEqual(late_inferred, [])
 
-    def test_astrbot_topics_proxy_uses_active_runtime(self) -> None:
+    def test_chat_topics_use_ipet_local_store(self) -> None:
         fake = _FakeRuntimeClient(payload={"ok": True, "runtime": "astrbot", "topics": [{"topic_id": "qq"}]})
-        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake), mock.patch.object(
-            backend_app, "_get_chat_topic_store", side_effect=AssertionError("local topic store should not be used")
-        ):
-            resp = self.client.get("/api/chat/topics")
+        with tempfile.TemporaryDirectory() as root:
+            store = ConversationStore(Path(root) / "ipet_conversations")
+            store.append_turn(
+                "local-topic",
+                turn_id="turn-1",
+                user_text="hello",
+                assistant_text="world",
+                runtime="astrbot",
+                runtime_session_id="ipet-temp-turn-1",
+            )
+            with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake), mock.patch.object(
+                backend_app, "_get_conversation_store", return_value=store
+            ):
+                resp = self.client.get("/api/chat/topics")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["runtime"], "astrbot")
-        self.assertEqual(fake.requests[0], ("GET", "/api/chat/topics", None))
+        self.assertEqual(resp.json()["runtime"], "ipet")
+        self.assertEqual(resp.json()["topics"][0]["topic_id"], "local-topic")
+        self.assertEqual(fake.requests, [])
 
-    def test_astrbot_topic_detail_preserves_runtime_session_id_at_app_boundary(self) -> None:
+    def test_chat_topic_detail_uses_ipet_local_store(self) -> None:
         fake = _FakeRuntimeClient(payload={"ok": True, "runtime": "astrbot", "messages": []})
-        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake), mock.patch.object(
-            backend_app, "_runtime_config_from_raw", return_value={"active": "astrbot"}
-        ):
-            resp = self.client.get("/api/chat/topics/qq%3AFriendMessage%3A123")
+        with tempfile.TemporaryDirectory() as root:
+            store = ConversationStore(Path(root) / "ipet_conversations")
+            store.append_turn(
+                "qq-FriendMessage-123",
+                turn_id="turn-1",
+                user_text="hello",
+                assistant_text="world",
+                runtime="astrbot",
+                runtime_session_id="ipet-temp-turn-1",
+            )
+            with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake), mock.patch.object(
+                backend_app, "_get_conversation_store", return_value=store
+            ):
+                resp = self.client.get("/api/chat/topics/qq%3AFriendMessage%3A123")
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(fake.requests[0], ("GET", "/api/chat/topics/qq%3AFriendMessage%3A123", None))
+        self.assertEqual(resp.json()["runtime"], "ipet")
+        self.assertEqual(resp.json()["topic"]["topic_id"], "qq-FriendMessage-123")
+        self.assertEqual(fake.requests, [])
 
     def test_astrbot_cumulative_content_is_trimmed_to_delta(self) -> None:
         self.assertEqual(_normalize_stream_delta("", "你好", cumulative=True), "你好")
