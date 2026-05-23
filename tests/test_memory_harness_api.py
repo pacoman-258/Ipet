@@ -143,6 +143,15 @@ class MemoryHarnessApiTests(unittest.TestCase):
         self.assertEqual(delete_resp.json()["deleted_topic_id"], "local-topic")
         self.assertEqual(runtime.request_json_calls, [])
 
+    def test_workflow_documents_ipet_memory_harness(self) -> None:
+        workflow = Path(__file__).resolve().parents[1] / "docs" / "WORKFLOW.md"
+        text = workflow.read_text(encoding="utf-8")
+
+        self.assertIn("Ipet owns conversation history", text)
+        self.assertIn("AstrBot owns only temporary task execution", text)
+        self.assertIn("data/ipet_conversations/", text)
+        self.assertIn("data/ipet_memory/", text)
+
     def _patched_app(self, runtime):
         return mock.patch.multiple(
             backend_app,

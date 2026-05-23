@@ -15,6 +15,7 @@ Owned locally:
 - desktop shell startup and shutdown
 - Live2D-style rendering, expressions, motions, and window behavior
 - chat rendering and TTS/ASR integration
+- conversation history and long-term memory
 - automatic vision capture state and temporary vision summaries
 - user approval UI where the active runtime supports it
 - settings page, file/resource allowlists, and local visual assets
@@ -23,11 +24,10 @@ Owned locally:
 Owned by the active runtime:
 
 - agent decisions and planning
-- durable memory and summarization
-- sessions and conversation state
+- temporary task execution for the current turn
 - skills, plugins, MCP servers, tool execution, and knowledge retrieval within the selected runtime
 
-Default AstrBot boundary: plugins, MCP, providers, knowledge bases, QQ, and NapCatQQ setup stay in AstrBot WebUI. Ipet proxies chat/session APIs, adapts stream events, and displays NapCatQQ connection guidance.
+Default AstrBot boundary: plugins, MCP, providers, knowledge bases, QQ, and NapCatQQ setup stay in AstrBot WebUI. Ipet owns desktop conversation history and memory, sends temporary task sessions to AstrBot, adapts stream events, and displays NapCatQQ connection guidance.
 
 Hermes secondary path: Hermes skills, MCP, and approval are used only when the user manually selects `runtime.active=hermes`. Ipet does not automatically fall back from AstrBot to Hermes or from Hermes to AstrBot.
 
@@ -84,7 +84,7 @@ Runtime selection lives under `runtime` in `pet_config.json` and `/api/settings/
 - `runtime.adapters.hermes`
 - `runtime.adapters.astrbot`
 
-Default configuration sets `runtime.active` to `astrbot`. Configure `runtime.adapters.astrbot.base_url` such as `http://127.0.0.1:6185`, and provide an API Key through `api_key` or `api_key_env`. AstrBot history sync also needs Dashboard login settings: `dashboard_username` defaults to `ipet`, and `dashboard_password` can be stored locally or overridden by `ASTRBOT_DASHBOARD_PASSWORD`.
+Default configuration sets `runtime.active` to `astrbot`. Configure `runtime.adapters.astrbot.base_url` such as `http://127.0.0.1:6185`, and provide an API Key through `api_key` or `api_key_env`.
 
 Hermes is a manual secondary / advanced selection. To use a local Hermes checkout, set `runtime.active` to `hermes`, then configure a sidecar command such as `uv run hermes dashboard --host 127.0.0.1 --port 9119 --no-open --tui`, with `base_url` set to `http://127.0.0.1:9119` and `health_path` set to `/api/status`.
 
@@ -100,17 +100,20 @@ AstrBot default path: the adapter calls `POST /api/v1/chat` with `username`, `se
 
 Hermes secondary / advanced path: when manually selected, the adapter discovers the Dashboard session token, connects to Hermes Dashboard `/api/ws`, creates or reuses the selected Hermes session, applies the configured Hermes model through `config.set`, submits the prompt with `prompt.submit`, and adapts TUI gateway events back into the existing frontend SSE names.
 
-## AstrBot Session History
+## Ipet Conversation And Memory Harness
 
-In AstrBot mode, Ipet's history drawer is an AstrBot webchat-session view, not a general AstrBot database browser:
+Ipet owns conversation history and long-term memory. The active runtime is a task executor, not the durable chat data layer. In AstrBot mode, AstrBot owns only temporary task execution for Ipet-initiated desktop chat turns.
 
-- Listing uses AstrBot OpenAPI `GET /api/v1/chat/sessions?username=ipet` and keeps Ipet webchat sessions. When Dashboard history is reachable, Ipet enriches each topic with preview text, total message count, and assistant turn count from `GET /api/chat/get_session?session_id=...`; otherwise the list still loads with the raw AstrBot metadata.
-- Dashboard access uses either configured Dashboard login (`POST /api/auth/login`) or, for loopback AstrBot runtimes with a readable local `data/cmd_config.json`, a short-lived Ipet-signed Dashboard JWT using AstrBot's own `dashboard.jwt_secret`. This stays in Ipet's adapter layer and does not modify AstrBot core.
-- `supports_delete` is enabled only when Ipet can authenticate as the AstrBot `session.creator`, either through the local Dashboard JWT fallback or matching configured Dashboard credentials.
-- Details use Dashboard `GET /api/chat/get_session?session_id=...` with `Authorization: Bearer <token>`. Dashboard JWTs are cached in memory per username and retried on authentication failure.
-- AstrBot `content.type=user` maps to Ipet `role=user`; `content.type=bot` maps to `role=assistant`. Plain parts are joined as text, while image/file/tool/audio/video and other non-text parts are retained as short bracket labels.
-- Deletion uses Dashboard `GET /api/chat/delete_session?session_id=...` as the session creator. After deletion, Ipet refreshes the AstrBot session list and reports failure if the target session is still present, so the UI never marks an undeleted session as deleted.
-- Ipet does not change AstrBot core behavior and does not require an AstrBot plugin for this sync path.
+Local state:
+
+- `data/ipet_conversations/` stores Ipet-owned conversation history and temporary runtime cleanup records.
+- `data/ipet_memory/` stores local long-term memory.
+
+`/api/chat/stream` builds the local harness context from Ipet conversation history, local memory, current user input, and bounded Ipet-owned evidence such as vision context. The active runtime receives one temporary session per turn. In AstrBot mode that session id uses an `ipet-temp-*` prefix, and Ipet deletes the runtime session after the turn completes or fails.
+
+`/api/chat/topics*` reads and writes Ipet local conversations. These endpoints do not browse AstrBot chat databases, Dashboard history, or runtime-native conversation stores.
+
+Temporary chat mode does not write business conversation content or long-term memory. A user no-save intent also blocks durable writes to Ipet conversation history and local memory for that turn.
 
 Local responsibilities:
 
@@ -129,7 +132,7 @@ Runtime responsibilities:
 - route the request
 - decide whether tools or approvals are needed
 - stream final content
-- own session state
+- keep only temporary task state needed to execute the current turn
 - return semantic, text, task, phase, approval, done, or error events without directly controlling Live2D, ASR, TTS, lip sync, settings, local vision state, or presentation mapping
 
 Supported frontend event names remain:
@@ -349,11 +352,13 @@ Externally managed AstrBot or Hermes processes are left alone.
 
 ## Local State And Cleanup
 
-The runtime may create local-only state while the app runs:
+The app and active runtime may create local-only state while the app runs:
 
 - `.pet_runtime_command*.json` and `.pet_runtime_host.heartbeat.json` for desktop/backend command exchange
 - `backend/audio_cache/` for generated TTS output
-- `data/chat_topics/` for compatibility topic history
+- `data/ipet_conversations/` for Ipet-owned conversation history and temporary runtime cleanup records
+- `data/ipet_memory/` for local long-term memory
+- `data/chat_topics/` for ignored legacy compatibility topic history during migration
 - `.runtime-logs/`, `.uv-cache/`, `.venv/`, and third-party `node_modules/`
 - `fileplay/` when file-output skills create dated reports such as hotspot summaries
 
