@@ -14,6 +14,7 @@ from .hermes import DEFAULT_HERMES_CONFIG, normalize_hermes_config
 RUNTIME_HERMES = "hermes"
 RUNTIME_ASTRBOT = "astrbot"
 RUNTIME_IDS = {RUNTIME_HERMES, RUNTIME_ASTRBOT}
+DEFAULT_RUNTIME_ID = RUNTIME_ASTRBOT
 
 DEFAULT_ASTRBOT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -26,6 +27,9 @@ DEFAULT_ASTRBOT_CONFIG: dict[str, Any] = {
     "api_key": "",
     "api_key_env": "ASTRBOT_API_KEY",
     "username": "ipet",
+    "dashboard_username": "ipet",
+    "dashboard_password": "",
+    "dashboard_password_env": "ASTRBOT_DASHBOARD_PASSWORD",
     "napcat_qq": {
         "enabled": False,
         "adapter_name": "aiocqhttp",
@@ -40,7 +44,7 @@ DEFAULT_ASTRBOT_CONFIG: dict[str, Any] = {
 }
 
 DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
-    "active": RUNTIME_HERMES,
+    "active": DEFAULT_RUNTIME_ID,
     "adapters": {
         RUNTIME_HERMES: copy.deepcopy(DEFAULT_HERMES_CONFIG),
         RUNTIME_ASTRBOT: copy.deepcopy(DEFAULT_ASTRBOT_CONFIG),
@@ -50,7 +54,7 @@ DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
 
 def normalize_runtime_id(value: Any) -> str:
     runtime_id = str(value or "").strip().lower()
-    return runtime_id if runtime_id in RUNTIME_IDS else RUNTIME_HERMES
+    return runtime_id if runtime_id in RUNTIME_IDS else DEFAULT_RUNTIME_ID
 
 
 def normalize_command(value: Any) -> list[str]:
@@ -134,6 +138,13 @@ def normalize_astrbot_config(raw: Any, *, root_dir: Path | None = None) -> dict[
         or DEFAULT_ASTRBOT_CONFIG["api_key_env"],
         "username": str(merged.get("username") or DEFAULT_ASTRBOT_CONFIG["username"]).strip()
         or DEFAULT_ASTRBOT_CONFIG["username"],
+        "dashboard_username": str(merged.get("dashboard_username") or DEFAULT_ASTRBOT_CONFIG["dashboard_username"]).strip()
+        or DEFAULT_ASTRBOT_CONFIG["dashboard_username"],
+        "dashboard_password": str(merged.get("dashboard_password") or "").strip(),
+        "dashboard_password_env": str(
+            merged.get("dashboard_password_env") or DEFAULT_ASTRBOT_CONFIG["dashboard_password_env"]
+        ).strip()
+        or DEFAULT_ASTRBOT_CONFIG["dashboard_password_env"],
         "napcat_qq": _normalize_napcat_qq_config(merged.get("napcat_qq") or merged.get("napcat")),
     }
 
@@ -144,15 +155,19 @@ def normalize_runtime_config(raw: Any, *, root_dir: Path | None = None, legacy_h
     hermes_raw = adapters.get(RUNTIME_HERMES)
     default_hermes = normalize_hermes_config(DEFAULT_HERMES_CONFIG, root_dir=root_dir)
     legacy_hermes_norm = normalize_hermes_config(legacy_hermes, root_dir=root_dir) if legacy_hermes is not None else default_hermes
-    if legacy_hermes is not None and legacy_hermes_norm != default_hermes:
+    has_custom_legacy_hermes = legacy_hermes is not None and legacy_hermes_norm != default_hermes
+    if has_custom_legacy_hermes:
         hermes_raw = legacy_hermes
     elif hermes_raw is None:
         hermes_raw = legacy_hermes
     if hermes_raw is None:
         hermes_raw = DEFAULT_HERMES_CONFIG
     astrobot_raw = adapters.get(RUNTIME_ASTRBOT, data.get(RUNTIME_ASTRBOT))
+    active = normalize_runtime_id(data.get("active")) if "active" in data else DEFAULT_RUNTIME_ID
+    if "active" not in data and has_custom_legacy_hermes:
+        active = RUNTIME_HERMES
     return {
-        "active": normalize_runtime_id(data.get("active")),
+        "active": active,
         "adapters": {
             RUNTIME_HERMES: normalize_hermes_config(hermes_raw, root_dir=root_dir),
             RUNTIME_ASTRBOT: normalize_astrbot_config(astrobot_raw, root_dir=root_dir),
@@ -172,13 +187,15 @@ def apply_runtime_secret_actions(
     )
     if not isinstance(raw_astrbot, dict):
         raw_astrbot = raw_config.get("astrbot") if isinstance(raw_config.get("astrbot"), dict) else {}
-    action = str(raw_astrbot.get("api_key_action") or "").strip().lower()
-    if action not in {"keep", "replace", "clear"}:
-        return
-
     runtime = merged_config.setdefault("runtime", {})
     adapters = runtime.setdefault("adapters", {})
     astrobot = adapters.setdefault(RUNTIME_ASTRBOT, {})
+
+    action = str(raw_astrbot.get("api_key_action") or "").strip().lower()
+    password_action = str(raw_astrbot.get("dashboard_password_action") or "").strip().lower()
+    if action not in {"keep", "replace", "clear"} and password_action not in {"keep", "replace", "clear"}:
+        return
+
     previous_key = (
         (((previous_config.get("runtime") or {}).get("adapters") or {}).get(RUNTIME_ASTRBOT) or {}).get("api_key")
         if isinstance(previous_config.get("runtime"), dict)
@@ -191,9 +208,27 @@ def apply_runtime_secret_actions(
         astrobot["api_key"] = str(previous_key or "").strip()
     elif action == "replace":
         astrobot["api_key"] = str(raw_astrbot.get("api_key") or "").strip()
-    else:
+    elif action == "clear":
         astrobot["api_key"] = ""
     astrobot.pop("api_key_action", None)
+
+    previous_password = (
+        (((previous_config.get("runtime") or {}).get("adapters") or {}).get(RUNTIME_ASTRBOT) or {}).get(
+            "dashboard_password"
+        )
+        if isinstance(previous_config.get("runtime"), dict)
+        else ""
+    )
+    if not previous_password and isinstance(previous_config.get("astrbot"), dict):
+        previous_password = previous_config["astrbot"].get("dashboard_password", "")
+
+    if password_action == "keep":
+        astrobot["dashboard_password"] = str(previous_password or "").strip()
+    elif password_action == "replace":
+        astrobot["dashboard_password"] = str(raw_astrbot.get("dashboard_password") or "").strip()
+    elif password_action == "clear":
+        astrobot["dashboard_password"] = ""
+    astrobot.pop("dashboard_password_action", None)
 
 
 def resolved_astrbot_api_key(config: dict[str, Any]) -> str:
@@ -204,6 +239,15 @@ def resolved_astrbot_api_key(config: dict[str, Any]) -> str:
     if env_name:
         return str(os.environ.get(env_name) or "").strip()
     return ""
+
+
+def resolved_astrbot_dashboard_password(config: dict[str, Any]) -> str:
+    env_name = str(config.get("dashboard_password_env") or DEFAULT_ASTRBOT_CONFIG["dashboard_password_env"]).strip()
+    if env_name:
+        env_password = str(os.environ.get(env_name) or "").strip()
+        if env_password:
+            return env_password
+    return str(config.get("dashboard_password") or "").strip()
 
 
 def secret_preview(value: Any) -> str:
@@ -230,6 +274,17 @@ def redact_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
         astrobot["api_key_set"] = bool(raw_key or env_key)
         astrobot["api_key_preview"] = secret_preview(raw_key or env_key)
         astrobot["api_key_source"] = "config" if raw_key else ("env" if env_key else "")
+        raw_dashboard_password = str(astrobot.get("dashboard_password") or "").strip()
+        dashboard_env_password = ""
+        dashboard_env_name = str(astrobot.get("dashboard_password_env") or DEFAULT_ASTRBOT_CONFIG["dashboard_password_env"]).strip()
+        if dashboard_env_name:
+            dashboard_env_password = str(os.environ.get(dashboard_env_name) or "").strip()
+        dashboard_secret = dashboard_env_password or raw_dashboard_password
+        astrobot["dashboard_password"] = ""
+        astrobot["dashboard_password_action"] = "keep"
+        astrobot["dashboard_password_set"] = bool(dashboard_secret)
+        astrobot["dashboard_password_preview"] = secret_preview(dashboard_secret)
+        astrobot["dashboard_password_source"] = "env" if dashboard_env_password else ("config" if raw_dashboard_password else "")
     return public
 
 
@@ -245,7 +300,10 @@ def mirror_runtime_compat(config: dict[str, Any], *, root_dir: Path | None = Non
 
 
 def runtime_sidecar_config(config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
+    runtime = normalize_runtime_config(
+        config.get("runtime") if isinstance(config, dict) else {},
+        legacy_hermes=config.get("hermes") if isinstance(config, dict) else None,
+    )
     active = normalize_runtime_id(runtime.get("active"))
     adapters = runtime.get("adapters") if isinstance(runtime.get("adapters"), dict) else {}
     adapter = adapters.get(active) if isinstance(adapters.get(active), dict) else {}

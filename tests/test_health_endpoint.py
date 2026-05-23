@@ -103,6 +103,41 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertFalse(resp.json()["asr"])
         self.assertIn("macOS", resp.json()["message"])
 
+    def test_health_includes_vision_status_without_image_data(self) -> None:
+        backend_app._MCP_BRIDGE = None
+        backend_app._VISION_SERVICE = None
+        settings = {
+            "vision": {"enabled": True},
+            "chat": {
+                "backend_url": "http://127.0.0.1:8009",
+                "asr": {
+                    "enabled": False,
+                    "provider": "funasr",
+                    "api_base_url": "http://127.0.0.1:8012",
+                    "push_to_talk_key": "Alt",
+                    "interim_results": True,
+                },
+            },
+        }
+        with mock.patch.object(backend_app, "is_ollama_alive", return_value=True), mock.patch.object(
+            backend_app,
+            "_load_runtime_tooling_config",
+            return_value={"enabled": True, "third_party": {"enabled": True}},
+        ), mock.patch.object(
+            backend_app,
+            "_load_settings_config",
+            return_value=settings,
+        ):
+            service = backend_app._get_vision_service(settings)
+            service.update_frame({"mime_type": "image/jpeg", "data_url": "data:image/jpeg;base64,abc"})
+            resp = self.client.get("/api/health")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("vision", resp.json())
+        self.assertTrue(resp.json()["vision"]["enabled"])
+        self.assertTrue(resp.json()["vision"]["has_frame"])
+        self.assertNotIn("data_url", resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()

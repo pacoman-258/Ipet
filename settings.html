@@ -123,8 +123,8 @@
       <section id="chat" class="panel-card runtime-panel desktop-window" data-window-title="运行时与语音">
         <div class="section-head">
           <div>
-            <h3>Hermes 运行时与语音</h3>
-            <p>切换 Hermes 内部模型别名，并管理对话、语音合成和语音识别。</p>
+            <h3>运行时与语音</h3>
+            <p>管理默认 AstrBot 连接、可选 Hermes 内核，以及对话、语音合成和语音识别。</p>
           </div>
         </div>
 
@@ -161,7 +161,7 @@
             <div class="runtime-block-head">
               <div>
                 <h4>内核运行时</h4>
-                <p>选择桌宠聊天请求要连接的 Agent 内核。Hermes 保持默认，AstrBot 用于后续聊天软件接入。</p>
+                <p>选择桌宠聊天请求要连接的 Agent 内核。AstrBot 保持默认，Hermes 作为可选次选内核。</p>
               </div>
               <span id="runtime-status-pill" class="runtime-pill">检测中</span>
             </div>
@@ -182,7 +182,7 @@
             <div class="runtime-block-head">
               <div>
                 <h4>Hermes Agent 连接</h4>
-                <p>桌宠只连接 Hermes Agent；决策、会话、技能、MCP 和工具执行都由 Hermes 负责。</p>
+                <p>Hermes 是可选次选内核；选择 Hermes 时，决策、会话、技能、MCP 和工具执行由 Hermes 负责。</p>
               </div>
               <span id="hermes-status-pill" class="runtime-pill">检测中</span>
             </div>
@@ -251,6 +251,10 @@
                 <input id="astrbot-username" type="text" placeholder="ipet" />
               </label>
               <label class="field">
+                <span>Dashboard 用户名</span>
+                <input id="astrbot-dashboard-username" type="text" placeholder="ipet" />
+              </label>
+              <label class="field">
                 <span>API Key 环境变量</span>
                 <input id="astrbot-api-key-env" type="text" placeholder="ASTRBOT_API_KEY" />
               </label>
@@ -261,6 +265,14 @@
               <label class="toggle-line">
                 <input id="astrbot-api-key-clear" type="checkbox" />
                 <span>保存时清空 API Key</span>
+              </label>
+              <label class="field wide">
+                <span>Dashboard 密码</span>
+                <input id="astrbot-dashboard-password" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密码；ASTRBOT_DASHBOARD_PASSWORD 可覆盖" />
+              </label>
+              <label class="toggle-line">
+                <input id="astrbot-dashboard-password-clear" type="checkbox" />
+                <span>保存时清空 Dashboard 密码</span>
               </label>
               <label class="field wide">
                 <span>启动命令</span>
@@ -276,6 +288,7 @@
               </label>
             </div>
             <div id="astrbot-api-key-state" class="field-hint">API Key 状态会随配置加载自动刷新。</div>
+            <div id="astrbot-dashboard-password-state" class="field-hint">Dashboard 密码状态会随配置加载自动刷新。</div>
             <div id="astrbot-status-detail" class="field-hint">AstrBot 状态会随配置加载自动刷新。</div>
           </div>
 
@@ -385,11 +398,173 @@
             </div>
           </div>
 
+          <div class="runtime-block vision-block">
+            <div class="runtime-block-head">
+              <div>
+                <h4>自动视觉</h4>
+                <p>Ipet 本地采集最近屏幕帧，只向当前运行时传递临时证据上下文。</p>
+              </div>
+              <span id="vision-status-pill" class="runtime-pill">默认关闭</span>
+            </div>
+            <div class="form-grid two-col">
+              <label class="field">
+                <span>视觉开关</span>
+                <label class="inline-toggle">
+                  <input id="vision-enabled" type="checkbox" />
+                  <span>启用自动视觉</span>
+                </label>
+              </label>
+              <label class="field">
+                <span>注入策略</span>
+                <select id="vision-inject-policy">
+                  <option value="off">不注入</option>
+                  <option value="when_requested">按需注入</option>
+                  <option value="always_summary">总是注入摘要</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>证据约束</span>
+                <label class="inline-toggle">
+                  <input id="vision-force-grounding" type="checkbox" />
+                  <span>强制视觉 grounding</span>
+                </label>
+              </label>
+              <label class="field">
+                <span>主动观察</span>
+                <label class="inline-toggle">
+                  <input id="vision-active-observation-enabled" type="checkbox" />
+                  <span>强制视觉问题先让 Ipet 主动观察屏幕</span>
+                </label>
+              </label>
+              <label class="field">
+                <span>主动观察交互</span>
+                <select id="vision-active-observation-allowed-interaction">
+                  <option value="light">light：聚焦/切换/小幅滚动</option>
+                  <option value="none">none：只让出视野并截图</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>主动观察等待毫秒</span>
+                <input id="vision-active-observation-settle-ms" type="number" min="100" max="2000" step="50" />
+              </label>
+              <label class="field">
+                <span>主动观察超时秒数</span>
+                <input id="vision-active-observation-timeout-sec" type="number" min="1" max="20" step="1" />
+              </label>
+              <label class="field">
+                <span>强制视觉是否使用周期截图</span>
+                <label class="inline-toggle">
+                  <input id="vision-passive-capture-use-for-forced" type="checkbox" />
+                  <span>主动观察不可用时允许复用旧周期截图</span>
+                </label>
+              </label>
+              <label class="field">
+                <span>视觉分析器</span>
+                <label class="inline-toggle">
+                  <input id="vision-analyzer-enabled" type="checkbox" />
+                  <span>启用图像理解分析</span>
+                </label>
+              </label>
+              <label class="field">
+                <span>分析器提供商</span>
+                <input id="vision-analyzer-provider" type="text" list="vision-analyzer-provider-options" placeholder="留空则使用当前运行时 / AstrBot" />
+                <datalist id="vision-analyzer-provider-options">
+                  <option value="openai_compatible_vlm"></option>
+                  <option value="local_vlm"></option>
+                  <option value="macos_vision_ocr"></option>
+                  <option value="none"></option>
+                </datalist>
+              </label>
+              <label class="field">
+                <span>VLM Base URL</span>
+                <input id="vision-analyzer-base-url" type="text" placeholder="空则按 provider 默认或回退运行时" />
+              </label>
+              <label class="field">
+                <span>VLM 模型</span>
+                <div class="button-row stretch">
+                  <input id="vision-analyzer-model" type="text" placeholder="例如 gpt-4o-mini / qwen-vl" />
+                  <button id="fetch-vision-analyzer-models-btn" class="ghost-button" type="button">拉取 VLM 模型</button>
+                </div>
+              </label>
+              <label class="field">
+                <span>VLM 模型列表</span>
+                <div class="button-row stretch">
+                  <select id="vision-analyzer-model-select"></select>
+                  <button id="apply-vision-analyzer-model-btn" class="pill-button" type="button">一键填入</button>
+                </div>
+              </label>
+              <label class="field">
+                <span>VLM API Key</span>
+                <input id="vision-analyzer-api-key" type="password" placeholder="留空保存会保留当前密钥" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>清空 VLM Key</span>
+                <label class="inline-toggle">
+                  <input id="vision-analyzer-api-key-clear" type="checkbox" />
+                  <span>保存时清空已保存的 VLM API Key</span>
+                </label>
+                <span id="vision-analyzer-api-key-state" class="field-hint">尚未配置 VLM API Key。</span>
+              </label>
+              <label class="field">
+                <span>图像细节</span>
+                <select id="vision-analyzer-image-detail">
+                  <option value="low">low</option>
+                  <option value="auto">auto</option>
+                  <option value="high">high</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>采集间隔毫秒</span>
+                <input id="vision-capture-interval-ms" type="number" min="1000" max="60000" step="500" />
+              </label>
+              <label class="field">
+                <span>最大宽度</span>
+                <input id="vision-max-width" type="number" min="320" max="2560" step="80" />
+              </label>
+              <label class="field">
+                <span>JPEG 质量</span>
+                <input id="vision-jpeg-quality" type="number" min="35" max="95" step="1" />
+              </label>
+              <label class="field">
+                <span>上下文有效秒数</span>
+                <input id="vision-context-ttl-sec" type="number" min="5" max="300" step="5" />
+              </label>
+              <label class="field">
+                <span>变化阈值</span>
+                <input id="vision-routing-visual-change-threshold" type="number" min="0" max="64" step="1" />
+              </label>
+              <label class="field">
+                <span>VLM 冷却秒数</span>
+                <input id="vision-routing-vlm-cooldown-sec" type="number" min="0" max="300" step="1" />
+              </label>
+              <label class="field">
+                <span>稳定等待毫秒</span>
+                <input id="vision-routing-stable-after-change-ms" type="number" min="0" max="10000" step="100" />
+              </label>
+              <label class="field">
+                <span>OCR 最大字符数</span>
+                <input id="vision-analyzer-max-text-chars" type="number" min="40" max="2000" step="40" />
+              </label>
+              <label class="field">
+                <span>VLM 最大观察数</span>
+                <input id="vision-analyzer-max-observations" type="number" min="1" max="8" step="1" />
+              </label>
+              <label class="field">
+                <span>运行时回退</span>
+                <label class="inline-toggle">
+                  <input id="vision-analyzer-fallback-to-runtime" type="checkbox" />
+                  <span>provider 为空或不可用时使用当前主模型</span>
+                </label>
+              </label>
+            </div>
+            <div id="vision-status-detail" class="field-hint vision-status">自动视觉默认关闭，不落盘；运行时只接收受控证据摘要。</div>
+          </div>
+
           <div class="runtime-block conversation-block">
             <div class="runtime-block-head">
               <div>
                 <h4>快捷会话切换</h4>
-                <p>这里只切换会话入口，记忆与长期上下文交给 Hermes 内核。</p>
+                <p>这里只切换会话入口，记忆与长期上下文交给当前运行时。</p>
               </div>
             </div>
             <div class="form-grid two-col">
@@ -408,7 +583,7 @@
             <div class="runtime-block-head">
               <div>
                 <h4>智能体行为</h4>
-                <p>桌宠只传递提示词、表情和审批交互，具体任务流程由 Hermes Agent 处理。</p>
+                <p>桌宠只传递提示词、表情和审批交互，具体任务流程由当前运行时处理。</p>
               </div>
             </div>
             <div class="form-grid two-col">

@@ -1090,6 +1090,68 @@
       line-height: 1.6;
     }
 
+    .assistant-worklog {
+      align-self: stretch;
+      max-width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 2px 4px 4px;
+      color: #334155;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .worklog-status-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .worklog-status-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: start;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #64748b;
+    }
+
+    .worklog-status-row::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      margin-top: 5px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+
+    .worklog-status-row.source-ipet-inferred::before {
+      background: #f59e0b;
+    }
+
+    .worklog-status-row.source-runtime::before {
+      background: #2563eb;
+    }
+
+    .worklog-status-source {
+      margin-left: 6px;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .worklog-final-text {
+      font-size: 13px;
+      line-height: 1.65;
+      color: #1f2937;
+    }
+
+    .worklog-final-text:empty {
+      display: none;
+    }
+
     .thought-group .msg-body {
       display: flex;
       flex-direction: column;
@@ -1190,6 +1252,13 @@
       color: #6f5260;
       font-size: 12px;
       border: 1px solid rgba(255, 255, 255, 0.78);
+    }
+
+    .approval-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 2px;
     }
 
     .approval-actions {
@@ -1742,6 +1811,8 @@
       let activeApprovalId = "";
       let pendingApprovalInputTurnId = "";
       let currentThoughtGroup = null;
+      let currentAssistantWorklog = null;
+      let assistantWorklogCounter = 0;
       let activeThoughtSessionId = "";
       let thoughtSessionCounter = 0;
       const approvalBubbleRefs = new Map();
@@ -2649,6 +2720,10 @@
           created_at: String(raw.created_at || "").trim(),
           persisted: raw.persisted !== false,
           assistant_turn_count: Number(raw.assistant_turn_count || 0) || 0,
+          runtime: String(raw.runtime || raw.source || "").trim(),
+          supports_history_detail: raw.supports_history_detail !== false,
+          supports_delete: raw.supports_delete !== false,
+          history_unavailable: !!raw.history_unavailable,
         };
       }
 
@@ -2675,9 +2750,13 @@
           if (role !== "user" && role !== "assistant") {
             continue;
           }
-          appendMessage(role === "assistant" ? "pet" : "user", String(item.content || ""), {
-            speakerName: role === "user" ? "你" : speakerNameForRole("pet"),
-          });
+          if (role === "user") {
+            appendMessage("user", String(item.content || ""), {
+              speakerName: "你",
+            });
+          } else {
+            appendAssistantHistoryBlock(item);
+          }
         }
       }
 
@@ -2754,20 +2833,22 @@
           mainButton.addEventListener("click", async () => {
             await selectTopic(item.topic_id);
           });
-          const deleteButton = document.createElement("button");
-          deleteButton.type = "button";
-          const isPendingDelete = item.topic_id === pendingDeleteTopicId;
-          deleteButton.className = `chat-history-delete${isPendingDelete ? " is-danger" : ""}`;
-          deleteButton.textContent = isPendingDelete ? "\u786e\u8ba4\u5220\u9664" : "\u5220\u9664";
-          deleteButton.title = isPendingDelete ? "\u518d\u6b21\u70b9\u51fb\u5373\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898";
-          deleteButton.setAttribute("aria-label", isPendingDelete ? "\u786e\u8ba4\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898");
-          deleteButton.addEventListener("click", async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            await deleteTopic(item.topic_id, item.title);
-          });
           card.appendChild(mainButton);
-          card.appendChild(deleteButton);
+          if (item.supports_delete) {
+            const deleteButton = document.createElement("button");
+            deleteButton.type = "button";
+            const isPendingDelete = item.topic_id === pendingDeleteTopicId;
+            deleteButton.className = `chat-history-delete${isPendingDelete ? " is-danger" : ""}`;
+            deleteButton.textContent = isPendingDelete ? "\u786e\u8ba4\u5220\u9664" : "\u5220\u9664";
+            deleteButton.title = isPendingDelete ? "\u518d\u6b21\u70b9\u51fb\u5373\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898";
+            deleteButton.setAttribute("aria-label", isPendingDelete ? "\u786e\u8ba4\u5220\u9664\u8bdd\u9898" : "\u5220\u9664\u8bdd\u9898");
+            deleteButton.addEventListener("click", async (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              await deleteTopic(item.topic_id, item.title);
+            });
+            card.appendChild(deleteButton);
+          }
           chatHistoryListEl.appendChild(card);
         }
         if (pendingTopic) {
@@ -2878,7 +2959,7 @@
         }
         const resp = await fetch(`${backend}/api/chat/topics/${encodeURIComponent(topicId)}`);
         const payload = await resp.json();
-        if (!resp.ok) {
+        if (!resp.ok || payload.ok === false) {
           throw new Error(payload.detail || `HTTP ${resp.status}`);
         }
         return payload;
@@ -2892,7 +2973,12 @@
           currentTopicId = String(topicId || "").trim() || currentTopicId;
           state.chat.session_id = currentTopicId;
           currentTopicMeta = meta;
-          replaceChatMessages(Array.isArray(payload.messages) ? payload.messages : []);
+          replaceChatMessages(payload.history_unavailable ? [] : Array.isArray(payload.messages) ? payload.messages : []);
+          if (payload.history_unavailable) {
+            appendMessage("error", payload.detail || "当前运行时暂时无法同步该会话历史。", {
+              speakerName: "系统",
+            });
+          }
           toggleChatHistoryDrawer(false);
           openChat();
           renderTopicHistoryList();
@@ -2913,6 +2999,11 @@
           return;
         }
         const displayTitle = String(topicTitle || normalizedTopicId).trim() || normalizedTopicId;
+        const topicMeta = topicHistoryItems.find((item) => item.topic_id === normalizedTopicId) || null;
+        if (topicMeta && !topicMeta.supports_delete) {
+          setChatHistoryStatus("该话题当前不支持同步删除。");
+          return;
+        }
         if (pendingDeleteTopicId !== normalizedTopicId) {
           armPendingDeleteTopic(normalizedTopicId, displayTitle);
           return;
@@ -2941,12 +3032,20 @@
             });
             payload = await parsePayload(resp);
           }
-          if (!resp.ok) {
+          if (Array.isArray(payload.topics)) {
+            topicHistoryItems = payload.topics.map(normalizeTopicRecord).filter(Boolean);
+            topicHistoryLoaded = true;
+            renderTopicHistoryList();
+            updateShellButtons();
+          }
+          if (!resp.ok || payload.ok === false) {
             throw new Error(payload.detail || `HTTP ${resp.status}`);
           }
           clearPendingDeleteTopic(false);
-          topicHistoryItems = (Array.isArray(payload.topics) ? payload.topics : []).map(normalizeTopicRecord).filter(Boolean);
-          topicHistoryLoaded = true;
+          if (!Array.isArray(payload.topics)) {
+            topicHistoryItems = [];
+            topicHistoryLoaded = true;
+          }
           if (currentTopicId === normalizedTopicId) {
             if (topicHistoryItems.length) {
               await selectTopic(topicHistoryItems[0].topic_id);
@@ -2963,7 +3062,7 @@
           setChatHistoryStatus(`\u5df2\u5220\u9664\u8bdd\u9898\uff1a${displayTitle}`);
         } catch (error) {
           clearPendingDeleteTopic(false);
-          setChatHistoryStatus(`\u5220\u9664\u5386\u53f2\u8bdd\u9898\u5931\u8d25\uff1a${error?.message || String(error)}\u3002\u5982\u679c\u4ecd\u662f 405\uff08\u65b9\u6cd5\u4e0d\u5141\u8bb8\uff09\uff0c\u8bf7\u91cd\u542f\u684c\u5ba0\u4ee5\u52a0\u8f7d\u65b0\u7248\u540e\u7aef\u3002`);
+          setChatHistoryStatus(`\u5220\u9664\u5386\u53f2\u8bdd\u9898\u5931\u8d25\uff1a${error?.message || String(error)}\u3002`);
           renderTopicHistoryList();
         }
       }
@@ -3312,6 +3411,103 @@
         group.hasItems = true;
         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
         return group;
+      }
+
+      function sourceLabel(source) {
+        const value = String(source || "").trim();
+        if (value === "ipet_inferred") {
+          return "Ipet 推断";
+        }
+        if (value === "runtime") {
+          return "运行时";
+        }
+        return value || "状态";
+      }
+
+      function buildAssistantWorklogTurn(sessionId = "") {
+        assistantWorklogCounter += 1;
+        const el = document.createElement("article");
+        el.className = "assistant-worklog";
+        el.dataset.worklogId = `assistant-worklog-${assistantWorklogCounter}`;
+        el.dataset.sessionId = String(sessionId || "").trim();
+
+        const statusListEl = document.createElement("div");
+        statusListEl.className = "worklog-status-list";
+
+        const finalTextEl = document.createElement("div");
+        finalTextEl.className = "worklog-final-text";
+
+        el.appendChild(statusListEl);
+        el.appendChild(finalTextEl);
+        chatMessagesEl.appendChild(el);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return { el, statusListEl, finalTextEl, sessionId: el.dataset.sessionId, statusRefs: new Map() };
+      }
+
+      function ensureAssistantWorklogTurn(sessionId = "") {
+        const normalizedSessionId = String(sessionId || activeThoughtSessionId || "").trim() || beginThoughtSession();
+        if (
+          currentAssistantWorklog &&
+          currentAssistantWorklog.el &&
+          currentAssistantWorklog.el.parentNode &&
+          currentAssistantWorklog.sessionId === normalizedSessionId
+        ) {
+          return currentAssistantWorklog;
+        }
+        currentAssistantWorklog = buildAssistantWorklogTurn(normalizedSessionId);
+        return currentAssistantWorklog;
+      }
+
+      function appendWorklogPhase(payload, sessionId = "") {
+        const turn = ensureAssistantWorklogTurn(sessionId);
+        const text = String(payload?.text || "").trim();
+        if (!text) {
+          return turn;
+        }
+        const source = String(payload?.source || "runtime").trim();
+        const statusId = String(payload?.status_id || payload?.phase || "").trim();
+        const reusable = statusId && payload?.transient !== false ? turn.statusRefs.get(statusId) : null;
+        const rowEl = reusable || document.createElement("div");
+        rowEl.className = `worklog-status-row source-${source.replace(/[^a-z0-9_-]/gi, "-")}`;
+        rowEl.dataset.statusId = statusId;
+
+        const textEl = reusable?.querySelector(".worklog-status-text") || document.createElement("div");
+        textEl.className = "worklog-status-text";
+        textEl.textContent = text;
+
+        const sourceEl = reusable?.querySelector(".worklog-status-source") || document.createElement("span");
+        sourceEl.className = "worklog-status-source";
+        sourceEl.textContent = sourceLabel(source);
+        textEl.appendChild(sourceEl);
+
+        if (!reusable) {
+          rowEl.appendChild(textEl);
+          turn.statusListEl.appendChild(rowEl);
+          if (statusId) {
+            turn.statusRefs.set(statusId, rowEl);
+          }
+        }
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return turn;
+      }
+
+      function updateWorklogFinalText(turn, text, pending = false) {
+        const target = turn || ensureAssistantWorklogTurn();
+        if (!target || !target.finalTextEl) {
+          return target;
+        }
+        target.finalTextEl.textContent = String(text || "");
+        target.el.classList.toggle("pending", !!pending);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return target;
+      }
+
+      function appendAssistantHistoryBlock(item) {
+        const previousWorklog = currentAssistantWorklog;
+        const turn = buildAssistantWorklogTurn(`history-${assistantWorklogCounter + 1}`);
+        updateWorklogFinalText(turn, String(item?.content || ""));
+        currentAssistantWorklog = previousWorklog;
+        return turn;
       }
 
       function appendMessage(role, text, options = {}) {
@@ -3793,22 +3989,32 @@
       }
 
       function appendApprovalBubble(payload, sessionId = "") {
-        const message = appendMessage("pet", String(payload.text || ""), {
-          phase: "action",
-          speakerName: speakerNameForRole("pet"),
-        });
+        const message = ensureAssistantWorklogTurn(sessionId);
+        appendWorklogPhase(
+          {
+            phase: "action",
+            text: String(payload.text || ""),
+            source: "runtime",
+            transient: false,
+            status_id: `approval:${String(payload.turn_id || Date.now()).trim()}`,
+            render: "worklog",
+          },
+          sessionId,
+        );
         const turnId = String(payload.turn_id || "").trim();
+        const approvalCardEl = document.createElement("div");
+        approvalCardEl.className = "approval-card";
         if (turnId) {
-          approvalBubbleRefs.set(turnId, message);
+          approvalBubbleRefs.set(turnId, { el: approvalCardEl });
           approvalThoughtSessionRefs.set(turnId, String(sessionId || activeThoughtSessionId || "").trim());
         }
-        appendToolList(message.el, Array.isArray(payload.tools) ? payload.tools : []);
+        appendToolList(approvalCardEl, Array.isArray(payload.tools) ? payload.tools : []);
         const metaText = formatStepMeta(payload);
         if (metaText) {
           const metaEl = document.createElement("div");
           metaEl.className = "approval-status";
           metaEl.textContent = metaText;
-          message.el.appendChild(metaEl);
+          approvalCardEl.appendChild(metaEl);
         }
 
         const actionWrap = document.createElement("div");
@@ -3827,8 +4033,9 @@
 
         actionWrap.appendChild(approveBtn);
         actionWrap.appendChild(rejectBtn);
-        message.el.appendChild(actionWrap);
-        message.el.appendChild(statusEl);
+        approvalCardEl.appendChild(actionWrap);
+        approvalCardEl.appendChild(statusEl);
+        message.el.appendChild(approvalCardEl);
 
         const setResolved = (text) => {
           approveBtn.disabled = true;
@@ -3853,10 +4060,17 @@
           activeApprovalId = String(payload.turn_id);
           pendingApprovalInputTurnId = String(payload.turn_id);
           setResolved("已拒绝这一步，请在输入框里告诉我接下来该怎么调整。");
-          appendMessage("pet", "这一步我先暂停啦。你直接补充想法，我会沿着当前任务继续处理。", {
-            phase: "action",
-            speakerName: speakerNameForRole("pet"),
-          });
+          appendWorklogPhase(
+            {
+              phase: "action",
+              text: "这一步我先暂停啦。你直接补充想法，我会沿着当前任务继续处理。",
+              source: "runtime",
+              transient: false,
+              status_id: `approval_rejected:${String(payload.turn_id || "").trim()}`,
+              render: "worklog",
+            },
+            sessionId,
+          );
           setChatState("awaiting_followup_input");
           chatInputEl.focus();
         });
@@ -3887,22 +4101,18 @@
         const decoder = new TextDecoder();
         const reader = resp.body.getReader();
         let buffer = "";
-        let finalMsg = null;
+        let assistantTurn = null;
         let full = "";
         let awaitingApproval = false;
         let receivedDisplaySegment = false;
         const thoughtSessionId = beginThoughtSession(String(options?.thoughtSessionId || "").trim());
         currentThoughtGroup = ensureThoughtGroup(1, true, thoughtSessionId);
+        assistantTurn = ensureAssistantWorklogTurn(thoughtSessionId);
         receivedStructuredSegment = false;
 
         const ensureFinalMessage = () => {
-          if (!finalMsg) {
-            finalMsg = appendMessage("pet", "", {
-              phase: "done",
-              speakerName: speakerNameForRole("pet"),
-            });
-          }
-          return finalMsg;
+          assistantTurn = ensureAssistantWorklogTurn(thoughtSessionId);
+          return assistantTurn;
         };
 
         while (true) {
@@ -3947,17 +4157,8 @@
               renderTopicHistoryList();
               updateShellButtons();
             } else if (eventName === "phase") {
-              const phase = String(payload.phase || "");
-              const text = String(payload.text || "");
-              if (phase === "thought") {
-                appendThoughtPhase(payload, thoughtSessionId);
-              } else {
-                removeEmptyPendingThoughtGroup(thoughtSessionId);
-                appendMessage("pet", text, {
-                  phase,
-                  speakerName: speakerNameForRole("pet"),
-                });
-              }
+              removeEmptyPendingThoughtGroup(thoughtSessionId);
+              appendWorklogPhase(payload, thoughtSessionId);
             } else if (eventName === "approval_required") {
               awaitingApproval = true;
               removeEmptyPendingThoughtGroup(thoughtSessionId);
@@ -3974,14 +4175,14 @@
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               receivedDisplaySegment = true;
               full += String(payload.text || "");
-              updateMessageText(ensureFinalMessage(), full || "少女思考中...");
+              updateWorklogFinalText(ensureAssistantWorklogTurn(thoughtSessionId), full || "少女思考中...");
             } else if (eventName === "token") {
               if (receivedStructuredSegment) {
                 continue;
               }
               removeEmptyPendingThoughtGroup(thoughtSessionId);
               full += payload.delta || "";
-              updateMessageText(ensureFinalMessage(), full || "少女思考中...");
+              updateWorklogFinalText(ensureAssistantWorklogTurn(thoughtSessionId), full || "少女思考中...");
               feedSpeakBuffer(payload.delta || "");
             } else if (eventName === "done") {
               full = payload.text || full;
@@ -3996,7 +4197,7 @@
               if (!receivedStructuredSegment && !pendingSpeakBuffer.trim() && full.trim()) {
                 pendingSpeakBuffer = full;
               }
-              updateMessageText(ensureFinalMessage(), full || "(\u7a7a\u54cd\u5e94)");
+              updateWorklogFinalText(ensureFinalMessage(), full || "(\u7a7a\u54cd\u5e94)");
               if (topicHistoryEnabled()) {
                 await loadTopicHistory(true);
               }

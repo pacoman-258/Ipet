@@ -38,6 +38,10 @@
     astrbotHealthPath: $("astrbot-health-path"),
     astrbotStartupTimeoutSec: $("astrbot-startup-timeout-sec"),
     astrbotUsername: $("astrbot-username"),
+    astrbotDashboardUsername: $("astrbot-dashboard-username"),
+    astrbotDashboardPassword: $("astrbot-dashboard-password"),
+    astrbotDashboardPasswordClear: $("astrbot-dashboard-password-clear"),
+    astrbotDashboardPasswordState: $("astrbot-dashboard-password-state"),
     astrbotApiKeyEnv: $("astrbot-api-key-env"),
     astrbotApiKey: $("astrbot-api-key"),
     astrbotApiKeyClear: $("astrbot-api-key-clear"),
@@ -57,6 +61,37 @@
     chatAsrEnabled: $("chat-asr-enabled"),
     chatAsrPushToTalkKey: $("chat-asr-push-to-talk-key"),
     chatAsrInterimResults: $("chat-asr-interim-results"),
+    visionEnabled: $("vision-enabled"),
+    visionCaptureIntervalMs: $("vision-capture-interval-ms"),
+    visionMaxWidth: $("vision-max-width"),
+    visionJpegQuality: $("vision-jpeg-quality"),
+    visionContextTtlSec: $("vision-context-ttl-sec"),
+    visionRoutingVisualChangeThreshold: $("vision-routing-visual-change-threshold"),
+    visionRoutingVlmCooldownSec: $("vision-routing-vlm-cooldown-sec"),
+    visionRoutingStableAfterChangeMs: $("vision-routing-stable-after-change-ms"),
+    visionInjectPolicy: $("vision-inject-policy"),
+    visionForceGrounding: $("vision-force-grounding"),
+    visionActiveObservationEnabled: $("vision-active-observation-enabled"),
+    visionActiveObservationInteraction: $("vision-active-observation-allowed-interaction"),
+    visionActiveObservationSettleMs: $("vision-active-observation-settle-ms"),
+    visionActiveObservationTimeoutSec: $("vision-active-observation-timeout-sec"),
+    visionPassiveCaptureUseForForced: $("vision-passive-capture-use-for-forced"),
+    visionAnalyzerEnabled: $("vision-analyzer-enabled"),
+    visionAnalyzerProvider: $("vision-analyzer-provider"),
+    visionAnalyzerBaseUrl: $("vision-analyzer-base-url"),
+    visionAnalyzerModel: $("vision-analyzer-model"),
+    fetchVisionAnalyzerModelsBtn: $("fetch-vision-analyzer-models-btn"),
+    visionAnalyzerModelSelect: $("vision-analyzer-model-select"),
+    applyVisionAnalyzerModelBtn: $("apply-vision-analyzer-model-btn"),
+    visionAnalyzerApiKey: $("vision-analyzer-api-key"),
+    visionAnalyzerApiKeyClear: $("vision-analyzer-api-key-clear"),
+    visionAnalyzerApiKeyState: $("vision-analyzer-api-key-state"),
+    visionAnalyzerImageDetail: $("vision-analyzer-image-detail"),
+    visionAnalyzerMaxTextChars: $("vision-analyzer-max-text-chars"),
+    visionAnalyzerMaxObservations: $("vision-analyzer-max-observations"),
+    visionAnalyzerFallbackToRuntime: $("vision-analyzer-fallback-to-runtime"),
+    visionStatusPill: $("vision-status-pill"),
+    visionStatusDetail: $("vision-status-detail"),
     chatTtsProvider: $("chat-tts-provider"),
     chatRatePct: $("chat-rate-pct"),
     chatRateLabel: $("chat-rate-label"),
@@ -131,7 +166,11 @@
   let skillDefaultActiveIds = [];
   let hermesStatus = null;
   let runtimeStatus = null;
+  let visionStatus = null;
   let astrbotApiKeyDirty = false;
+  let astrbotDashboardPasswordDirty = false;
+  let visionAnalyzerApiKeyDirty = false;
+  let visionAnalyzerModels = [];
   let toastTimer = 0;
   const fileAllowlistPickerEndpoint = "/api/settings/file-allowlist/pick";
   const petBackgroundPickerEndpoint = "/api/settings/file-allowlist/pick";
@@ -805,7 +844,7 @@
 
   function renderRuntimeStatus(status) {
     runtimeStatus = status || null;
-    const runtime = String(status?.runtime || settingsPayload?.config?.runtime?.active || "hermes");
+    const runtime = String(status?.runtime || settingsPayload?.config?.runtime?.active || "astrbot");
     const ok = !!status?.available || !!status?.ok;
     if (els.runtimeStatusPill && els.runtimeStatusDetail) {
       els.runtimeStatusPill.textContent = ok ? "已连接" : "未连接";
@@ -853,7 +892,7 @@
       els.astrbotApiKeyState.textContent = "保存后将清空已保存的 AstrBot API Key。";
       return;
     }
-    if (astrobotApiKeyDirty && els.astrbotApiKey?.value) {
+    if (astrbotApiKeyDirty && els.astrbotApiKey?.value) {
       els.astrbotApiKeyState.textContent = "保存后将替换 AstrBot API Key。";
       return;
     }
@@ -865,9 +904,70 @@
     els.astrbotApiKeyState.textContent = "尚未配置 API Key；可填写后保存，或设置环境变量。";
   }
 
+  function renderAstrBotDashboardPasswordState(config) {
+    if (!els.astrbotDashboardPasswordState) {
+      return;
+    }
+    const clearPending = !!els.astrbotDashboardPasswordClear?.checked;
+    if (clearPending) {
+      els.astrbotDashboardPasswordState.textContent = "保存后将清空已保存的 Dashboard 密码。";
+      return;
+    }
+    if (astrbotDashboardPasswordDirty && els.astrbotDashboardPassword?.value) {
+      els.astrbotDashboardPasswordState.textContent = "保存后将替换 Dashboard 密码。";
+      return;
+    }
+    if (config?.dashboard_password_set) {
+      const source = config.dashboard_password_source === "env" ? "环境变量" : "本地配置";
+      els.astrbotDashboardPasswordState.textContent = `已配置 Dashboard 密码（${source}${config.dashboard_password_preview ? `：${config.dashboard_password_preview}` : ""}）。留空保存会保留当前密码。`;
+      return;
+    }
+    els.astrbotDashboardPasswordState.textContent = "尚未配置 Dashboard 密码；可填写后保存，或设置 ASTRBOT_DASHBOARD_PASSWORD。";
+  }
+
+  function renderVisionAnalyzerApiKeyState(config) {
+    if (!els.visionAnalyzerApiKeyState) {
+      return;
+    }
+    if (els.visionAnalyzerApiKeyClear?.checked) {
+      els.visionAnalyzerApiKeyState.textContent = "保存后将清空已保存的 VLM API Key。";
+      return;
+    }
+    if (visionAnalyzerApiKeyDirty && els.visionAnalyzerApiKey?.value) {
+      els.visionAnalyzerApiKeyState.textContent = "保存后将替换 VLM API Key。";
+      return;
+    }
+    if (config?.api_key_set) {
+      els.visionAnalyzerApiKeyState.textContent = `已配置 VLM API Key（本地配置${config.api_key_preview ? `：${config.api_key_preview}` : ""}）。留空保存会保留当前密钥。`;
+      return;
+    }
+    els.visionAnalyzerApiKeyState.textContent = "尚未配置 VLM API Key；可填写后保存。";
+  }
+
+  function populateVisionAnalyzerModels() {
+    if (!els.visionAnalyzerModelSelect) {
+      return;
+    }
+    els.visionAnalyzerModelSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = visionAnalyzerModels.length ? "选择 VLM 模型" : "尚未拉取模型列表";
+    els.visionAnalyzerModelSelect.appendChild(placeholder);
+    for (const model of visionAnalyzerModels) {
+      const value = typeof model === "string" ? model : String(model?.id || model?.name || model?.model || "");
+      if (!value) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      els.visionAnalyzerModelSelect.appendChild(option);
+    }
+  }
+
   function renderSummary(config, health, hermes) {
     const skillStats = getSkillStats();
-    const runtime = String(config?.runtime?.active || "hermes");
+    const runtime = String(config?.runtime?.active || "astrbot");
     const runtimeOnline = !!hermes?.available || !!hermes?.ok;
     const runtimeLabel = runtime === "astrbot" ? "AstrBot" : "Hermes Agent";
     const cards = [
@@ -879,6 +979,7 @@
       ["当前会话", config?.chat?.session_id || "default"],
       ["内建文件工具", config?.chat?.tooling?.enabled ? "已启用" : "已停用"],
       ["Hermes MCP", config?.chat?.tooling?.third_party?.enabled ? "已启用" : "已停用"],
+      ["自动视觉", config?.vision?.enabled ? "已启用" : "已关闭"],
       ["白名单目录", `${effectiveFileAllowlist.length} 个`],
       [
         "Hermes 技能",
@@ -900,6 +1001,46 @@
       `;
       els.summaryCards.appendChild(card);
     });
+  }
+
+  function renderVisionStatus(status) {
+    visionStatus = status || null;
+    const enabled = !!status?.enabled;
+    const hasFrame = !!status?.has_frame;
+    const grounded = !!status?.grounded;
+    const evidenceCount = Number(status?.evidence_count || 0);
+    const analyzer = status?.analyzer || {};
+    const analyzerText = analyzer.enabled
+      ? `分析器 ${analyzer.provider || "unknown"} / ${analyzer.last_status || "待运行"}`
+      : "分析器关闭";
+    const route = status?.last_route_decision || {};
+    const routeText = route.reason ? `路由 ${route.action || "skip"}:${route.reason}` : "路由待采样";
+    const captureText = status?.capture_backend
+      ? `捕获 ${status.capture_backend}${status.display_count ? ` / ${status.display_count} 屏` : ""}`
+      : "捕获后端待采样";
+    const active = status?.active_observation || {};
+    const activeTrace = active.last_trace || active;
+    const activeText = active?.enabled
+      ? `主动观察 ${activeTrace?.status || "待触发"}${activeTrace?.target_hint ? ` / ${activeTrace.target_hint}` : ""}`
+      : "主动观察关闭";
+    const activeUnknowns = Array.isArray(activeTrace?.unknowns) && activeTrace.unknowns.length
+      ? `；观察问题：${activeTrace.unknowns.slice(0, 2).join("；")}`
+      : "";
+    if (els.visionStatusPill) {
+      els.visionStatusPill.textContent = enabled ? (grounded ? "有证据" : hasFrame ? "待分析" : "已启用") : "默认关闭";
+      els.visionStatusPill.classList.toggle("warning", enabled && !grounded);
+    }
+    if (els.visionStatusDetail) {
+      if (!enabled) {
+        els.visionStatusDetail.textContent = "自动视觉默认关闭，不落盘；运行时只接收受控证据摘要。";
+      } else if (hasFrame) {
+        const age = Number(status?.age_sec || 0).toFixed(1);
+        const evidenceText = grounded ? `已有 ${evidenceCount} 条可验证视觉证据` : "尚无可验证视觉证据";
+        els.visionStatusDetail.textContent = `已有最近屏幕帧，约 ${age} 秒前捕获；${evidenceText}；${analyzerText}；${activeText}；${routeText}；${captureText}${activeUnknowns}；不会在设置页显示截图。`;
+      } else {
+        els.visionStatusDetail.textContent = `自动视觉已启用，等待下一次本地屏幕采集；${analyzerText}；${activeText}；${routeText}；${captureText}${activeUnknowns}。`;
+      }
+    }
   }
 
   function populateSelect(selectEl, items, placeholder) {
@@ -1102,12 +1243,12 @@
     els.modelPath.value = config.model_path || "";
     const runtime = config.runtime || {};
     const adapters = runtime.adapters || {};
-    const activeRuntime = String(runtime.active || "hermes");
+    const activeRuntime = String(runtime.active || "astrbot");
     if (els.runtimeActiveHermes) {
-      els.runtimeActiveHermes.checked = activeRuntime !== "astrbot";
+      els.runtimeActiveHermes.checked = activeRuntime === "hermes";
     }
     if (els.runtimeActiveAstrBot) {
-      els.runtimeActiveAstrBot.checked = activeRuntime === "astrbot";
+      els.runtimeActiveAstrBot.checked = activeRuntime !== "hermes";
     }
     const hermes = config.hermes || {};
     els.hermesEnabled.checked = !!hermes.enabled;
@@ -1126,11 +1267,16 @@
     els.astrbotHealthPath.value = astrobot.health_path || "/";
     els.astrbotStartupTimeoutSec.value = Number(astrobot.startup_timeout_sec || 20);
     els.astrbotUsername.value = astrobot.username || "ipet";
+    els.astrbotDashboardUsername.value = astrobot.dashboard_username || "ipet";
     els.astrbotApiKeyEnv.value = astrobot.api_key_env || "ASTRBOT_API_KEY";
     els.astrbotApiKey.value = "";
     els.astrbotApiKeyClear.checked = false;
-    astrobotApiKeyDirty = false;
+    els.astrbotDashboardPassword.value = "";
+    els.astrbotDashboardPasswordClear.checked = false;
+    astrbotApiKeyDirty = false;
+    astrbotDashboardPasswordDirty = false;
     renderAstrBotApiKeyState(astrobot);
+    renderAstrBotDashboardPasswordState(astrobot);
     const napcat = astrobot.napcat_qq || {};
     els.napcatqqEnabled.checked = !!napcat.enabled;
     els.napcatqqReverseWsUrl.value = napcat.reverse_ws_url || "ws://127.0.0.1:6199/ws";
@@ -1143,6 +1289,40 @@
     els.chatAsrEnabled.checked = config.chat?.asr?.enabled !== false;
     els.chatAsrPushToTalkKey.value = config.chat?.asr?.push_to_talk_key || "Alt";
     els.chatAsrInterimResults.checked = config.chat?.asr?.interim_results !== false;
+    const vision = config.vision || {};
+    els.visionEnabled.checked = !!vision.enabled;
+    els.visionCaptureIntervalMs.value = Number(vision.capture_interval_ms || 5000);
+    els.visionMaxWidth.value = Number(vision.max_width || 1280);
+    els.visionJpegQuality.value = Number(vision.jpeg_quality || 75);
+    els.visionContextTtlSec.value = Number(vision.context_ttl_sec || 30);
+    const visionRouting = vision.routing || {};
+    els.visionRoutingVisualChangeThreshold.value = Number(visionRouting.visual_change_threshold || 0);
+    els.visionRoutingVlmCooldownSec.value = Number(visionRouting.vlm_cooldown_sec ?? 10);
+    els.visionRoutingStableAfterChangeMs.value = Number(visionRouting.stable_after_change_ms ?? 700);
+    els.visionInjectPolicy.value = vision.inject_policy || "when_requested";
+    els.visionForceGrounding.checked = !!vision.force_grounding || vision.grounding_mode === "always";
+    const visionActive = vision.active_observation || {};
+    els.visionActiveObservationEnabled.checked = visionActive.enabled !== false;
+    els.visionActiveObservationInteraction.value = visionActive.allowed_interaction || "light";
+    els.visionActiveObservationSettleMs.value = Number(visionActive.settle_ms || 500);
+    els.visionActiveObservationTimeoutSec.value = Number(visionActive.timeout_sec || 15);
+    const passiveCapture = vision.passive_capture || {};
+    els.visionPassiveCaptureUseForForced.checked = !!passiveCapture.use_for_forced;
+    const visionAnalyzer = vision.analyzer || {};
+    els.visionAnalyzerEnabled.checked = !!visionAnalyzer.enabled;
+    els.visionAnalyzerProvider.value = visionAnalyzer.provider || "none";
+    els.visionAnalyzerBaseUrl.value = visionAnalyzer.base_url || "";
+    els.visionAnalyzerModel.value = visionAnalyzer.model || "";
+    els.visionAnalyzerApiKey.value = "";
+    els.visionAnalyzerApiKeyClear.checked = false;
+    visionAnalyzerApiKeyDirty = false;
+    renderVisionAnalyzerApiKeyState(visionAnalyzer);
+    els.visionAnalyzerImageDetail.value = visionAnalyzer.image_detail || "low";
+    els.visionAnalyzerMaxTextChars.value = Number(visionAnalyzer.max_text_chars || 600);
+    els.visionAnalyzerMaxObservations.value = Number(visionAnalyzer.max_observations || 4);
+    els.visionAnalyzerFallbackToRuntime.checked = visionAnalyzer.fallback_to_runtime !== false;
+    visionAnalyzerModels = [];
+    populateVisionAnalyzerModels();
     els.chatTtsProvider.value = config.chat.tts_provider || "edge_tts";
     els.chatRatePct.value = Number(config.chat.rate_pct || 0);
     els.chatTtsProviderUrl.value = config.chat.tts_provider_url || "";
@@ -1186,7 +1366,7 @@
     const next = clone(settingsPayload.config);
     next.runtime = {
       ...(next.runtime || {}),
-      active: els.runtimeActiveAstrBot?.checked ? "astrbot" : "hermes",
+      active: els.runtimeActiveHermes?.checked ? "hermes" : "astrbot",
       adapters: {
         ...((next.runtime && next.runtime.adapters) || {}),
       },
@@ -1208,6 +1388,12 @@
       : astrobotApiKey
         ? "replace"
         : "keep";
+    const astrobotDashboardPassword = String(els.astrbotDashboardPassword.value || "").trim();
+    const astrobotDashboardPasswordAction = els.astrbotDashboardPasswordClear.checked
+      ? "clear"
+      : astrobotDashboardPassword
+        ? "replace"
+        : "keep";
     next.runtime.adapters.astrbot = {
       ...((next.runtime.adapters && next.runtime.adapters.astrbot) || {}),
       enabled: !!els.astrbotEnabled.checked,
@@ -1218,6 +1404,9 @@
       health_path: String(els.astrbotHealthPath.value || "").trim() || "/",
       startup_timeout_sec: Number(els.astrbotStartupTimeoutSec.value || 20),
       username: String(els.astrbotUsername.value || "").trim() || "ipet",
+      dashboard_username: String(els.astrbotDashboardUsername.value || "").trim() || "ipet",
+      dashboard_password_action: astrobotDashboardPasswordAction,
+      dashboard_password: astrobotDashboardPasswordAction === "replace" ? astrobotDashboardPassword : "",
       api_key_env: String(els.astrbotApiKeyEnv.value || "").trim() || "ASTRBOT_API_KEY",
       api_key_action: astrobotApiKeyAction,
       api_key: astrobotApiKeyAction === "replace" ? astrobotApiKey : "",
@@ -1241,6 +1430,55 @@
       provider: "funasr",
       push_to_talk_key: els.chatAsrPushToTalkKey.value || "Alt",
       interim_results: !!els.chatAsrInterimResults.checked,
+    };
+    const visionAnalyzerApiKey = String(els.visionAnalyzerApiKey.value || "").trim();
+    const visionAnalyzerApiKeyAction = els.visionAnalyzerApiKeyClear.checked
+      ? "clear"
+      : visionAnalyzerApiKey
+        ? "replace"
+        : "keep";
+    next.vision = {
+      ...(next.vision || {}),
+      enabled: !!els.visionEnabled.checked,
+      capture_interval_ms: Number(els.visionCaptureIntervalMs.value || 5000),
+      max_width: Number(els.visionMaxWidth.value || 1280),
+      jpeg_quality: Number(els.visionJpegQuality.value || 75),
+      context_ttl_sec: Number(els.visionContextTtlSec.value || 30),
+      inject_policy: els.visionInjectPolicy.value || "when_requested",
+      force_grounding: !!els.visionForceGrounding.checked,
+      grounding_mode: els.visionForceGrounding.checked ? "always" : "auto",
+      routing: {
+        ...((next.vision || {}).routing || {}),
+        enabled: true,
+        visual_change_threshold: Number(els.visionRoutingVisualChangeThreshold.value || 0),
+        vlm_cooldown_sec: Number(els.visionRoutingVlmCooldownSec.value || 10),
+        stable_after_change_ms: Number(els.visionRoutingStableAfterChangeMs.value || 700),
+      },
+      active_observation: {
+        ...((next.vision || {}).active_observation || {}),
+        enabled: !!els.visionActiveObservationEnabled.checked,
+        allowed_interaction: els.visionActiveObservationInteraction.value || "light",
+        settle_ms: Number(els.visionActiveObservationSettleMs.value || 500),
+        timeout_sec: Number(els.visionActiveObservationTimeoutSec.value || 15),
+      },
+      passive_capture: {
+        ...((next.vision || {}).passive_capture || {}),
+        use_for_forced: !!els.visionPassiveCaptureUseForForced.checked,
+      },
+      analyzer: {
+        ...((next.vision || {}).analyzer || {}),
+        enabled: !!els.visionAnalyzerEnabled.checked,
+        provider: els.visionAnalyzerEnabled.checked ? String(els.visionAnalyzerProvider.value || "").trim() : "none",
+        base_url: String(els.visionAnalyzerBaseUrl.value || "").trim(),
+        model: String(els.visionAnalyzerModel.value || "").trim(),
+        api_key_action: visionAnalyzerApiKeyAction,
+        api_key: visionAnalyzerApiKeyAction === "replace" ? visionAnalyzerApiKey : "",
+        image_detail: els.visionAnalyzerImageDetail.value || "low",
+        max_text_chars: Number(els.visionAnalyzerMaxTextChars.value || 600),
+        max_observations: Number(els.visionAnalyzerMaxObservations.value || 4),
+        fallback_to_runtime: !!els.visionAnalyzerFallbackToRuntime.checked,
+      },
+      persist_frames: false,
     };
     next.chat.tts_provider = els.chatTtsProvider.value;
     next.chat.rate_pct = Number(els.chatRatePct.value || 0);
@@ -1358,10 +1596,22 @@
       const status = {
         ok: false,
         available: false,
-        runtime: settingsPayload?.config?.runtime?.active || "hermes",
+        runtime: settingsPayload?.config?.runtime?.active || "astrbot",
         detail: error?.message || "运行时状态读取失败。",
       };
       renderRuntimeStatus(status);
+      return status;
+    }
+  }
+
+  async function loadVisionStatus() {
+    try {
+      const status = await fetchJson("/api/vision/status");
+      renderVisionStatus(status);
+      return status;
+    } catch (error) {
+      const status = { enabled: false, has_frame: false, last_error: error?.message || "自动视觉状态读取失败。" };
+      renderVisionStatus(status);
       return status;
     }
   }
@@ -1370,6 +1620,27 @@
     const data = await fetchJson("/api/settings/models-local");
     localModels = Array.isArray(data.models) ? data.models : [];
     populateLocalModels();
+  }
+
+  async function loadVisionAnalyzerModels() {
+    const baseUrl = String(els.visionAnalyzerBaseUrl.value || "").trim();
+    if (!baseUrl) {
+      throw new Error("请先填写 VLM Base URL。");
+    }
+    setStatus("正在拉取 VLM 模型列表...");
+    const data = await fetchJson("/api/vision/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: String(els.visionAnalyzerProvider.value || "").trim() || "openai_compatible_vlm",
+        base_url: baseUrl,
+        api_key: String(els.visionAnalyzerApiKey.value || "").trim(),
+      }),
+    });
+    visionAnalyzerModels = Array.isArray(data.models) ? data.models : [];
+    populateVisionAnalyzerModels();
+    setStatus(`已拉取 ${visionAnalyzerModels.length} 个 VLM 模型。`);
+    showToast("VLM 模型列表已更新。");
   }
 
   async function loadMcpServers() {
@@ -1384,6 +1655,7 @@
     populateTtsPresets(settingsPayload.tts_presets);
     populateMcpPresets(settingsPayload.mcp_server_presets);
     populateForm(settingsPayload.config);
+    await loadVisionStatus();
     renderSummary(settingsPayload.config, await loadHealth(), await loadRuntimeStatus());
     setStatus("配置已加载。");
   }
@@ -1393,6 +1665,7 @@
     await loadSkills();
     await loadLocalModels();
     await loadMcpServers();
+    await loadVisionStatus();
     renderSummary(settingsPayload.config, await loadHealth(), await loadRuntimeStatus());
   }
 
@@ -1422,6 +1695,7 @@
     populateMcpPresets(settingsPayload.mcp_server_presets);
     populateForm(settingsPayload.config);
     await loadSkills();
+    await loadVisionStatus();
     renderSummary(settingsPayload.config, await loadHealth(), await loadRuntimeStatus());
     await loadLocalModels();
     await loadMcpServers();
@@ -1511,6 +1785,15 @@
     els.chatTtsProvider.value = "custom_http";
     els.chatTtsProviderUrl.value = JSON.stringify(preset.config, null, 2);
     showToast("已应用语音合成预设。");
+  }
+
+  function applyVisionAnalyzerModel() {
+    const model = String(els.visionAnalyzerModelSelect?.value || "").trim();
+    if (!model) {
+      return;
+    }
+    els.visionAnalyzerModel.value = model;
+    showToast("已填入 VLM 模型名。");
   }
 
   function applyMcpPreset() {
@@ -1681,8 +1964,42 @@
     els.chatSessionId.addEventListener("input", renderHermesSessionPresets);
     els.runtimeActiveHermes?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
     els.runtimeActiveAstrBot?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionEnabled?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionInjectPolicy?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionForceGrounding?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionActiveObservationEnabled?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionActiveObservationInteraction?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionActiveObservationSettleMs?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionActiveObservationTimeoutSec?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionPassiveCaptureUseForForced?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionRoutingVisualChangeThreshold?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionRoutingVlmCooldownSec?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionRoutingStableAfterChangeMs?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerEnabled?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerProvider?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerBaseUrl?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerModel?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerApiKey?.addEventListener("input", () => {
+      visionAnalyzerApiKeyDirty = true;
+      if (els.visionAnalyzerApiKey.value && els.visionAnalyzerApiKeyClear) {
+        els.visionAnalyzerApiKeyClear.checked = false;
+      }
+      renderVisionAnalyzerApiKeyState(settingsPayload?.config?.vision?.analyzer || {});
+      renderSummary(readForm(), runtimeStatus, runtimeStatus);
+    });
+    els.visionAnalyzerApiKeyClear?.addEventListener("change", () => {
+      if (els.visionAnalyzerApiKeyClear.checked && els.visionAnalyzerApiKey) {
+        els.visionAnalyzerApiKey.value = "";
+      }
+      renderVisionAnalyzerApiKeyState(settingsPayload?.config?.vision?.analyzer || {});
+      renderSummary(readForm(), runtimeStatus, runtimeStatus);
+    });
+    els.visionAnalyzerImageDetail?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerMaxTextChars?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerMaxObservations?.addEventListener("input", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
+    els.visionAnalyzerFallbackToRuntime?.addEventListener("change", () => renderSummary(readForm(), runtimeStatus, runtimeStatus));
     els.astrbotApiKey?.addEventListener("input", () => {
-      astrobotApiKeyDirty = true;
+      astrbotApiKeyDirty = true;
       if (els.astrbotApiKey.value && els.astrbotApiKeyClear) {
         els.astrbotApiKeyClear.checked = false;
       }
@@ -1693,6 +2010,19 @@
         els.astrbotApiKey.value = "";
       }
       renderAstrBotApiKeyState(settingsPayload?.config?.runtime?.adapters?.astrbot || {});
+    });
+    els.astrbotDashboardPassword?.addEventListener("input", () => {
+      astrbotDashboardPasswordDirty = true;
+      if (els.astrbotDashboardPassword.value && els.astrbotDashboardPasswordClear) {
+        els.astrbotDashboardPasswordClear.checked = false;
+      }
+      renderAstrBotDashboardPasswordState(settingsPayload?.config?.runtime?.adapters?.astrbot || {});
+    });
+    els.astrbotDashboardPasswordClear?.addEventListener("change", () => {
+      if (els.astrbotDashboardPasswordClear.checked && els.astrbotDashboardPassword) {
+        els.astrbotDashboardPassword.value = "";
+      }
+      renderAstrBotDashboardPasswordState(settingsPayload?.config?.runtime?.adapters?.astrbot || {});
     });
     els.modelPath.addEventListener("input", renderLocalModelMeta);
     els.localModelSelect.addEventListener("change", () => {
@@ -1751,6 +2081,8 @@
       wrapAction(() => addFileAllowlistPath(els.fileAllowlistInput.value));
     });
     els.applyTtsPresetBtn.addEventListener("click", applyTtsPreset);
+    els.fetchVisionAnalyzerModelsBtn?.addEventListener("click", () => wrapAction(loadVisionAnalyzerModels));
+    els.applyVisionAnalyzerModelBtn?.addEventListener("click", applyVisionAnalyzerModel);
     els.mcpApplyPresetBtn.addEventListener("click", applyMcpPreset);
     els.mcpCreateBtn.addEventListener("click", () => wrapAction(createMcpFromConfig));
     els.mcpReloadBtn.addEventListener("click", () => wrapAction(reloadMcp));

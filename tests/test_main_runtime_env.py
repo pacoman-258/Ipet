@@ -9,6 +9,65 @@ from unittest import mock
 import main
 
 
+class _FakeTimer:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.interval = 0
+        self.timeout = mock.Mock()
+        self.timeout.connect = mock.Mock()
+
+    def start(self, interval: int) -> None:
+        self.started = True
+        self.stopped = False
+        self.interval = interval
+
+    def stop(self) -> None:
+        self.stopped = True
+        self.started = False
+
+
+class _FakeWindow:
+    def __init__(self) -> None:
+        self.visible = True
+        self.calls: list[str] = []
+
+    def isVisible(self) -> bool:
+        return self.visible
+
+    def hide(self) -> None:
+        self.calls.append("hide")
+        self.visible = False
+
+    def show(self) -> None:
+        self.calls.append("show")
+        self.visible = True
+
+    def raise_(self) -> None:
+        self.calls.append("raise")
+
+    def activateWindow(self) -> None:
+        self.calls.append("activate")
+
+
+class _RuntimeCommandHost(_FakeWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = {
+            "vision": {
+                "enabled": True,
+                "active_observation": {"enabled": True, "settle_ms": 1, "timeout_sec": 12},
+            }
+        }
+        self.responses: list[tuple[dict, str, dict | None]] = []
+
+    def _write_runtime_command_response(self, command, status, result=None) -> None:
+        self.responses.append((command, status, result))
+
+    def _write_runtime_host_heartbeat(self) -> None:
+        pass
+
+
 class MainRuntimeEnvTests(unittest.TestCase):
     def test_augment_process_path_includes_project_and_user_bins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +178,665 @@ class MainRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(hermes["base_url"], "http://127.0.0.1:9100")
         self.assertEqual(hermes["health_path"], "/healthz")
         self.assertEqual(hermes["startup_timeout_sec"], 7.0)
+
+    def test_load_config_normalizes_vision_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir(parents=True, exist_ok=True)
+            config_path = root / "pet_config.json"
+            config_path.write_text(
+                """
+                {
+                  "vision": {
+                    "enabled": true,
+                    "capture_interval_ms": 10,
+                    "max_width": 9999,
+                    "jpeg_quality": 10,
+                    "context_ttl_sec": 999,
+                    "inject_policy": "bad",
+                    "persist_frames": true
+                  }
+                }
+                """,
+                encoding="utf-8",
+            )
+            with mock.patch.object(main, "ROOT_DIR", root), mock.patch.object(main, "CONFIG_PATH", config_path):
+                config = main.load_config()
+        self.assertTrue(config["vision"]["enabled"])
+        self.assertEqual(config["vision"]["capture_interval_ms"], 1000)
+        self.assertEqual(config["vision"]["max_width"], 2560)
+        self.assertEqual(config["vision"]["jpeg_quality"], 35)
+        self.assertEqual(config["vision"]["context_ttl_sec"], 300)
+        self.assertEqual(config["vision"]["inject_policy"], "when_requested")
+        self.assertFalse(config["vision"]["persist_frames"])
+
+    def test_screen_vision_controller_disabled_does_not_start_timer(self) -> None:
+        timer = _FakeTimer()
+        controller = main.ScreenVisionController(
+            timer_factory=lambda parent=None: timer,
+            screen_provider=lambda: None,
+            frame_encoder=lambda screen, config: ("image/jpeg", "data:image/jpeg;base64,abc"),
+            observation_provider=lambda config: {},
+            task_runner=lambda task: task(),
+            post_frame=lambda url, payload, timeout: None,
+        )
+        controller.apply_config({"vision": {"enabled": False}, "chat": {"backend_url": "http://127.0.0.1:8008"}})
+        self.assertFalse(timer.started)
+
+    def test_screen_vision_controller_posts_frame_when_enabled(self) -> None:
+        timer = _FakeTimer()
+        posts = []
+        screen = object()
+        controller = main.ScreenVisionController(
+            timer_factory=lambda parent=None: timer,
+            screen_provider=lambda: screen,
+            frame_encoder=lambda active_screen, config: ("image/jpeg", "data:image/jpeg;base64,abc"),
+            observation_provider=lambda config: {
+                "change_summary": "macOS 前台应用切换为：QQ",
+                "important_objects": ["QQ"],
+                "visible_text": ["Apple", "QQ", "编辑", "窗口", "帮助"],
+                "desktop_context": {"foreground_app": "QQ"},
+            },
+            task_runner=lambda task: task(),
+            post_frame=lambda url, payload, timeout: posts.append((url, payload, timeout)),
+        )
+        controller.apply_config(
+            {
+                "vision": {"enabled": True, "capture_interval_ms": 1234},
+                "chat": {"backend_url": "http://127.0.0.1:8008"},
+            }
+        )
+        self.assertTrue(timer.started)
+        self.assertEqual(timer.interval, 1234)
+
+        controller.capture_once()
+        self.assertEqual(posts[0][0], "http://127.0.0.1:8008/api/vision/frame")
+        self.assertEqual(posts[0][1]["mime_type"], "image/jpeg")
+        self.assertEqual(posts[0][1]["data_url"], "data:image/jpeg;base64,abc")
+        self.assertEqual(posts[0][1]["change_summary"], "macOS 前台应用切换为：QQ")
+        self.assertEqual(posts[0][1]["desktop_context"]["foreground_app"], "QQ")
+        self.assertNotIn("summary", posts[0][1])
+        self.assertNotIn("observations", posts[0][1])
+
+        controller.stop()
+        self.assertTrue(timer.stopped)
+
+    def test_screen_vision_controller_posts_on_background_runner_and_skips_overlap(self) -> None:
+        timer = _FakeTimer()
+        tasks = []
+        posts = []
+        screen = object()
+        controller = main.ScreenVisionController(
+            timer_factory=lambda parent=None: timer,
+            screen_provider=lambda: screen,
+            frame_encoder=lambda active_screen, config: ("image/jpeg", "data:image/jpeg;base64,abc"),
+            observation_provider=lambda config: {"change_summary": "后台采集", "desktop_context": {"foreground_app": "QQ"}},
+            task_runner=lambda task: tasks.append(task),
+            post_frame=lambda url, payload, timeout: posts.append((url, payload, timeout)),
+        )
+        controller.apply_config({"vision": {"enabled": True}, "chat": {"backend_url": "http://127.0.0.1:8008"}})
+
+        controller.capture_once()
+        controller.capture_once()
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(posts, [])
+
+        tasks[0]()
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][1]["change_summary"], "后台采集")
+        self.assertNotIn("observations", posts[0][1])
+
+    def test_screen_vision_controller_can_encode_frame_on_background_runner(self) -> None:
+        timer = _FakeTimer()
+        tasks = []
+        posts = []
+        encoded = []
+        screen = object()
+
+        def frame_encoder(active_screen, config):
+            encoded.append(active_screen)
+            return "image/jpeg", "data:image/jpeg;base64,abc"
+
+        controller = main.ScreenVisionController(
+            timer_factory=lambda parent=None: timer,
+            screen_provider=lambda: screen,
+            frame_encoder=frame_encoder,
+            observation_provider=lambda config: {},
+            task_runner=lambda task: tasks.append(task),
+            post_frame=lambda url, payload, timeout: posts.append((url, payload, timeout)),
+            background_capture=True,
+        )
+        controller.apply_config({"vision": {"enabled": True}, "chat": {"backend_url": "http://127.0.0.1:8008"}})
+
+        controller.capture_once()
+
+        self.assertEqual(encoded, [])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(posts, [])
+
+        tasks[0]()
+
+        self.assertEqual(encoded, [screen])
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][1]["data_url"], "data:image/jpeg;base64,abc")
+
+    def test_screen_vision_controller_extends_timeout_for_enabled_analyzer(self) -> None:
+        timer = _FakeTimer()
+        posts = []
+        controller = main.ScreenVisionController(
+            timer_factory=lambda parent=None: timer,
+            screen_provider=lambda: object(),
+            frame_encoder=lambda active_screen, config: ("image/jpeg", "data:image/jpeg;base64,abc"),
+            observation_provider=lambda config: {},
+            task_runner=lambda task: task(),
+            post_frame=lambda url, payload, timeout: posts.append((url, payload, timeout)),
+        )
+        controller.apply_config(
+            {
+                "vision": {
+                    "enabled": True,
+                    "analyzer": {"enabled": True, "provider": "macos_vision_ocr", "timeout_sec": 12.5},
+                },
+                "chat": {"backend_url": "http://127.0.0.1:8008"},
+            }
+        )
+
+        controller.capture_once()
+
+        self.assertEqual(posts[0][2], 13.5)
+
+    def test_capture_screen_frame_payload_prefers_macos_screencapture_metadata(self) -> None:
+        qt_capture = mock.Mock()
+
+        payload = main.capture_screen_frame_payload(
+            object(),
+            {"max_width": 1280, "jpeg_quality": 75},
+            platform_name="darwin",
+            macos_capture=lambda config: {
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,macos",
+                "capture_backend": "macos_screencapture",
+                "capture_scope": "visible_spaces_all_displays",
+                "display_count": 2,
+            },
+            qt_capture=qt_capture,
+        )
+
+        self.assertEqual(payload["capture_backend"], "macos_screencapture")
+        self.assertEqual(payload["capture_scope"], "visible_spaces_all_displays")
+        self.assertEqual(payload["display_count"], 2)
+        qt_capture.assert_not_called()
+
+    def test_capture_screen_frame_payload_falls_back_to_qt_capture(self) -> None:
+        qt_capture = mock.Mock(
+            return_value={
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,qt",
+                "capture_backend": "qt_fallback",
+                "capture_scope": "visible_spaces_all_displays",
+                "display_count": 1,
+            }
+        )
+
+        payload = main.capture_screen_frame_payload(
+            object(),
+            {"max_width": 1280, "jpeg_quality": 75},
+            platform_name="darwin",
+            macos_capture=lambda config: (_ for _ in ()).throw(RuntimeError("screencapture failed")),
+            qt_capture=qt_capture,
+        )
+
+        self.assertEqual(payload["capture_backend"], "qt_fallback")
+        self.assertEqual(payload["capture_scope"], "visible_spaces_all_displays")
+        self.assertEqual(payload["display_count"], 1)
+        qt_capture.assert_called_once()
+
+    def test_capture_screen_frame_payload_can_disable_qt_fallback(self) -> None:
+        qt_capture = mock.Mock()
+
+        with self.assertRaises(RuntimeError):
+            main.capture_screen_frame_payload(
+                object(),
+                {"max_width": 1280, "jpeg_quality": 75},
+                platform_name="darwin",
+                macos_capture=lambda config: (_ for _ in ()).throw(RuntimeError("screencapture failed")),
+                qt_capture=qt_capture,
+                allow_qt_fallback=False,
+            )
+
+        qt_capture.assert_not_called()
+
+    def test_active_vision_focus_interaction_blocks_generic_ui_actions(self) -> None:
+        scripts = []
+
+        def runner(argv, **kwargs):
+            scripts.append(" ".join(str(part) for part in argv))
+            completed = mock.Mock()
+            completed.returncode = 0
+            completed.stdout = "accessibility_raise=success\nwindow_focus_click=success\n"
+            completed.stderr = ""
+            return completed
+
+        trace = main.run_active_vision_light_interaction(
+            mode="focus_target",
+            target_id="target-safari",
+            desktop_targets=[
+                {
+                    "target_id": "target-safari",
+                    "app": "Safari",
+                    "title": "Video",
+                    "bounds": {"x": 10, "y": 20, "width": 900, "height": 600},
+                    "focus_point": {"x": 120, "y": 32},
+                }
+            ],
+            actions=["focus_target", "type_text", "delete_file", "small_scroll"],
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        combined = "\n".join(scripts)
+        self.assertIn("System Events", combined)
+        self.assertIn("click at {120, 32}", combined)
+        self.assertNotIn("keystroke", combined)
+        self.assertNotIn("click button", combined)
+        self.assertNotIn("delete_file", combined)
+        self.assertIn("focus_target", trace["actions"])
+        self.assertEqual(trace["click_policy"], "window_focus_only")
+        self.assertEqual(trace["focused_target"]["target_id"], "target-safari")
+        self.assertEqual(
+            [entry["action"] for entry in trace["action_trace"]],
+            ["accessibility_raise", "window_focus_click"],
+        )
+        self.assertEqual(trace["action_trace"][1]["click_policy"], "window_focus_only")
+        self.assertEqual(trace["action_trace"][1]["click_point"], {"x": 120, "y": 32})
+        self.assertEqual(trace["click_point"], {"x": 120, "y": 32})
+        self.assertIn("type_text", trace["blocked_actions"])
+        self.assertIn("delete_file", trace["blocked_actions"])
+        self.assertIn("small_scroll", trace["blocked_actions"])
+
+    def test_active_vision_focus_interaction_reports_unknown_step_statuses(self) -> None:
+        def runner(argv, **kwargs):
+            completed = mock.Mock()
+            completed.returncode = 0
+            completed.stdout = "accessibility_raise=unknown:permission denied\nwindow_focus_click=unknown:permission denied\n"
+            completed.stderr = ""
+            return completed
+
+        trace = main.run_active_vision_light_interaction(
+            mode="focus_target",
+            target_id="target-safari",
+            desktop_targets=[
+                {
+                    "target_id": "target-safari",
+                    "app": "Safari",
+                    "title": "Video",
+                    "bounds": {"x": 10, "y": 20, "width": 900, "height": 600},
+                    "focus_point": {"x": 120, "y": 32},
+                }
+            ],
+            actions=["focus_target"],
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(trace["status"], "error")
+        self.assertNotIn("focus_target", trace["actions"])
+        self.assertEqual(trace["click_point"], {})
+        self.assertEqual(trace["action_trace"][0]["status"], "unknown")
+        self.assertEqual(trace["action_trace"][1]["status"], "unknown")
+        self.assertTrue(any("accessibility_raise failed" in item for item in trace["unknowns"]))
+        self.assertTrue(any("window_focus_click failed" in item for item in trace["unknowns"]))
+
+    def test_active_vision_focus_interaction_blocks_non_focus_click_policy(self) -> None:
+        runner = mock.Mock()
+
+        trace = main.run_active_vision_light_interaction(
+            mode="focus_target",
+            target_id="target-safari",
+            click_policy="content_click",
+            desktop_targets=[
+                {
+                    "target_id": "target-safari",
+                    "app": "Safari",
+                    "title": "Video",
+                    "bounds": {"x": 10, "y": 20, "width": 900, "height": 600},
+                    "focus_point": {"x": 120, "y": 32},
+                }
+            ],
+            actions=["focus_target"],
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        runner.assert_not_called()
+        self.assertIn("click_policy:content_click", trace["blocked_actions"])
+        self.assertIn("focus_target", trace["blocked_actions"])
+        self.assertEqual(trace["action_trace"], [])
+
+    def test_macos_desktop_target_script_uses_non_conflicting_rows_variable(self) -> None:
+        calls = []
+        timeouts = []
+
+        def runner(argv, **kwargs):
+            calls.append(list(argv))
+            timeouts.append(kwargs.get("timeout"))
+            return main.subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+        targets, errors = main.discover_macos_active_vision_desktop_targets(
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(targets, [])
+        self.assertEqual(errors, [])
+        script = "\n".join(calls[0][2::2])
+        self.assertEqual(timeouts, [3.0])
+        self.assertIn("set windowRows to {}", script)
+        self.assertIn("set end of windowRows to rowText", script)
+        self.assertNotIn("set rows to {}", script)
+
+    def test_running_app_candidates_use_system_events_when_appkit_unavailable(self) -> None:
+        calls = []
+        timeouts = []
+
+        def runner(argv, **kwargs):
+            calls.append(list(argv))
+            timeouts.append(kwargs.get("timeout"))
+            self.assertEqual(argv[0], "osascript")
+            self.assertIn("application processes whose background only is false", "\n".join(argv[2::2]))
+            return main.subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout=(
+                    "Finder\tcom.apple.finder\t401\ttrue\n"
+                    "logd\t\t2\tfalse\n"
+                    "systemstats\t\t3\tfalse\n"
+                    "Codex\tcom.openai.codex\t777\tfalse\n"
+                    ".hidden\t\t8\tfalse\n"
+                ),
+                stderr="",
+            )
+
+        with mock.patch.dict("sys.modules", {"AppKit": None}):
+            candidates, errors = main.enumerate_active_vision_running_app_candidates(
+                platform_name="darwin",
+                runner=runner,
+                include_errors=True,
+            )
+
+        self.assertTrue(any("AppKit" in item for item in errors))
+        self.assertEqual(timeouts, [2.5])
+        self.assertEqual([item["app"] for item in candidates], ["Finder", "Codex"])
+        self.assertEqual({item["source"] for item in candidates}, {"running_app"})
+        self.assertTrue(all(item["focusable"] for item in candidates))
+        self.assertFalse(any(item["source"] == "running_process" for item in candidates))
+
+    def test_running_app_candidates_extract_gui_apps_from_ps_fallback_when_system_events_fails(self) -> None:
+        calls = []
+
+        def runner(argv, **kwargs):
+            calls.append(list(argv))
+            if argv[0] == "osascript":
+                return main.subprocess.CompletedProcess(args=argv, returncode=1, stdout="", stderr="not allowed")
+            if argv[:3] == ["/bin/ps", "-axo", "comm="]:
+                return main.subprocess.CompletedProcess(
+                    args=argv,
+                    returncode=0,
+                    stdout=(
+                        "/usr/sbin/logd\n"
+                        "/System/Library/PrivateFrameworks/com.apple.MediaKit.framework/Versions/A/mediaagent\n"
+                        "/Applications/StudyBrowser.app/Contents/MacOS/StudyBrowser Helper\n"
+                        "/Applications/MediaBox.app/Contents/MacOS/MediaBox\n"
+                        "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder\n"
+                        "/Applications/StudyBrowser.app/Contents/Frameworks/GPU Helper\n"
+                    ),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {argv}")
+
+        with mock.patch.dict("sys.modules", {"AppKit": None}):
+            candidates, errors = main.enumerate_active_vision_running_app_candidates(
+                platform_name="darwin",
+                runner=runner,
+                include_errors=True,
+            )
+
+        self.assertTrue(any("System Events running app fallback failed" in item for item in errors))
+        self.assertEqual([item["source"] for item in candidates[:2]], ["running_app", "running_app"])
+        self.assertEqual([item["app"] for item in candidates[:2]], ["StudyBrowser", "MediaBox"])
+        self.assertTrue(all(item["focusable"] for item in candidates[:2]))
+        self.assertTrue(candidates[0]["target_id"].startswith("running_app:"))
+        self.assertFalse(any(item["app"] == "logd" for item in candidates))
+        self.assertFalse(any(item["app"] == "com" for item in candidates))
+        self.assertEqual(calls[0][0], "osascript")
+        self.assertEqual(calls[1][:3], ["/bin/ps", "-axo", "comm="])
+
+    def test_running_app_focus_uses_safe_runner_fallback_without_appkit(self) -> None:
+        calls = []
+
+        def runner(argv, **kwargs):
+            calls.append(list(argv))
+            return main.subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+        with mock.patch.dict("sys.modules", {"AppKit": None}):
+            trace = main.run_active_vision_light_interaction(
+                mode="focus_target",
+                target_id="running:codex",
+                target_candidates=[
+                    {
+                        "target_id": "running:codex",
+                        "source": "running_app",
+                        "app": "Codex",
+                        "title": "Codex",
+                        "focusable": True,
+                    }
+                ],
+                actions=["focus_target"],
+                platform_name="darwin",
+                runner=runner,
+            )
+
+        self.assertEqual(calls, [["/usr/bin/open", "-a", "Codex"]])
+        self.assertEqual(trace["focus_result"], {"status": "success", "method": "activate_running_app", "reason": ""})
+        self.assertEqual(trace["action_trace"][0]["action"], "activate_running_app")
+        self.assertEqual(trace["action_trace"][0]["status"], "success")
+        self.assertEqual(trace["actions"], ["focus_target"])
+
+    def test_desktop_context_app_level_focus_uses_safe_activation_fallback(self) -> None:
+        calls = []
+
+        def runner(argv, **kwargs):
+            calls.append(list(argv))
+            return main.subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+        with mock.patch.dict("sys.modules", {"AppKit": None}):
+            trace = main.run_active_vision_light_interaction(
+                mode="focus_target",
+                target_id="desktop-context:fluxdesk",
+                target_candidates=[
+                    {
+                        "target_id": "desktop-context:fluxdesk",
+                        "source": "desktop_context",
+                        "app": "FluxDesk",
+                        "title": "Weekly Problem List",
+                        "focusable": True,
+                    }
+                ],
+                actions=["focus_target"],
+                platform_name="darwin",
+                runner=runner,
+            )
+
+        self.assertEqual(calls, [["/usr/bin/open", "-a", "FluxDesk"]])
+        self.assertEqual(trace["focus_result"], {"status": "success", "method": "activate_running_app", "reason": ""})
+        self.assertEqual(trace["action_trace"][0]["action"], "activate_running_app")
+        self.assertEqual(trace["action_trace"][0]["status"], "success")
+        self.assertEqual(trace["actions"], ["focus_target"])
+
+    def test_active_vision_desktop_survey_hides_pet_without_interaction_and_returns_targets(self) -> None:
+        window = _FakeWindow()
+        events = []
+
+        def frame_encoder(screen, config, **kwargs):
+            events.append("capture")
+            return {
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,active",
+                "capture_backend": "unit-test",
+            }
+
+        payload = main.capture_active_vision_frame_payload(
+            window,
+            {"mode": "desktop_survey", "settle_ms": 1},
+            {"enabled": True, "active_observation": {"enabled": True, "settle_ms": 1}},
+            screen_provider=lambda: object(),
+            frame_encoder=frame_encoder,
+            observation_provider=lambda config, platform_name=None: {"desktop_context": {"foreground_app": "Finder"}},
+            desktop_targets_provider=lambda **kwargs: [
+                {"target_id": "target-safari", "app": "Safari", "title": "Video"}
+            ],
+            interaction_runner=lambda **kwargs: (_ for _ in ()).throw(AssertionError("survey must not interact")),
+            sleeper=lambda seconds: events.append(f"sleep:{seconds}"),
+        )
+
+        self.assertEqual(window.calls[0], "hide")
+        self.assertEqual(events[-1], "capture")
+        self.assertEqual(window.calls[-2:], ["show", "raise"])
+        self.assertTrue(window.visible)
+        self.assertEqual(payload["active_observation"]["mode"], "desktop_survey")
+        self.assertEqual(payload["active_observation"]["status"], "success")
+        self.assertEqual(payload["active_observation"]["desktop_targets"][0]["target_id"], "target-safari")
+        self.assertEqual(payload["active_observation"]["action_trace"], [])
+        self.assertNotIn("data_url", payload["active_observation"])
+
+    def test_active_vision_survey_records_discovery_error_and_fallback_candidates(self) -> None:
+        window = _FakeWindow()
+
+        def frame_encoder(screen, config, **kwargs):
+            return {
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,active",
+                "capture_backend": "unit-test",
+            }
+
+        payload = main.capture_active_vision_frame_payload(
+            window,
+            {"mode": "desktop_survey", "settle_ms": 1},
+            {"enabled": True, "active_observation": {"enabled": True, "settle_ms": 1}},
+            screen_provider=lambda: object(),
+            frame_encoder=frame_encoder,
+            observation_provider=lambda config, platform_name=None: {"desktop_context": {"foreground_app": "Finder"}},
+            desktop_targets_provider=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("System Events failed: -10827")),
+            running_apps_provider=lambda **kwargs: [
+                {"target_id": "running:safari", "source": "running_app", "app": "Safari", "focusable": True}
+            ],
+            interaction_runner=lambda **kwargs: (_ for _ in ()).throw(AssertionError("survey must not interact")),
+            sleeper=lambda seconds: None,
+        )
+
+        active = payload["active_observation"]
+        self.assertEqual(active["desktop_targets"], [])
+        self.assertIn("System Events failed: -10827", active["discovery_errors"][0])
+        self.assertEqual([item["source"] for item in active["target_candidates"]], ["running_app", "screenshot_region"])
+        self.assertEqual(active["target_candidates"][0]["target_id"], "running:safari")
+
+    def test_active_vision_uses_high_quality_capture_config(self) -> None:
+        window = _FakeWindow()
+        seen_configs = []
+
+        def frame_encoder(screen, config, **kwargs):
+            seen_configs.append(dict(config))
+            return {
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,active",
+                "capture_backend": "unit-test",
+            }
+
+        main.capture_active_vision_frame_payload(
+            window,
+            {"mode": "desktop_survey", "settle_ms": 1},
+            {
+                "enabled": True,
+                "max_width": 320,
+                "jpeg_quality": 35,
+                "active_observation": {"enabled": True, "settle_ms": 1},
+            },
+            screen_provider=lambda: object(),
+            frame_encoder=frame_encoder,
+            observation_provider=lambda config, platform_name=None: {},
+            desktop_targets_provider=lambda **kwargs: [],
+            running_apps_provider=lambda **kwargs: [],
+            sleeper=lambda seconds: None,
+        )
+
+        self.assertGreaterEqual(seen_configs[0]["max_width"], 1920)
+        self.assertGreaterEqual(seen_configs[0]["jpeg_quality"], 88)
+
+    def test_runtime_command_active_vision_capture_returns_frame_response(self) -> None:
+        host = _RuntimeCommandHost()
+        command = {
+            "nonce": "active-test",
+            "type": "active_vision_capture",
+            "payload": {"mode": "desktop_survey"},
+        }
+        frame = {"mime_type": "image/jpeg", "data_url": "data:image/jpeg;base64,active"}
+
+        with mock.patch.object(main, "capture_active_vision_frame_payload", return_value=frame) as capture_mock:
+            main.DesktopPet.process_runtime_command(host, command)
+
+        capture_mock.assert_called_once()
+        self.assertEqual(host.responses[0][1], "success")
+        self.assertEqual(host.responses[0][2]["frame"], frame)
+
+    def test_qt_capture_payload_uses_all_display_composer(self) -> None:
+        screens = [object(), object()]
+        composer = mock.Mock(return_value=("canvas", {"display_count": 2, "display_layout": [{"x": 0}, {"x": 100}]}))
+        encoder = mock.Mock(return_value=("image/jpeg", "data:image/jpeg;base64,qt"))
+
+        payload = main.capture_qt_screen_frame_payload(
+            object(),
+            {"max_width": 1280, "jpeg_quality": 75},
+            screens_provider=lambda: screens,
+            pixmap_composer=composer,
+            pixmap_encoder=encoder,
+        )
+
+        self.assertEqual(payload["capture_backend"], "qt_fallback")
+        self.assertEqual(payload["capture_scope"], "visible_spaces_all_displays")
+        self.assertEqual(payload["display_count"], 2)
+        self.assertEqual(payload["display_layout"], [{"x": 0}, {"x": 100}])
+        composer.assert_called_once_with(screens)
+        encoder.assert_called_once_with("canvas", {"max_width": 1280, "jpeg_quality": 75})
+
+    def test_collect_screen_observations_reads_macos_menu_bar_as_metadata_only(self) -> None:
+        result = main.subprocess.CompletedProcess(
+            args=["osascript"],
+            returncode=0,
+            stdout="QQ\nApple, QQ, 编辑, 窗口, 帮助\n",
+            stderr="",
+        )
+
+        payload = main.collect_screen_observations(
+            {"enabled": True, "include_ui_metadata": True},
+            platform_name="darwin",
+            runner=lambda *args, **kwargs: result,
+        )
+
+        self.assertEqual(payload["desktop_context"]["foreground_app"], "QQ")
+        self.assertEqual(payload["desktop_context"]["frontmost_process"], "QQ")
+        self.assertEqual(payload["desktop_context"]["menu_bar_items"], ["Apple", "QQ", "编辑", "窗口", "帮助"])
+        self.assertNotIn("summary", payload)
+        self.assertNotIn("observations", payload)
+
+    def test_collect_screen_observations_skips_when_disabled_or_non_macos(self) -> None:
+        runner = mock.Mock()
+
+        self.assertEqual(
+            main.collect_screen_observations({"include_ui_metadata": False}, platform_name="darwin", runner=runner),
+            {},
+        )
+        self.assertEqual(main.collect_screen_observations({"include_ui_metadata": True}, platform_name="win32", runner=runner), {})
+        runner.assert_not_called()
 
     def test_hermes_missing_command_message_names_real_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -145,7 +145,14 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         self.assertFalse(payload["asr"]["interim_results"])
 
     def test_models_endpoint_is_hermes_compatibility_noop(self) -> None:
-        with mock.patch("backend.ollama_client.list_models", new_callable=mock.AsyncMock) as list_models_mock:
+        with (
+            mock.patch("backend.ollama_client.list_models", new_callable=mock.AsyncMock) as list_models_mock,
+            mock.patch.object(
+                backend_app,
+                "_runtime_config_from_raw",
+                return_value={"active": "hermes"},
+            ),
+        ):
             resp = self.client.post(
                 "/api/models",
                 json={
@@ -387,6 +394,19 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         self.assertIn('id="pet-background-pick-btn"', html_resp.text)
         self.assertIn('petBackgroundPickBtn', js_resp.text)
         self.assertIn('petBackgroundPickerEndpoint', js_resp.text)
+
+    def test_settings_assets_include_astrbot_dashboard_password_controls(self) -> None:
+        html_resp = self.client.get("/settings")
+        js_resp = self.client.get("/settings.js")
+
+        self.assertEqual(html_resp.status_code, 200)
+        self.assertEqual(js_resp.status_code, 200)
+        self.assertIn('id="astrbot-dashboard-username"', html_resp.text)
+        self.assertIn('id="astrbot-dashboard-password"', html_resp.text)
+        self.assertIn('id="astrbot-dashboard-password-clear"', html_resp.text)
+        self.assertIn('id="astrbot-dashboard-password-state"', html_resp.text)
+        self.assertIn('astrbotDashboardUsername: $("astrbot-dashboard-username")', js_resp.text)
+        self.assertIn('dashboard_password_action: astrobotDashboardPasswordAction', js_resp.text)
 
 
 if __name__ == "__main__":

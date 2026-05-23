@@ -20,7 +20,7 @@
     "startup_timeout_sec": 20
   },
   "runtime": {
-    "active": "hermes",
+    "active": "astrbot",
     "adapters": {
       "hermes": {
         "enabled": false,
@@ -66,6 +66,47 @@
         }
       }
     }
+  },
+  "vision": {
+    "enabled": false,
+    "capture_interval_ms": 5000,
+    "max_width": 1280,
+    "jpeg_quality": 75,
+    "context_ttl_sec": 30,
+    "inject_policy": "when_requested",
+    "force_grounding": false,
+    "grounding_mode": "auto",
+    "analyzer": {
+      "enabled": false,
+      "provider": "",
+      "timeout_sec": 15.0,
+      "max_text_chars": 600,
+      "max_image_bytes": 3000000,
+      "api_key": "",
+      "api_key_env": "",
+      "model": "",
+      "base_url": "",
+      "image_detail": "low",
+      "max_observations": 4,
+      "fallback_to_runtime": true
+    },
+    "routing": {
+      "enabled": true,
+      "visual_change_threshold": 0,
+      "vlm_cooldown_sec": 10.0,
+      "stable_after_change_ms": 700
+    },
+    "active_observation": {
+      "enabled": true,
+      "allowed_interaction": "light",
+      "timeout_sec": 15.0,
+      "settle_ms": 500
+    },
+    "passive_capture": {
+      "use_for_forced": false
+    },
+    "include_ui_metadata": true,
+    "persist_frames": false
   },
   "model_path": "",
   "window": {

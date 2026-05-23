@@ -15,8 +15,9 @@ This repository uses a fixed-role subagent model for day-to-day development.
 - `desktop-shell`: owns `main.py`
 - `pet-runtime-ui`: owns `index.html`
 - `settings-console`: owns `settings.html`, `settings.css`, `settings.js`
-- `backend-agent-runtime`: owns `backend/agent_graph.py`, `backend/agent_orchestrator.py`, and chat slices in `backend/app.py`
-- `backend-mcp-platform`: owns `backend/mcp_bridge.py`, `backend/mcp/*`, `backend/tool_runtime.py`, `backend/tooling/*`, and MCP-management slices in `backend/app.py`
+- `backend-agent-runtime`: owns `backend/runtime_config.py`, `backend/runtime_adapters.py`, `backend/runtime_service.py`, `backend/runtime_contracts.py`, Hermes integration paths, `backend/agent_graph.py`, `backend/agent_orchestrator.py`, and chat slices in `backend/app.py`
+- `backend-mcp-platform`: owns `backend/mcp_bridge.py`, `backend/mcp/*`, `backend/tool_runtime.py`, `backend/tooling/*`, and MCP-management slices in `backend/app.py`; under the default AstrBot runtime, plugins/MCP/knowledge bases/providers are managed in AstrBot WebUI, not reimplemented in Ipet
+- `backend-vision-runtime`: owns `backend/vision.py`, `backend/vision_analyzer.py`, `backend/vision_state.py`, `backend/active_vision.py`, vision slices in `backend/app.py`, and vision regression tests
 - `qa-integration`: review-first; owns regression planning, contract checks, and targeted test additions when explicitly delegated
 
 ## Dispatch defaults
@@ -24,8 +25,9 @@ This repository uses a fixed-role subagent model for day-to-day development.
 - Desktop shell or bridge behavior: `desktop-shell`
 - Pet runtime UI, chat rendering, TTS playback UX: `pet-runtime-ui`
 - Settings page work: `settings-console`
-- LangGraph, chat SSE, provider behavior: `backend-agent-runtime`
-- MCP manifests, stdio transport, third-party server lifecycle: `backend-mcp-platform`
+- Runtime config/adapters/contracts/service, LangGraph, chat SSE, provider behavior, Hermes approval path: `backend-agent-runtime`
+- MCP manifests, stdio transport, third-party server lifecycle, compatibility MCP surfaces: `backend-mcp-platform`
+- Automatic vision, screenshot evidence, OCR/VLM analyzer behavior: `backend-vision-runtime`
 - Cross-module validation or regression coverage: `qa-integration`
 
 ## Cross-boundary rules
@@ -39,6 +41,9 @@ This repository uses a fixed-role subagent model for day-to-day development.
 - Chat SSE event changes:
   - lead: `backend-agent-runtime`
   - required reviewers: `pet-runtime-ui`, `qa-integration`
+- Vision capture/evidence changes:
+  - lead: `backend-vision-runtime`
+  - required reviewers: `desktop-shell` when capture behavior in `main.py` changes, `qa-integration` when contracts or regression coverage change
 
 ## Prompt library
 
@@ -50,6 +55,7 @@ Stable role prompts live in `docs/subagents/`.
   - `docs/subagents/desktop-shell.md`
   - `docs/subagents/pet-runtime-ui.md`
   - `docs/subagents/settings-console.md`
+  - `docs/subagents/backend-vision-runtime.md`
   - `docs/subagents/backend-agent-runtime.md`
   - `docs/subagents/backend-mcp-platform.md`
   - `docs/subagents/qa-integration.md`

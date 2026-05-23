@@ -11,6 +11,7 @@ The project already has stable subsystem boundaries:
 - settings console
 - chat runtime backend
 - MCP platform backend
+- vision runtime backend
 - QA and integration
 
 Using fixed roles is more efficient than re-inventing task-specific agents on every request.
@@ -32,6 +33,7 @@ Using fixed roles is more efficient than re-inventing task-specific agents on ev
 - `settings-console`
 - `backend-agent-runtime`
 - `backend-mcp-platform`
+- `backend-vision-runtime`
 - `qa-integration`
 
 ## Lead assignment matrix
@@ -46,6 +48,8 @@ Using fixed roles is more efficient than re-inventing task-specific agents on ev
   - lead: `backend-agent-runtime`
 - MCP runtime, stdio transport, manifests, tool registration:
   - lead: `backend-mcp-platform`
+- Automatic vision, active observation, OCR/VLM analyzer, evidence context:
+  - lead: `backend-vision-runtime`
 - Cross-module validation and regression planning:
   - lead: `qa-integration`
 
@@ -59,6 +63,9 @@ Using fixed roles is more efficient than re-inventing task-specific agents on ev
 - Chat SSE contract changes:
   - lead: `backend-agent-runtime`
   - reviewers: `pet-runtime-ui`, `qa-integration`
+- Vision capture/evidence contract changes:
+  - lead: `backend-vision-runtime`
+  - reviewers: `desktop-shell` when `main.py` capture behavior changes, `qa-integration` for regression coverage
 
 ## Standard handoff format
 
@@ -84,6 +91,12 @@ Each subagent should return:
   - `tests/test_mcp_servers_listing.py`
   - `tests/test_stdio_client_protocol.py`
   - `tests/test_tool_runtime.py`
+- `backend-vision-runtime`
+  - `tests/test_active_vision.py`
+  - `tests/test_vision_analyzer.py`
+  - `tests/test_vision_api.py`
+  - `tests/test_vision_service.py`
+  - `tests/test_vision_state.py`
 - `settings-console`
   - `tests/test_settings_mcp_draft.py`
 - Global baseline

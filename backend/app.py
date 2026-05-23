@@ -5,8 +5,11 @@ from dataclasses import dataclass, field
 import json
 import logging
 import mimetypes
+import os
 import re
+import secrets
 import sys
+import threading
 
 import httpx
 import subprocess
@@ -16,11 +19,12 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .agent_graph import AgentGraphRuntime, ApprovalDecision, GraphDependencies
+from .active_vision import build_active_observe_metadata, decide_active_observation, normalize_active_observation_config
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
 from .hermes import (
     DEFAULT_HERMES_CONFIG,
@@ -29,7 +33,7 @@ from .hermes import (
     hermes_config_from_raw,
     normalize_hermes_config,
 )
-from .runtime_adapters import RuntimeUnavailable, create_runtime_adapter
+from .runtime_adapters import RUNTIME_MOCK, RuntimeUnavailable
 from .runtime_config import (
     DEFAULT_RUNTIME_CONFIG,
     RUNTIME_ASTRBOT,
@@ -38,7 +42,10 @@ from .runtime_config import (
     mirror_runtime_compat,
     normalize_runtime_config,
     redact_runtime_config,
+    secret_preview,
 )
+from .realtime_stream import DEFAULT_HEARTBEAT_AFTER_SEC, DEFAULT_HEARTBEAT_INTERVAL_SEC, realtime_stream_events
+from .runtime_service import resolve_runtime_adapter
 from .asr import (
     ASRError,
     ASRService,
@@ -75,7 +82,7 @@ from .models import (
     SkillImportLocalRequest,
     TTSRequest,
 )
-from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive
+from .ollama_client import OLLAMA_BASE_URL, chat_once as provider_chat_once, is_ollama_alive, list_models as provider_list_models
 from .runtime_prompts import (
     EXPR_PROTOCOL_PROMPT,
     REACT_SKILL_VISIBILITY_NOTE,
@@ -101,6 +108,16 @@ from .tts import (
     synthesize_to_audio,
     tts_available,
 )
+from .vision import (
+    DEFAULT_VISION_CONFIG,
+    VisionDisabledError,
+    VisionError,
+    VisionService,
+    build_grounded_context_prefix,
+    normalize_vision_config,
+    should_force_grounding,
+)
+from .vision_analyzer import VisionAnalyzer, merge_analysis_into_payload, merge_unknowns, normalize_analyzer_config
 
 
 app = FastAPI(title="Desktop Pet Backend", version="0.2.0")
@@ -136,6 +153,8 @@ DISPLAY_TEXT_DELIMITER = "**"
 DEFAULT_TOOL_TIMEOUT_SEC = 180
 LEGACY_TOOL_TIMEOUT_SEC = 10
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
+LOCAL_API_TOKEN_ENV = "IPET_LOCAL_API_TOKEN"
+LOCAL_API_TOKEN_HEADER = "X-Ipet-Local-Token"
 RUNTIME_PICK_TIMEOUT_SEC = 180.0
 RUNTIME_HOST_HEARTBEAT_MAX_AGE_SEC = 5.0
 AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
@@ -263,9 +282,15 @@ _SKILL_MANAGER: SkillManager | None = None
 _CHAT_TOPIC_STORE: TopicStore | None = None
 _ASR_SERVICE: ASRService | None = None
 _ASR_WARMUP_TASK: asyncio.Task[str] | None = None
+_VISION_SERVICE: VisionService | None = None
+_VISION_ANALYSIS_LOCK = threading.Lock()
 _TURN_TOOL_BRIDGE_CACHE: dict[str, Any] = {}
 
 LOGGER = logging.getLogger(__name__)
+_REALTIME_HEARTBEAT_AFTER_SEC = DEFAULT_HEARTBEAT_AFTER_SEC
+_REALTIME_HEARTBEAT_INTERVAL_SEC = DEFAULT_HEARTBEAT_INTERVAL_SEC
+ACTIVE_OBSERVE_MAX_ATTEMPTS = 3
+ACTIVE_OBSERVE_TOTAL_TIMEOUT_SEC = 20.0
 
 
 def _is_macos() -> bool:
@@ -401,6 +426,7 @@ def _default_settings_config() -> dict[str, Any]:
     return {
         "hermes": json.loads(json.dumps(DEFAULT_HERMES_CONFIG)),
         "runtime": json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG)),
+        "vision": json.loads(json.dumps(DEFAULT_VISION_CONFIG)),
         "model_path": _find_default_model(),
         "window": {
             "x": 120,
@@ -522,10 +548,14 @@ def _runtime_config_from_raw(raw_config: dict[str, Any] | None = None) -> dict[s
 
 
 def _get_runtime_client(raw_config: dict[str, Any] | None = None):
+    source = raw_config if isinstance(raw_config, dict) else _load_full_config()
+    raw_runtime = source.get("runtime") if isinstance(source.get("runtime"), dict) else {}
+    if str(raw_runtime.get("active") or "").strip().lower() == RUNTIME_MOCK:
+        return resolve_runtime_adapter(raw_runtime)
     runtime_cfg = _runtime_config_from_raw(raw_config)
     if runtime_cfg.get("active") == RUNTIME_HERMES:
         return _get_hermes_client(raw_config)
-    return create_runtime_adapter(runtime_cfg)
+    return resolve_runtime_adapter(runtime_cfg)
 
 
 def _resolve_router_request_config(req: ChatStreamRequest, settings_config: dict[str, Any]) -> dict[str, Any]:
@@ -1812,6 +1842,7 @@ def _build_tool_name_bridge(tool_names: set[str], *, missing_message: str, base_
 def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     merged = _deep_merge(_default_settings_config(), config if isinstance(config, dict) else {})
     _normalize_hermes_agent_config(merged)
+    merged["vision"] = normalize_vision_config(merged.get("vision", {}))
     merged["model_path"] = _normalize_model_path(merged.get("model_path", ""))
 
     chat = merged.get("chat", {})
@@ -1941,6 +1972,42 @@ def _normalize_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _apply_vision_analyzer_secret_actions(
+    merged: dict[str, Any],
+    raw_config: dict[str, Any],
+    previous: dict[str, Any],
+) -> None:
+    raw_vision = raw_config.get("vision") if isinstance(raw_config.get("vision"), dict) else {}
+    raw_analyzer = raw_vision.get("analyzer") if isinstance(raw_vision.get("analyzer"), dict) else None
+    if raw_analyzer is None:
+        return
+    vision = merged.setdefault("vision", {})
+    if not isinstance(vision, dict):
+        vision = {}
+        merged["vision"] = vision
+    analyzer = vision.setdefault("analyzer", {})
+    if not isinstance(analyzer, dict):
+        analyzer = {}
+        vision["analyzer"] = analyzer
+    previous_key = ""
+    previous_analyzer = (
+        (previous.get("vision") or {}).get("analyzer")
+        if isinstance(previous.get("vision"), dict)
+        else {}
+    )
+    if isinstance(previous_analyzer, dict):
+        previous_key = str(previous_analyzer.get("api_key") or "").strip()
+    action = str(raw_analyzer.get("api_key_action") or "").strip().lower()
+    raw_key = str(raw_analyzer.get("api_key") or "").strip()
+    if action == "clear":
+        analyzer["api_key"] = ""
+    elif action == "replace" or raw_key:
+        analyzer["api_key"] = raw_key
+    else:
+        analyzer["api_key"] = previous_key
+    analyzer.pop("api_key_action", None)
+
+
 def _load_settings_config() -> dict[str, Any]:
     return _derive_settings_config(_load_full_config())
 
@@ -1949,6 +2016,14 @@ def _public_settings_config(config: dict[str, Any]) -> dict[str, Any]:
     public = json.loads(json.dumps(config if isinstance(config, dict) else {}))
     runtime = public.get("runtime") if isinstance(public.get("runtime"), dict) else {}
     public["runtime"] = redact_runtime_config(runtime)
+    public["vision"] = normalize_vision_config(public.get("vision", {}))
+    analyzer = public["vision"].get("analyzer") if isinstance(public["vision"].get("analyzer"), dict) else None
+    if analyzer is not None:
+        raw_key = str(analyzer.get("api_key") or "").strip()
+        analyzer["api_key"] = ""
+        analyzer["api_key_action"] = "keep"
+        analyzer["api_key_set"] = bool(raw_key)
+        analyzer["api_key_preview"] = secret_preview(raw_key)
     return public
 
 
@@ -2214,6 +2289,17 @@ def _get_asr_service(force_reload: bool = False) -> ASRService:
     if force_reload or _ASR_SERVICE is None:
         _ASR_SERVICE = ASRService()
     return _ASR_SERVICE
+
+
+def _get_vision_service(settings: dict[str, Any] | None = None) -> VisionService:
+    global _VISION_SERVICE
+    config_source = settings if isinstance(settings, dict) else _load_settings_config()
+    vision_cfg = normalize_vision_config(config_source.get("vision", {}) if isinstance(config_source, dict) else {})
+    if _VISION_SERVICE is None:
+        _VISION_SERVICE = VisionService(vision_cfg)
+    else:
+        _VISION_SERVICE.configure(vision_cfg)
+    return _VISION_SERVICE
 
 
 def _ensure_internal_asr_warmup_started() -> tuple[bool, str]:
@@ -3414,6 +3500,721 @@ def _approval_request_payload(req: ChatApprovalRequest) -> dict[str, Any]:
     return req.dict()
 
 
+def _active_observation_failure_context(service: VisionService, unknowns: list[str], trace: dict[str, Any]) -> dict[str, Any]:
+    if hasattr(service, "record_active_observation_failure"):
+        service.record_active_observation_failure(unknowns, trace)
+    context = service.active_context(include_image=False)
+    if not context.get("unknowns"):
+        context = {**context, "unknowns": list(unknowns)}
+    if not context.get("active_observation"):
+        context = {**context, "active_observation": dict(trace)}
+    return context
+
+
+def _active_observation_seen_entry(metadata: dict[str, Any]) -> dict[str, str]:
+    return {
+        "mode": str(metadata.get("mode") or "")[:40],
+        "target_id": str(metadata.get("target_id") or "")[:120],
+        "target_hint": str(metadata.get("target_hint") or "")[:80],
+        "foreground_app": str(metadata.get("foreground_app") or "")[:120],
+        "window_title": str(metadata.get("window_title") or "")[:200],
+        "frame_hash": str(metadata.get("frame_hash") or "")[:120],
+    }
+
+
+def _active_observation_next_target(metadata: dict[str, Any]) -> str:
+    attempted = {
+        str(item or "").strip()
+        for item in (metadata.get("attempted_targets") if isinstance(metadata.get("attempted_targets"), list) else [])
+    }
+    for target in metadata.get("available_next_targets") or []:
+        candidate = str(target or "").strip()
+        if candidate and candidate not in attempted:
+            return candidate
+    return ""
+
+
+def _active_observation_should_retry(metadata: dict[str, Any], *, grounded: bool, deadline: float) -> bool:
+    if metadata.get("stop"):
+        return False
+    if time.monotonic() >= deadline:
+        return False
+    relevance_hint = str(metadata.get("relevance_hint") or "").strip()
+    if grounded and relevance_hint in {"", "likely_relevant"}:
+        return False
+    return bool(_active_observation_next_target(metadata))
+
+
+def _active_observation_timeout_config(vision_cfg: dict[str, Any], remaining_sec: float) -> dict[str, Any]:
+    active_cfg = normalize_active_observation_config(vision_cfg.get("active_observation", {}))
+    next_cfg = dict(vision_cfg)
+    next_active = dict(active_cfg)
+    next_active["timeout_sec"] = max(1.0, min(float(active_cfg["timeout_sec"]), remaining_sec, ACTIVE_OBSERVE_TOTAL_TIMEOUT_SEC))
+    next_cfg["active_observation"] = next_active
+    return next_cfg
+
+
+def _active_attempted_targets_line(context: dict[str, Any]) -> str:
+    active = context.get("active_observation") if isinstance(context.get("active_observation"), dict) else {}
+    attempted = active.get("attempted_targets") if isinstance(active.get("attempted_targets"), list) else []
+    targets: list[str] = []
+    for item in attempted:
+        text = str(item or "").strip()
+        if text and text not in targets:
+            targets.append(text)
+    target_hint = str(active.get("target_hint") or "").strip()
+    if target_hint and target_hint not in targets:
+        targets.append(target_hint)
+    if not targets:
+        return ""
+    return "已尝试目标：" + ", ".join(targets[:8])
+
+
+def _active_payload_has_runtime_vision_frames(payload: dict[str, Any]) -> bool:
+    if _active_runtime_vision_frame(payload.get("vision_frame")):
+        return True
+    return bool(_active_runtime_vision_frames(payload.get("vision_frames")))
+
+
+def _active_visual_evidence_prefix(context: dict[str, Any], *, forced: bool, attached_active_frames: bool = False) -> str:
+    prefix = build_grounded_context_prefix(context, forced=forced, attached_active_frames=attached_active_frames)
+    attempted = _active_attempted_targets_line(context)
+    lines = ["主动视觉证据："]
+    if prefix:
+        lines.append(prefix)
+    elif forced:
+        lines.extend(
+            [
+                "[强制视觉证据]",
+                "约束：当前没有新鲜、可验证的主动截图观察结果。",
+                "回答要求：必须回答“我无法从当前截图确认”，除非用户问题不需要屏幕内容。",
+            ]
+        )
+    if attempted:
+        lines.append(attempted)
+    return "\n".join(line for line in lines if str(line or "").strip())
+
+
+def _active_runtime_vision_frame(value: Any) -> dict[str, Any]:
+    frame = value if isinstance(value, dict) else {}
+    mime_type = str(frame.get("mime_type") or "").strip().lower()
+    data_url = str(frame.get("data_url") or "").strip()
+    if mime_type not in {"image/png", "image/jpeg"} or not data_url.startswith("data:image/"):
+        return {}
+    inline = {
+        "mime_type": mime_type,
+        "data_url": data_url,
+        "frame_id": str(frame.get("frame_id") or "")[:80],
+        "frame_hash": str(frame.get("frame_hash") or "")[:120],
+    }
+    purpose = str(frame.get("purpose") or "").strip()[:40]
+    if purpose:
+        inline["purpose"] = purpose
+    if frame.get("max_image_bytes") is not None:
+        inline["max_image_bytes"] = int(frame.get("max_image_bytes") or 0)
+    return inline
+
+
+def _active_runtime_vision_frames(value: Any, fallback: Any = None) -> list[dict[str, Any]]:
+    raw_frames = value if isinstance(value, list) else []
+    frames: list[dict[str, Any]] = []
+    seen_data_urls: set[str] = set()
+    for item in raw_frames[:3]:
+        inline = _active_runtime_vision_frame(item)
+        data_url = str(inline.get("data_url") or "")
+        if inline and data_url not in seen_data_urls:
+            seen_data_urls.add(data_url)
+            frames.append(inline)
+    if not frames:
+        inline = _active_runtime_vision_frame(fallback)
+        if inline:
+            frames.append(inline)
+    return frames
+
+
+def _with_active_runtime_vision_frame(payload: dict[str, Any], active_result: dict[str, Any] | None) -> dict[str, Any]:
+    result = active_result if isinstance(active_result, dict) else {}
+    inline_frame = _active_runtime_vision_frame(result.get("inline_frame"))
+    inline_frames = _active_runtime_vision_frames(result.get("inline_frames"), inline_frame)
+    if not inline_frame and inline_frames:
+        inline_frame = inline_frames[0]
+    if not inline_frame:
+        return payload
+    next_payload = dict(payload)
+    next_payload["vision_frame"] = inline_frame
+    if inline_frames:
+        next_payload["vision_frames"] = inline_frames
+    return next_payload
+
+
+def _passive_background_prefix(service: VisionService) -> str:
+    prefix = service.passive_timeline_prefix()
+    if not prefix:
+        return ""
+    return "\n".join(
+        [
+            "被动后台视觉：",
+            prefix,
+            "说明：这是后台观察到的近期屏幕变化；它不是本轮主动截图证据。",
+        ]
+    )
+
+
+def _with_ipet_visual_evidence_payload(
+    payload: dict[str, Any],
+    req: ChatStreamRequest,
+    settings_config: dict[str, Any],
+    *,
+    forced_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    service = _get_vision_service(settings_config)
+    vision_cfg = settings_config.get("vision", {}) if isinstance(settings_config, dict) else {}
+    forced = should_force_grounding(req.text, vision_cfg)
+    should_inject = service.should_inject(req.text)
+    passive_prefix = _passive_background_prefix(service)
+    if not forced and not should_inject:
+        return payload
+
+    sections: list[str] = []
+    if forced:
+        if forced_context is not None:
+            active_context = forced_context
+        else:
+            active_cfg = vision_cfg.get("active_observation") if isinstance(vision_cfg.get("active_observation"), dict) else {}
+            reason = "active observation disabled" if active_cfg.get("enabled") is False else "active observation unavailable"
+            active_context = {
+                "enabled": bool((vision_cfg or {}).get("enabled")),
+                "available": False,
+                "grounded": False,
+                "observations": [],
+                "unknowns": [reason],
+                "active_observation": {
+                    "enabled": bool(active_cfg.get("enabled", True)),
+                    "status": "skipped" if active_cfg.get("enabled") is False else "unavailable",
+                    "unknowns": [reason],
+                },
+            }
+        sections.append(
+            _active_visual_evidence_prefix(
+                active_context,
+                forced=True,
+                attached_active_frames=_active_payload_has_runtime_vision_frames(payload),
+            )
+        )
+    elif should_inject:
+        sections.append(build_grounded_context_prefix(service.context(include_image=False), forced=False))
+    if passive_prefix:
+        sections.append(passive_prefix)
+
+    prefix = "\n\n".join(section for section in sections if str(section or "").strip())
+    if not prefix:
+        return payload
+    next_payload = dict(payload)
+    next_payload["text"] = f"{prefix}\n\n用户消息：{payload.get('text', req.text)}"
+    return next_payload
+
+
+async def _send_active_vision_capture_command(
+    decision: dict[str, Any],
+    vision_cfg: dict[str, Any],
+    *,
+    text: str,
+    target_hint: str = "",
+    target_id: str = "",
+    mode: str = "",
+    attempt_reason: str = "",
+    exclude_seen: list[Any] | None = None,
+    desktop_targets: list[Any] | None = None,
+    target_candidates: list[Any] | None = None,
+) -> dict[str, Any]:
+    active_cfg = normalize_active_observation_config(vision_cfg.get("active_observation", {}))
+    request_id = str(uuid4())
+    response_path = RUNTIME_COMMAND_RESPONSE_PATH.with_name(f".pet_runtime_command.response.{request_id}.json")
+    try:
+        response_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    command = _write_runtime_command_with_response(
+        "active_vision_capture",
+        {
+            "request_id": request_id,
+            "text": str(text or "")[:500],
+            "mode": str(mode or decision.get("mode") or "desktop_survey")[:40],
+            "target_id": str(target_id or decision.get("target_id") or "")[:120],
+            "target_hint": str(target_hint or decision.get("target_hint") or "")[:80],
+            "attempt_reason": str(attempt_reason or "")[:240],
+            "exclude_seen": list(exclude_seen or [])[:10],
+            "desktop_targets": list(desktop_targets or decision.get("desktop_targets") or [])[:12],
+            "target_candidates": list(target_candidates or decision.get("target_candidates") or [])[:12],
+            "actions": list(decision.get("actions") or []),
+            "allowed_interaction": active_cfg["allowed_interaction"],
+            "click_policy": str(decision.get("click_policy") or "window_focus_only")[:80],
+            "settle_ms": int(active_cfg["settle_ms"]),
+            "timeout_sec": float(active_cfg["timeout_sec"]),
+        },
+        response_path=response_path,
+    )
+    try:
+        response = await asyncio.to_thread(
+            _wait_for_runtime_command_response,
+            nonce=str(command.get("nonce") or ""),
+            response_path=response_path,
+            timeout_sec=float(active_cfg["timeout_sec"]),
+        )
+    finally:
+        try:
+            response_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if not isinstance(response, dict):
+        return {
+            "ok": False,
+            "error": "active vision host command timed out",
+            "trace": {
+                "status": "error",
+                "mode": str(decision.get("mode") or mode or ""),
+                "target_id": str(decision.get("target_id") or target_id or ""),
+                "target_hint": str(decision.get("target_hint") or target_hint or ""),
+                "actions": list(decision.get("actions") or []),
+                "unknowns": ["active vision host command timed out"],
+            },
+        }
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    status = str(response.get("status") or "").strip().lower()
+    trace = result.get("trace") if isinstance(result.get("trace"), dict) else result.get("active_observation")
+    if not isinstance(trace, dict):
+        trace = {}
+    if status == "success" and isinstance(result.get("frame"), dict):
+        return {"ok": True, "frame": dict(result["frame"]), "trace": trace}
+    error = str(result.get("error") or response.get("error") or "active vision host command failed").strip()
+    return {
+        "ok": False,
+        "error": error,
+        "trace": {
+            **trace,
+            "status": "error",
+            "mode": str(trace.get("mode") or decision.get("mode") or mode or ""),
+            "target_id": str(trace.get("target_id") or decision.get("target_id") or target_id or ""),
+            "target_hint": str(trace.get("target_hint") or decision.get("target_hint") or target_hint or ""),
+            "actions": list(trace.get("actions") or decision.get("actions") or []),
+            "unknowns": list(trace.get("unknowns") or [error]),
+            "error": error,
+        },
+    }
+
+
+async def _perform_active_vision_observation(
+    text: str,
+    settings_config: dict[str, Any],
+    *,
+    force: bool = False,
+    target_hint: str = "",
+    attempt_reason: str = "",
+    exclude_seen: list[Any] | None = None,
+    defer_runtime_analysis: bool = False,
+) -> dict[str, Any]:
+    vision_cfg = normalize_vision_config(settings_config.get("vision", {}) if isinstance(settings_config, dict) else {})
+    service = _get_vision_service(settings_config)
+    active_cfg = normalize_active_observation_config(vision_cfg.get("active_observation", {}))
+    deadline = time.monotonic() + min(ACTIVE_OBSERVE_TOTAL_TIMEOUT_SEC, float(active_cfg["timeout_sec"]))
+    seen: list[Any] = list(exclude_seen or [])[:10]
+    current_mode = "desktop_survey"
+    current_target_id = ""
+    current_target_hint = "desktop_survey"
+    current_attempt_reason = str(attempt_reason or "")
+    desktop_targets: list[Any] = []
+    target_candidates: list[Any] = []
+    discovery_errors: list[str] = []
+    last_result: dict[str, Any] | None = None
+
+    for attempt_number in range(ACTIVE_OBSERVE_MAX_ATTEMPTS):
+        remaining_sec = max(0.0, deadline - time.monotonic())
+        if attempt_number > 0 and remaining_sec < 1.0:
+            break
+        attempt_vision_cfg = _active_observation_timeout_config(vision_cfg, remaining_sec or float(active_cfg["timeout_sec"]))
+        decision = decide_active_observation(
+            text,
+            attempt_vision_cfg,
+            target_hint=current_target_id if current_mode == "focus_target" else "",
+            force=force,
+        )
+        decision = {
+            **decision,
+            "mode": current_mode,
+            "target_id": current_target_id or ("desktop_survey" if current_mode == "desktop_survey" else ""),
+            "target_hint": current_target_hint,
+            "desktop_targets": list(desktop_targets)[:12],
+            "target_candidates": list(target_candidates)[:12],
+            "actions": ["focus_target"] if current_mode == "focus_target" and active_cfg["allowed_interaction"] != "none" else [],
+            "click_policy": "window_focus_only",
+        }
+        if not decision.get("needs_observation"):
+            return {"ok": False, "skipped": True, "decision": decision, "context": service.context(include_image=False)}
+
+        resolved_target_hint = str(decision.get("target_hint") or current_target_hint or "")
+        host_result = await _send_active_vision_capture_command(
+            decision,
+            attempt_vision_cfg,
+            text=text,
+            target_hint=resolved_target_hint,
+            target_id=str(decision.get("target_id") or current_target_id or ""),
+            mode=str(decision.get("mode") or current_mode),
+            attempt_reason=current_attempt_reason,
+            exclude_seen=seen,
+            desktop_targets=desktop_targets,
+            target_candidates=target_candidates,
+        )
+        trace = host_result.get("trace") if isinstance(host_result.get("trace"), dict) else {}
+        attempt_metadata_input = {
+            "text": text,
+            "mode": current_mode,
+            "target_id": str(decision.get("target_id") or current_target_id or ""),
+            "target_hint": resolved_target_hint,
+            "attempt_reason": current_attempt_reason,
+            "exclude_seen": list(seen)[:10],
+        }
+        if not host_result.get("ok") or not isinstance(host_result.get("frame"), dict):
+            unknowns = list(trace.get("unknowns") or [])
+            error = str(host_result.get("error") or trace.get("error") or "active vision capture failed").strip()
+            if error and error not in unknowns:
+                unknowns.append(error)
+            trace = {
+                **trace,
+                **build_active_observe_metadata(
+                    attempt_metadata_input,
+                    {},
+                    trace,
+                    passive_context=service.passive_context(),
+                ),
+            }
+            context = _active_observation_failure_context(service, unknowns, trace)
+            return {"ok": False, "decision": decision, "trace": trace, "context": context, "error": error}
+
+        frame_payload = dict(host_result["frame"])
+        trace_desktop_targets = trace.get("desktop_targets") if isinstance(trace.get("desktop_targets"), list) else []
+        frame_active = frame_payload.get("active_observation") if isinstance(frame_payload.get("active_observation"), dict) else {}
+        frame_desktop_targets = frame_active.get("desktop_targets") if isinstance(frame_active.get("desktop_targets"), list) else []
+        trace_target_candidates = trace.get("target_candidates") if isinstance(trace.get("target_candidates"), list) else []
+        frame_target_candidates = frame_active.get("target_candidates") if isinstance(frame_active.get("target_candidates"), list) else []
+        frame_discovery_errors = frame_active.get("discovery_errors") if isinstance(frame_active.get("discovery_errors"), list) else []
+        trace_discovery_errors = trace.get("discovery_errors") if isinstance(trace.get("discovery_errors"), list) else []
+        for item in list(frame_discovery_errors) + list(trace_discovery_errors):
+            text_item = str(item or "").strip()
+            if text_item and text_item not in discovery_errors:
+                discovery_errors.append(text_item)
+        if frame_desktop_targets:
+            desktop_targets = list(frame_desktop_targets)[:12]
+        elif trace_desktop_targets:
+            desktop_targets = list(trace_desktop_targets)[:12]
+        if frame_target_candidates:
+            target_candidates = list(frame_target_candidates)[:12]
+        elif trace_target_candidates:
+            target_candidates = list(trace_target_candidates)[:12]
+        active_metadata = build_active_observe_metadata(
+            attempt_metadata_input,
+            frame_payload,
+            {**trace, "discovery_errors": discovery_errors},
+            passive_context=service.passive_context(),
+        )
+        if defer_runtime_analysis and str(active_metadata.get("relevance_hint") or "") in {
+            "insufficient_evidence",
+            "insufficient_evidence:fallback_candidates",
+        }:
+            active_metadata = {
+                **active_metadata,
+                "relevance_hint": "likely_relevant:image_attached",
+                "available_next_targets": [],
+                "stop": True,
+            }
+        frame_payload["force_analyze"] = True
+        frame_payload["vision_force_analyze"] = True
+        frame_payload["active_observation"] = {
+            **trace,
+            **active_metadata,
+            "enabled": True,
+            "status": str(trace.get("status") or "success"),
+            "mode": str(active_metadata.get("mode") or current_mode),
+            "target_id": str(active_metadata.get("target_id") or decision.get("target_id") or current_target_id or ""),
+            "target_hint": str(active_metadata.get("target_hint") or trace.get("target_hint") or resolved_target_hint),
+            "actions": list(trace.get("actions") or decision.get("actions") or []),
+            "click_policy": str(trace.get("click_policy") or decision.get("click_policy") or "window_focus_only"),
+            "reason": str(trace.get("reason") or decision.get("reason") or ""),
+        }
+        analyzer_cfg = vision_cfg.get("analyzer", {}) if isinstance(vision_cfg.get("analyzer"), dict) else {}
+        route_decision = service.evaluate_route(
+            frame_payload,
+            analyzer_enabled=bool(analyzer_cfg.get("enabled")),
+            analysis_in_flight=False,
+            force_analyze=True,
+        )
+        frame_payload["route_decision"] = route_decision
+        try:
+            if (
+                not defer_runtime_analysis
+                and bool(analyzer_cfg.get("enabled"))
+                and route_decision.get("should_analyze")
+            ):
+                frame_payload = await _enrich_vision_payload(
+                    frame_payload,
+                    settings_config,
+                    vision_cfg,
+                    allow_runtime_fallback=False,
+                )
+                frame_payload["route_decision"] = route_decision
+                frame_payload.setdefault(
+                    "active_observation",
+                    {
+                        **trace,
+                        "enabled": True,
+                        "status": "success",
+                        "target_hint": resolved_target_hint,
+                        "actions": list(decision.get("actions") or []),
+                    },
+                )
+        except Exception as exc:
+            message = f"active vision analyzer failed: {exc}"
+            frame_payload["observations"] = []
+            frame_payload["unknowns"] = merge_unknowns(frame_payload.get("unknowns"), [message])
+            frame_payload["analysis"] = {
+                "enabled": bool(analyzer_cfg.get("enabled")),
+                "provider": str(analyzer_cfg.get("provider") or "none"),
+                "status": "error",
+                "last_error": message,
+                "observations_added": 0,
+                "unknowns_added": 1,
+            }
+        try:
+            frame_payload["lane"] = "active"
+            service.update_frame(frame_payload)
+            context = service.active_context(include_image=False)
+            result = {
+                "ok": bool(context.get("grounded")),
+                "decision": decision,
+                "trace": frame_payload.get("active_observation") or trace,
+                "status": service.status(),
+                "context": context,
+                "inline_frame": _active_runtime_vision_frame(frame_payload),
+                "inline_frames": _active_runtime_vision_frames(frame_payload.get("vision_frames"), frame_payload),
+            }
+            last_result = result
+            if not _active_observation_should_retry(
+                frame_payload.get("active_observation") if isinstance(frame_payload.get("active_observation"), dict) else active_metadata,
+                grounded=bool(context.get("grounded")),
+                deadline=deadline,
+            ):
+                return result
+            seen_entry = _active_observation_seen_entry(
+                frame_payload.get("active_observation") if isinstance(frame_payload.get("active_observation"), dict) else active_metadata
+            )
+            if any(seen_entry.values()):
+                seen.append(seen_entry)
+            next_target = _active_observation_next_target(
+                frame_payload.get("active_observation") if isinstance(frame_payload.get("active_observation"), dict) else active_metadata
+            )
+            if not next_target:
+                return result
+            current_mode = "focus_target"
+            current_target_id = next_target
+            current_target_hint = next_target
+            current_attempt_reason = (
+                "retry after "
+                + str(
+                    (
+                        frame_payload.get("active_observation")
+                        if isinstance(frame_payload.get("active_observation"), dict)
+                        else active_metadata
+                    ).get("relevance_hint")
+                    or "insufficient_evidence"
+                )
+            )[:240]
+        except (VisionDisabledError, VisionError) as exc:
+            trace = {**trace, "status": "error", "error": str(exc), "unknowns": [str(exc)]}
+            context = _active_observation_failure_context(service, [str(exc)], trace)
+            return {"ok": False, "decision": decision, "trace": trace, "context": context, "error": str(exc)}
+
+    if last_result is not None:
+        return last_result
+    decision = decide_active_observation(text, vision_cfg, target_hint=target_hint, force=force)
+    trace = {
+        "status": "error",
+        "target_hint": str(decision.get("target_hint") or target_hint or ""),
+        "unknowns": ["active observation retry budget exhausted"],
+    }
+    context = _active_observation_failure_context(service, trace["unknowns"], trace)
+    return {"ok": False, "decision": decision, "trace": trace, "context": context, "error": trace["unknowns"][0]}
+
+
+def _with_vision_context_prefix(
+    payload: dict[str, Any],
+    req: ChatStreamRequest,
+    settings_config: dict[str, Any],
+    *,
+    forced_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    service = _get_vision_service(settings_config)
+    vision_cfg = settings_config.get("vision", {}) if isinstance(settings_config, dict) else {}
+    forced = should_force_grounding(req.text, vision_cfg)
+    if not forced and not service.should_inject(req.text):
+        return payload
+    if forced and forced_context is not None:
+        context = forced_context
+    elif forced and not (vision_cfg.get("passive_capture") or {}).get("use_for_forced", False):
+        active_cfg = vision_cfg.get("active_observation") if isinstance(vision_cfg.get("active_observation"), dict) else {}
+        reason = "active observation disabled" if active_cfg.get("enabled") is False else "active observation unavailable"
+        context = {
+            "enabled": bool((vision_cfg or {}).get("enabled")),
+            "available": False,
+            "grounded": False,
+            "observations": [],
+            "unknowns": [reason],
+            "active_observation": {
+                "enabled": bool(active_cfg.get("enabled", True)),
+                "status": "skipped" if active_cfg.get("enabled") is False else "unavailable",
+                "unknowns": [reason],
+            },
+        }
+    else:
+        context = service.context(include_image=False)
+    prefix = build_grounded_context_prefix(context, forced=forced)
+    if not prefix:
+        return payload
+    next_payload = dict(payload)
+    next_payload["text"] = f"{prefix}\n\n用户消息：{payload.get('text', req.text)}"
+    return next_payload
+
+
+def _with_passive_vision_timeline_payload(
+    payload: dict[str, Any],
+    req: ChatStreamRequest,
+    settings_config: dict[str, Any],
+) -> dict[str, Any]:
+    service = _get_vision_service(settings_config)
+    prefix = service.passive_timeline_prefix()
+    if not prefix:
+        return payload
+    lines = [
+        prefix,
+        "说明：这是后台观察到的近期屏幕变化；没有主动截图工具结果时，不要声称刚刚亲自看过屏幕。",
+        "如果这些后台变化不足以回答视觉问题，应明确说明当前后台视觉无法确认。",
+    ]
+    next_payload = dict(payload)
+    next_payload["text"] = f"{chr(10).join(lines)}\n\n用户消息：{payload.get('text', req.text)}"
+    return next_payload
+
+
+def _should_use_runtime_vision_fallback(analyzer_config: dict[str, Any], result_payload: dict[str, Any], status: dict[str, Any]) -> tuple[bool, str]:
+    analyzer = normalize_analyzer_config(analyzer_config)
+    if not analyzer.get("enabled") or not analyzer.get("fallback_to_runtime", True):
+        return False, ""
+    provider = str(analyzer.get("provider") or "").strip()
+    observations = result_payload.get("observations") if isinstance(result_payload, dict) else None
+    if provider in {"", "none"}:
+        return True, "provider-empty"
+    if str(status.get("status") or "") == "error":
+        return True, str(status.get("last_error") or "provider-error")
+    if not observations:
+        return True, "no-observations"
+    return False, ""
+
+
+async def _runtime_vision_fallback(
+    payload: dict[str, Any],
+    settings_config: dict[str, Any],
+    analyzer_config: dict[str, Any],
+    reason: str = "",
+) -> dict[str, Any]:
+    runtime_client = _get_runtime_client(settings_config)
+    if hasattr(runtime_client, "analyze_vision_frame"):
+        result = await runtime_client.analyze_vision_frame(payload, analyzer_config)
+        return result.payload
+    message = f"active runtime vision fallback unavailable: {getattr(runtime_client, 'runtime_id', 'unknown')}"
+    if reason:
+        message += f"; reason={reason}"
+    return merge_analysis_into_payload(
+        payload,
+        {"enabled": True, "provider": "active_runtime_vlm", **(analyzer_config if isinstance(analyzer_config, dict) else {})},
+        {"observations": [], "unknowns": [message], "last_error": message},
+    ).payload
+
+
+async def _enrich_vision_payload(
+    payload: dict[str, Any],
+    settings_config: dict[str, Any],
+    vision_cfg: dict[str, Any],
+    *,
+    allow_runtime_fallback: bool = False,
+) -> dict[str, Any]:
+    analyzer_cfg = vision_cfg.get("analyzer", {}) if isinstance(vision_cfg.get("analyzer"), dict) else {}
+    result = await asyncio.to_thread(VisionAnalyzer(analyzer_cfg).enrich_payload, payload)
+    use_fallback, reason = _should_use_runtime_vision_fallback(analyzer_cfg, result.payload, result.status)
+    if allow_runtime_fallback and use_fallback:
+        return await _runtime_vision_fallback(result.payload, settings_config, analyzer_cfg, reason=reason)
+    return result.payload
+
+
+def _pending_vision_analysis_metadata(analyzer_config: dict[str, Any]) -> dict[str, Any]:
+    analyzer = normalize_analyzer_config(analyzer_config)
+    return {
+        "enabled": bool(analyzer.get("enabled")),
+        "provider": str(analyzer.get("provider") or "none"),
+        "status": "pending",
+        "last_error": "",
+        "observations_added": 0,
+        "unknowns_added": 0,
+    }
+
+
+def _vision_frame_still_current(service: VisionService, payload: dict[str, Any]) -> bool:
+    expected_hash = str(payload.get("frame_hash") or "").strip()
+    if not expected_hash:
+        return True
+    try:
+        current_hash = str(service.status().get("frame_hash") or "").strip()
+    except Exception:
+        current_hash = ""
+    return not current_hash or current_hash == expected_hash
+
+
+async def _complete_vision_analysis_task(
+    payload: dict[str, Any],
+    settings_config: dict[str, Any],
+    vision_cfg: dict[str, Any],
+    route_decision: dict[str, Any],
+) -> None:
+    try:
+        try:
+            enriched_payload = await _enrich_vision_payload(
+                dict(payload),
+                settings_config,
+                vision_cfg,
+                allow_runtime_fallback=False,
+            )
+            enriched_payload["route_decision"] = route_decision
+        except Exception as exc:
+            analyzer_cfg = vision_cfg.get("analyzer", {}) if isinstance(vision_cfg.get("analyzer"), dict) else {}
+            message = f"vision analyzer failed: {exc}"
+            enriched_payload = dict(payload)
+            enriched_payload["unknowns"] = merge_unknowns(enriched_payload.get("unknowns"), [message])
+            enriched_payload["analysis"] = {
+                "enabled": bool(analyzer_cfg.get("enabled")),
+                "provider": str(analyzer_cfg.get("provider") or "none"),
+                "status": "error",
+                "last_error": message,
+                "observations_added": 0,
+                "unknowns_added": 1,
+            }
+            enriched_payload["route_decision"] = route_decision
+
+        service = _get_vision_service(settings_config)
+        if _vision_frame_still_current(service, payload):
+            service.update_frame(enriched_payload)
+    except asyncio.CancelledError:
+        return
+    finally:
+        if _VISION_ANALYSIS_LOCK.locked():
+            _VISION_ANALYSIS_LOCK.release()
+
+
 async def _runtime_json_or_unavailable(
     method: str,
     path: str,
@@ -3464,10 +4265,37 @@ def _unavailable_inventory_payload(kind: str, detail: str) -> dict[str, Any]:
 async def _chat_stream_via_runtime(req: ChatStreamRequest) -> StreamingResponse:
     client = _get_runtime_client()
     payload = _chat_request_payload(req)
+    settings_config = _load_settings_config()
+    vision_cfg = normalize_vision_config(settings_config.get("vision", {}) if isinstance(settings_config, dict) else {})
+    forced = should_force_grounding(req.text, vision_cfg)
+    active_context: dict[str, Any] | None = None
+    active_result: dict[str, Any] | None = None
+    if (
+        forced
+        and vision_cfg.get("enabled")
+        and (vision_cfg.get("active_observation") or {}).get("enabled")
+    ):
+        active_result = await _perform_active_vision_observation(
+            req.text,
+            settings_config,
+            force=True,
+            defer_runtime_analysis=True,
+        )
+        context = active_result.get("context") if isinstance(active_result, dict) else None
+        if isinstance(context, dict):
+            active_context = context
+    payload = _with_active_runtime_vision_frame(payload, active_result)
+    payload = _with_ipet_visual_evidence_payload(payload, req, settings_config, forced_context=active_context)
 
     async def event_gen():
         try:
-            async for event, data in client.stream_sse("/api/chat/stream", payload):
+            runtime_events = client.stream_sse("/api/chat/stream", payload)
+            async for event, data in realtime_stream_events(
+                runtime_events,
+                request_text=req.text,
+                heartbeat_after_sec=_REALTIME_HEARTBEAT_AFTER_SEC,
+                heartbeat_interval_sec=_REALTIME_HEARTBEAT_INTERVAL_SEC,
+            ):
                 yield _sse(event, data)
         except (HermesUnavailable, RuntimeUnavailable) as exc:
             yield _sse("error", {"message": str(exc), "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})
@@ -3527,7 +4355,7 @@ async def _chat_approval_via_hermes(req: ChatApprovalRequest) -> StreamingRespon
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK
+    global _AGENT_GRAPH_RUNTIME, _MCP_BRIDGE, _SKILL_MANAGER, _CHAT_TOPIC_STORE, _ASR_SERVICE, _ASR_WARMUP_TASK, _VISION_SERVICE
     if _MCP_BRIDGE is not None:
         try:
             _MCP_BRIDGE.stop()
@@ -3539,7 +4367,221 @@ async def on_shutdown() -> None:
     _CHAT_TOPIC_STORE = None
     _ASR_SERVICE = None
     _ASR_WARMUP_TASK = None
+    _VISION_SERVICE = None
     _TURN_TOOL_BRIDGE_CACHE.clear()
+
+
+def _is_local_request(request: Request) -> bool:
+    host = ""
+    try:
+        host = str(request.client.host if request.client else "")
+    except Exception:
+        host = ""
+    return host in {"", "127.0.0.1", "::1", "localhost", "testclient"} or host.startswith("127.")
+
+
+def _require_local_api_token(request: Request) -> None:
+    expected = str(os.environ.get(LOCAL_API_TOKEN_ENV) or "").strip()
+    if not expected:
+        raise HTTPException(status_code=403, detail="local API token is not configured")
+    supplied = str(request.headers.get(LOCAL_API_TOKEN_HEADER) or "").strip()
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="invalid local API token")
+
+
+@app.get("/api/vision/status")
+async def vision_status() -> dict[str, Any]:
+    service = _get_vision_service(_load_settings_config())
+    return service.status()
+
+
+@app.post("/api/vision/frame")
+async def vision_frame(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="vision frame capture is limited to local requests")
+    _require_local_api_token(request)
+    settings_config = _load_settings_config()
+    service = _get_vision_service(settings_config)
+    vision_cfg = normalize_vision_config(settings_config.get("vision", {}) if isinstance(settings_config, dict) else {})
+    analysis_payload: dict[str, Any] | None = None
+    analysis_route_decision: dict[str, Any] | None = None
+    analysis_lock_acquired = False
+    if vision_cfg["enabled"]:
+        payload = dict(payload) if isinstance(payload, dict) else {}
+        analyzer_cfg = vision_cfg.get("analyzer", {}) if isinstance(vision_cfg.get("analyzer"), dict) else {}
+        route_decision = service.evaluate_route(
+            payload,
+            analyzer_enabled=bool(analyzer_cfg.get("enabled")),
+            analysis_in_flight=_VISION_ANALYSIS_LOCK.locked(),
+            force_analyze=bool(payload.get("force_analyze") or payload.get("vision_force_analyze")),
+        )
+        payload["route_decision"] = route_decision
+        if route_decision.get("should_analyze"):
+            analysis_lock_acquired = _VISION_ANALYSIS_LOCK.acquire(blocking=False)
+            if analysis_lock_acquired:
+                analysis_payload = dict(payload)
+                analysis_route_decision = dict(route_decision)
+                payload["analysis"] = _pending_vision_analysis_metadata(analyzer_cfg)
+                payload["route_decision"] = {**route_decision, "pending_analysis": True}
+            else:
+                route_decision = service.evaluate_route(
+                    payload,
+                    analyzer_enabled=bool(analyzer_cfg.get("enabled")),
+                    analysis_in_flight=True,
+                    force_analyze=bool(payload.get("force_analyze") or payload.get("vision_force_analyze")),
+                )
+                payload["route_decision"] = route_decision
+    try:
+        status = service.update_frame(payload)
+    except VisionDisabledError as exc:
+        if analysis_lock_acquired and _VISION_ANALYSIS_LOCK.locked():
+            _VISION_ANALYSIS_LOCK.release()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except VisionError as exc:
+        if analysis_lock_acquired and _VISION_ANALYSIS_LOCK.locked():
+            _VISION_ANALYSIS_LOCK.release()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if analysis_payload is not None and analysis_route_decision is not None:
+        analysis_payload["frame_id"] = status.get("frame_id") or analysis_payload.get("frame_id")
+        analysis_payload["frame_hash"] = status.get("frame_hash") or analysis_payload.get("frame_hash")
+        background_tasks.add_task(
+            _complete_vision_analysis_task,
+            analysis_payload,
+            settings_config,
+            vision_cfg,
+            analysis_route_decision,
+        )
+    return status
+
+
+@app.post("/api/vision/observe")
+async def vision_observe(
+    request: Request,
+    lane: str = "active",
+    include_image: bool = False,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="vision observe is limited to local requests")
+    _require_local_api_token(request)
+    settings_config = _load_settings_config()
+    vision_cfg = normalize_vision_config(settings_config.get("vision", {}) if isinstance(settings_config, dict) else {})
+    if not vision_cfg["enabled"]:
+        raise HTTPException(status_code=409, detail="vision is disabled")
+    data = payload if isinstance(payload, dict) else {}
+    requested_lane = str(lane or "active").strip().lower()
+    if requested_lane != "active":
+        raise HTTPException(status_code=400, detail="vision observe only supports lane=active")
+    result = await _perform_active_vision_observation(
+        str(data.get("text") or ""),
+        settings_config,
+        force=bool(data.get("force")),
+        target_hint=str(data.get("target_hint") or ""),
+        attempt_reason=str(data.get("attempt_reason") or ""),
+        exclude_seen=data.get("exclude_seen") if isinstance(data.get("exclude_seen"), list) else [],
+    )
+    service = _get_vision_service(settings_config)
+    context = result.get("context") if isinstance(result.get("context"), dict) else service.active_context(include_image=False)
+    if include_image:
+        context = service.active_context(include_image=True)
+    image_urls: list[str] = []
+    image = context.get("image") if isinstance(context, dict) and isinstance(context.get("image"), dict) else {}
+    data_url = str(image.get("data_url") or "")
+    if include_image and data_url.startswith("data:image/") and "," in data_url:
+        image_urls.append("base64://" + data_url.split(",", 1)[1])
+    result_frames = result.get("inline_frames") if isinstance(result.get("inline_frames"), list) else []
+    if include_image and result_frames:
+        image_urls = []
+        for frame in result_frames[:3]:
+            frame_url = str(frame.get("data_url") or "") if isinstance(frame, dict) else ""
+            if frame_url.startswith("data:image/") and "," in frame_url:
+                image_urls.append("base64://" + frame_url.split(",", 1)[1])
+    active_observation = context.get("active_observation") if isinstance(context.get("active_observation"), dict) else {}
+    return {
+        "ok": bool(result.get("ok")),
+        "lane": "active",
+        "status": result.get("status") if isinstance(result.get("status"), dict) else service.status(),
+        "context": context,
+        "desktop_targets": active_observation.get("desktop_targets") if isinstance(active_observation.get("desktop_targets"), list) else [],
+        "target_candidates": active_observation.get("target_candidates") if isinstance(active_observation.get("target_candidates"), list) else [],
+        "discovery_errors": active_observation.get("discovery_errors") if isinstance(active_observation.get("discovery_errors"), list) else [],
+        "selected_candidate": active_observation.get("selected_candidate") if isinstance(active_observation.get("selected_candidate"), dict) else {},
+        "focused_target": active_observation.get("focused_target") if isinstance(active_observation.get("focused_target"), dict) else {},
+        "focus_result": active_observation.get("focus_result") if isinstance(active_observation.get("focus_result"), dict) else {},
+        "verify_result": active_observation.get("verify_result") if isinstance(active_observation.get("verify_result"), dict) else {},
+        "detail_frames_count": int(active_observation.get("detail_frames_count") or 0),
+        "action_trace": active_observation.get("action_trace") if isinstance(active_observation.get("action_trace"), list) else [],
+        "click_point": active_observation.get("click_point") if isinstance(active_observation.get("click_point"), dict) else {},
+        "frame_hash": str(context.get("frame_hash") or ""),
+        "available_next_targets": active_observation.get("available_next_targets") if isinstance(active_observation.get("available_next_targets"), list) else [],
+        "image_urls": image_urls,
+        "decision": result.get("decision") if isinstance(result.get("decision"), dict) else {},
+        "trace": result.get("trace") if isinstance(result.get("trace"), dict) else {},
+        "error": str(result.get("error") or ""),
+    }
+
+
+@app.get("/api/vision/context")
+async def vision_context(request: Request, include_image: bool = False, lane: str = "merged") -> dict[str, Any]:
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="vision context is limited to local requests")
+    _require_local_api_token(request)
+    service = _get_vision_service(_load_settings_config())
+    requested_lane = str(lane or "merged").strip().lower()
+    if requested_lane == "passive":
+        return service.passive_context()
+    if requested_lane == "active":
+        context = service.active_context(include_image=include_image)
+        context["lane"] = "active"
+        return context
+    if requested_lane != "merged":
+        raise HTTPException(status_code=400, detail="lane must be passive, active, or merged")
+    context = service.context(include_image=include_image)
+    context["lane"] = "merged"
+    return context
+
+
+@app.post("/api/vision/models")
+async def vision_models(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    saved = _load_settings_config()
+    saved_analyzer = (
+        (saved.get("vision") or {}).get("analyzer")
+        if isinstance(saved.get("vision"), dict)
+        else {}
+    )
+    source = dict(saved_analyzer if isinstance(saved_analyzer, dict) else {})
+    incoming = payload if isinstance(payload, dict) else {}
+    source.update({key: value for key, value in incoming.items() if key != "api_key" or str(value or "").strip()})
+    analyzer = normalize_analyzer_config(source)
+    if not analyzer.get("base_url"):
+        raise HTTPException(status_code=400, detail="VLM Base URL is required to fetch model list.")
+    api_key = str(incoming.get("api_key") or source.get("api_key") or analyzer.get("api_key") or "").strip()
+    try:
+        models = await provider_list_models(
+            provider="openai_compat",
+            base_url=analyzer["base_url"],
+            api_key=api_key,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"VLM model list failed: {exc}") from exc
+    return {
+        "models": models,
+        "provider": analyzer.get("provider") or "openai_compatible_vlm",
+        "base_url": analyzer["base_url"],
+    }
+
+
+@app.post("/api/vision/clear")
+async def vision_clear(request: Request) -> dict[str, Any]:
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="vision clear is limited to local requests")
+    _require_local_api_token(request)
+    service = _get_vision_service(_load_settings_config())
+    return service.clear()
 
 
 @app.get("/api/health")
@@ -3582,6 +4624,7 @@ async def health() -> dict[str, Any]:
         "message": asr_message,
         "tools": bool(tooling_cfg.get("enabled", True)),
         "third_party_mcp": third_party_health,
+        "vision": _get_vision_service(settings_config).status(),
     }
 
 
@@ -3662,6 +4705,7 @@ async def put_settings_config(payload: dict[str, Any] = Body(...)) -> dict[str, 
         raise HTTPException(status_code=400, detail="settings payload must be an object")
     merged = _deep_merge(_load_settings_config(), raw_config)
     apply_runtime_secret_actions(merged, raw_config, previous)
+    _apply_vision_analyzer_secret_actions(merged, raw_config, previous)
     normalized = _normalize_settings_config(merged)
     _save_full_config(normalized)
     if normalized.get("model_path") and normalized.get("model_path") != previous.get("model_path"):
@@ -4523,14 +5567,20 @@ async def list_chat_topics() -> dict[str, Any]:
 
 @app.get("/api/chat/topics/{topic_id}")
 async def get_chat_topic(topic_id: str) -> dict[str, Any]:
-    target = quote(normalize_topic_id(topic_id), safe="")
+    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
+    raw_topic_id = str(topic_id or "").strip()
+    target_value = raw_topic_id if runtime_id == RUNTIME_ASTRBOT else normalize_topic_id(raw_topic_id)
+    target = quote(target_value, safe="")
     return await _runtime_json_or_unavailable("GET", f"/api/chat/topics/{target}")
 
 
 @app.delete("/api/chat/topics/{topic_id}")
 @app.post("/api/chat/topics/{topic_id}/delete")
 async def delete_chat_topic(topic_id: str) -> dict[str, Any]:
-    target = quote(normalize_topic_id(topic_id), safe="")
+    runtime_id = _runtime_config_from_raw().get("active", RUNTIME_HERMES)
+    raw_topic_id = str(topic_id or "").strip()
+    target_value = raw_topic_id if runtime_id == RUNTIME_ASTRBOT else normalize_topic_id(raw_topic_id)
+    target = quote(target_value, safe="")
     return await _runtime_json_or_unavailable("DELETE", f"/api/chat/topics/{target}")
 
 

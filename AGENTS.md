@@ -20,7 +20,7 @@ This file is the shortest safe entrypoint for coding agents working in this repo
 
 ## Quick Start
 
-- Project shape: desktop pet host in `main.py`, FastAPI backend in `backend/`, topic persistence in `backend/chat_topics.py`, ASR runtime in `backend/asr.py` and `backend/asr_server.py`, runtime UI in `index.html`, settings UI in `settings.html`, `settings.css`, and `settings.js`.
+- Project shape: desktop pet host in `main.py`, FastAPI backend in `backend/`, topic persistence in `backend/chat_topics.py`, ASR runtime in `backend/asr.py` and `backend/asr_server.py`, vision runtime in `backend/vision*.py` and `backend/active_vision.py`, runtime UI in `index.html`, settings UI in `settings.html`, `settings.css`, and `settings.js`.
 - Primary stack: Python, Qt WebEngine, FastAPI, LangGraph, MCP, imported skills, Live2D-style assets.
 - The currently verified dev runtime is the project `.venv` on Python 3.12.
 - Preferred local start command:
@@ -51,12 +51,15 @@ Useful stable facts:
 
 - Root UI files stay at repo root because the desktop host and backend currently load them from there.
 - Topic history persists under `data/chat_topics/<topic_id>/`.
+- Ipet-owned vision state, analyzer metadata, and screenshot evidence are memory-first; raw screenshots and generated audio/cache files must not be committed.
 - Imported skills live under `skills/` and `third_party_skills/`.
 - Third-party MCP runtimes remain separate from skills and still live under `third_party_mcp/`.
+- Optional runtime bridges and reference integrations live under `integrations/`.
 - The canonical runtime workflow map lives in `docs/WORKFLOW.md`; any workflow change must update that file in the same task.
 - Tests live under `tests/`.
 - Debug helpers live under `scripts/debug/`.
 - Fixed role prompts live under `docs/subagents/`.
+- Root scratch files, hotspot output, local runtime state, caches, and personal configs should be ignored or removed instead of documented as project structure.
 
 ## Hot Files And Ownership
 
@@ -71,8 +74,9 @@ Current ownership map:
 - `desktop-shell`: `main.py`
 - `pet-runtime-ui`: `index.html`
 - `settings-console`: `settings.html`, `settings.css`, `settings.js`
-- `backend-agent-runtime`: `backend/agent_graph.py`, `backend/agent_orchestrator.py`, chat slices in `backend/app.py`
-- `backend-mcp-platform`: `backend/mcp_bridge.py`, `backend/mcp/*`, `backend/tool_runtime.py`, `backend/tooling/*`, MCP-management slices in `backend/app.py`
+- `backend-agent-runtime`: `backend/runtime_config.py`, `backend/runtime_adapters.py`, `backend/runtime_service.py`, `backend/runtime_contracts.py`, Hermes integration paths, `backend/agent_graph.py`, `backend/agent_orchestrator.py`, and chat slices in `backend/app.py`
+- `backend-mcp-platform`: `backend/mcp_bridge.py`, `backend/mcp/*`, `backend/tool_runtime.py`, `backend/tooling/*`, MCP-management slices in `backend/app.py`; under the default AstrBot runtime, plugins/MCP/knowledge bases/providers are managed in AstrBot WebUI, not reimplemented in Ipet
+- `backend-vision-runtime`: `backend/vision.py`, `backend/vision_analyzer.py`, `backend/vision_state.py`, `backend/active_vision.py`, vision slices in `backend/app.py`, and matching vision tests
 - `qa-integration`: regression planning, contract checks, targeted test additions
 
 Cross-boundary rules:
@@ -80,6 +84,8 @@ Cross-boundary rules:
 - `main.py` <-> `index.html`: lead `desktop-shell`, review by `pet-runtime-ui`
 - `settings.js` <-> backend settings or MCP APIs: one side leads, the other reviews
 - Chat SSE changes: lead `backend-agent-runtime`, review by `pet-runtime-ui` and `qa-integration`
+- Vision capture/evidence changes: lead `backend-vision-runtime`, review by `desktop-shell` if `main.py` capture behavior changes, and by `qa-integration` for regression coverage
+- Repository hygiene or documentation-only cleanup: lead `qa-integration`, with implementation owners consulted only when behavior or ownership boundaries change
 
 ## Task Routing Cheatsheet
 
@@ -88,13 +94,16 @@ Use this map before opening large files:
 | Task type | Read first | Minimum follow-up |
 | --- | --- | --- |
 | Desktop host, tray, Qt bridge, runtime command handling | `main.py` | `docs/SUBAGENTS.md` |
-| Chat SSE, LangGraph, approval flow, provider routing | `backend/agent_graph.py` | `backend/agent_orchestrator.py`, chat routes in `backend/app.py` |
+| Chat SSE, runtime adapters, LangGraph, approval flow, provider routing | `backend/runtime_contracts.py` | `backend/runtime_config.py`, `backend/runtime_adapters.py`, `backend/runtime_service.py`, `backend/agent_graph.py`, `backend/agent_orchestrator.py`, chat routes in `backend/app.py` |
 | Topic history, persisted chat, layered summaries | `backend/chat_topics.py` | topic routes in `backend/app.py`, `index.html`, topic settings in `settings.js` |
 | ASR, push-to-talk, mic permissions, streaming recognition | `backend/asr.py` | `backend/asr_server.py`, `main.py`, `index.html`, ASR settings in `settings.js` |
-| MCP, stdio transport, file tools, third-party server lifecycle | `backend/mcp_bridge.py` | `backend/tool_runtime.py`, `backend/tooling/`, MCP routes in `backend/app.py` |
+| Automatic vision, screenshot evidence, OCR/VLM analyzer, active observation | `docs/WORKFLOW.md` | `backend/vision.py`, `backend/vision_analyzer.py`, `backend/vision_state.py`, `backend/active_vision.py`, vision routes in `backend/app.py` |
+| MCP, stdio transport, file tools, third-party server lifecycle | `backend/mcp_bridge.py` | `backend/tool_runtime.py`, `backend/tooling/`, MCP routes in `backend/app.py`; remember AstrBot-default plugin/MCP management lives in AstrBot WebUI |
 | Runtime UI, chat window, skills drawer, display state | `index.html` | related backend route only if contract changed |
 | Settings page | `settings.js` | `settings.html`, `settings.css`, relevant settings route in `backend/app.py` |
 | Skills import/runtime | `backend/skills/manager.py` | `backend/skills/runtime.py`, `backend/skills/models.py`, related `third_party_skills/*` manifests |
+| Optional runtime integrations | `integrations/<runtime>/README.md` | matching adapter or settings docs only if the default runtime path changes |
+| Repository organization, docs, cleanup | `docs/PROJECT_STRUCTURE.md` | `README.md`, `README.zh-CN.md`, `docs/WORKFLOW.md`, `.gitignore` |
 
 ## Token-Saving Rules
 
@@ -105,6 +114,8 @@ Use this map before opening large files:
 - Read model or request types before implementations when tracing behavior.
 - When a task touches one subsystem, stay inside that subsystem until an interface boundary forces expansion.
 - If you need repository shape or ownership rules, use this file and `docs/SUBAGENTS.md`; do not traverse the whole `docs/` tree by default.
+- Use `git status --short` before cleanup. Treat unrelated modified/untracked files as user work and never revert them.
+- Deleting tracked files, ignored runtime state, caches, or generated outputs is destructive. Explain why, what it affects, and ask for approval unless the user explicitly named the exact deletion target.
 
 ## Regression Matrix
 
@@ -126,6 +137,12 @@ python -m unittest tests.test_chat_topics tests.test_chat_topics_api tests.test_
 
 ```powershell
 python -m unittest tests.test_mcp_bridge_tools tests.test_mcp_servers_listing tests.test_tool_runtime tests.test_stdio_client_protocol -v
+```
+
+### Automatic Vision
+
+```powershell
+python -m unittest tests.test_active_vision tests.test_vision_analyzer tests.test_vision_api tests.test_vision_service tests.test_vision_state tests.test_health_endpoint -v
 ```
 
 ### Skills

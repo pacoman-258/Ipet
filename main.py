@@ -1,17 +1,22 @@
+import base64
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
+import tempfile
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from backend.active_vision import normalize_active_observation_config
 from backend.hermes import DEFAULT_HERMES_CONFIG, normalize_hermes_config
 from backend.runtime_config import (
     DEFAULT_RUNTIME_CONFIG,
@@ -22,6 +27,13 @@ from backend.runtime_config import (
     normalize_runtime_config,
     runtime_sidecar_config,
 )
+from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
+
+
+LOCAL_API_TOKEN_ENV = "IPET_LOCAL_API_TOKEN"
+LOCAL_API_TOKEN_HEADER = "X-Ipet-Local-Token"
+LOCAL_API_TOKEN = str(os.environ.get(LOCAL_API_TOKEN_ENV) or secrets.token_urlsafe(32))
+os.environ.setdefault(LOCAL_API_TOKEN_ENV, LOCAL_API_TOKEN)
 
 
 def _platform_name(platform_name: str | None = None) -> str:
@@ -128,8 +140,8 @@ _apply_qt_runtime_env()
 
 if _prefer_pyqt_bindings():
     try:
-        from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
-        from PyQt6.QtGui import QAction, QColor, QGuiApplication
+        from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+        from PyQt6.QtGui import QAction, QColor, QGuiApplication, QImage, QPainter, QPixmap
         from PyQt6.QtWebChannel import QWebChannel
         from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
         from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -155,8 +167,8 @@ if _prefer_pyqt_bindings():
             QWidget,
         )
     except ImportError:
-        from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
-        from PySide6.QtGui import QAction, QColor, QGuiApplication
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
+        from PySide6.QtGui import QAction, QColor, QGuiApplication, QImage, QPainter, QPixmap
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -183,8 +195,8 @@ if _prefer_pyqt_bindings():
         )
 else:
     try:
-        from PySide6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
-        from PySide6.QtGui import QAction, QColor, QGuiApplication
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, Signal, Slot
+        from PySide6.QtGui import QAction, QColor, QGuiApplication, QImage, QPainter, QPixmap
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -210,8 +222,8 @@ else:
             QWidget,
         )
     except ImportError:
-        from PyQt6.QtCore import QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
-        from PyQt6.QtGui import QAction, QColor, QGuiApplication
+        from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, QObject, QPoint, Qt, QEvent, QSignalBlocker, QTimer, QUrl, pyqtSignal as Signal, pyqtSlot as Slot
+        from PyQt6.QtGui import QAction, QColor, QGuiApplication, QImage, QPainter, QPixmap
         from PyQt6.QtWebChannel import QWebChannel
         from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
         from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -443,6 +455,7 @@ def _find_default_model() -> str:
 DEFAULT_CONFIG = {
     "hermes": json.loads(json.dumps(DEFAULT_HERMES_CONFIG)),
     "runtime": json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG)),
+    "vision": json.loads(json.dumps(DEFAULT_VISION_CONFIG)),
     "model_path": _find_default_model(),
     "window": {
         "x": 120,
@@ -649,6 +662,7 @@ def load_config() -> dict:
         pet_cfg["background_overlay_opacity"] = 0.42
     pet_cfg["background_overlay_opacity"] = max(0.0, min(0.9, pet_cfg["background_overlay_opacity"]))
     _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
+    config["vision"] = normalize_vision_config(config.get("vision", {}))
     _normalize_hermes_sidecar_config(config)
     _normalize_hermes_chat_config(config)
     return config
@@ -1523,6 +1537,1563 @@ class ControlPanel(QWidget):
             self.opacity_spin.setValue(float(state["opacity"]))
 
 
+def _qiodevice_write_only_mode():
+    open_mode = getattr(QIODevice, "OpenModeFlag", None)
+    if open_mode is not None:
+        return open_mode.WriteOnly
+    return QIODevice.WriteOnly
+
+
+def _qt_smooth_transformation_mode():
+    transform_mode = getattr(Qt, "TransformationMode", None)
+    if transform_mode is not None:
+        return transform_mode.SmoothTransformation
+    return Qt.SmoothTransformation
+
+
+VISION_CAPTURE_SCOPE = "visible_spaces_all_displays"
+
+
+def _encode_pixmap_frame(pixmap, config: dict) -> tuple[str, str]:
+    max_width = int(config.get("max_width", DEFAULT_VISION_CONFIG["max_width"]))
+    try:
+        if pixmap.width() > max_width:
+            pixmap = pixmap.scaledToWidth(max_width, _qt_smooth_transformation_mode())
+    except Exception:
+        pass
+    quality = int(config.get("jpeg_quality", DEFAULT_VISION_CONFIG["jpeg_quality"]))
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(_qiodevice_write_only_mode())
+    try:
+        if not pixmap.save(buffer, "JPEG", quality):
+            raise RuntimeError("failed to encode screen frame")
+    finally:
+        try:
+            buffer.close()
+        except Exception:
+            pass
+    encoded = base64.b64encode(bytes(data)).decode("ascii")
+    return "image/jpeg", f"data:image/jpeg;base64,{encoded}"
+
+
+def _vision_hash_from_data_url(data_url: str) -> str:
+    return "sha256:" + hashlib.sha256(str(data_url or "").encode("utf-8")).hexdigest()
+
+
+def _visual_hash_from_image_like(image_like) -> str:
+    try:
+        image = image_like.toImage() if hasattr(image_like, "toImage") else image_like
+        image = image.scaled(8, 8)
+        values: list[int] = []
+        for y in range(8):
+            for x in range(8):
+                color = image.pixelColor(x, y)
+                values.append((int(color.red()) * 299 + int(color.green()) * 587 + int(color.blue()) * 114) // 1000)
+        if not values:
+            return ""
+        average = sum(values) / len(values)
+        bits = 0
+        for value in values:
+            bits = (bits << 1) | (1 if value >= average else 0)
+        return f"ahash:{bits:016x}"
+    except Exception:
+        return ""
+
+
+def _visual_hash_from_pixmap(pixmap) -> str:
+    return _visual_hash_from_image_like(pixmap)
+
+
+def _screen_layout_entry(screen) -> dict:
+    geometry = screen.geometry()
+    entry = {
+        "x": int(geometry.x()),
+        "y": int(geometry.y()),
+        "width": int(geometry.width()),
+        "height": int(geometry.height()),
+    }
+    try:
+        entry["name"] = _clean_vision_text(screen.name(), max_length=80)
+    except Exception:
+        entry["name"] = ""
+    try:
+        entry["device_pixel_ratio"] = float(screen.devicePixelRatio())
+    except Exception:
+        entry["device_pixel_ratio"] = 1.0
+    return entry
+
+
+def _screen_layout(screens: list) -> list[dict]:
+    return [_screen_layout_entry(screen) for screen in screens]
+
+
+def _payload_from_encoded_frame(
+    mime_type: str,
+    data_url: str,
+    *,
+    capture_backend: str,
+    display_layout: list[dict] | None = None,
+    visual_hash: str = "",
+) -> dict:
+    frame_hash = _vision_hash_from_data_url(data_url)
+    layout = list(display_layout or [])
+    return {
+        "mime_type": mime_type,
+        "data_url": data_url,
+        "frame_hash": frame_hash,
+        "visual_hash": visual_hash or frame_hash,
+        "capture_backend": capture_backend,
+        "capture_scope": VISION_CAPTURE_SCOPE,
+        "display_count": len(layout) if layout else 0,
+        "display_layout": layout,
+    }
+
+
+def compose_qt_screens_pixmap(screens: list) -> tuple[object, dict]:
+    if not screens:
+        raise RuntimeError("no screens are available")
+    layout = _screen_layout(screens)
+    min_x = min(item["x"] for item in layout)
+    min_y = min(item["y"] for item in layout)
+    max_x = max(item["x"] + item["width"] for item in layout)
+    max_y = max(item["y"] + item["height"] for item in layout)
+    canvas = QPixmap(max(1, max_x - min_x), max(1, max_y - min_y))
+    canvas.fill(QColor(0, 0, 0))
+    painter = QPainter(canvas)
+    try:
+        for screen, item in zip(screens, layout):
+            pixmap = screen.grabWindow(0)
+            painter.drawPixmap(item["x"] - min_x, item["y"] - min_y, pixmap)
+    finally:
+        painter.end()
+    return canvas, {"display_count": len(screens), "display_layout": layout}
+
+
+def capture_qt_screen_frame_payload(
+    screen,
+    config: dict,
+    *,
+    screens_provider=None,
+    pixmap_composer=compose_qt_screens_pixmap,
+    pixmap_encoder=_encode_pixmap_frame,
+) -> dict:
+    provider = screens_provider or QGuiApplication.screens
+    screens = list(provider() or [])
+    if not screens and screen is not None:
+        screens = [screen]
+    pixmap, metadata = pixmap_composer(screens)
+    mime_type, data_url = pixmap_encoder(pixmap, config)
+    payload = _payload_from_encoded_frame(
+        mime_type,
+        data_url,
+        capture_backend="qt_fallback",
+        display_layout=metadata.get("display_layout") if isinstance(metadata, dict) else [],
+        visual_hash=_visual_hash_from_pixmap(pixmap),
+    )
+    if isinstance(metadata, dict) and metadata.get("display_count") is not None:
+        payload["display_count"] = int(metadata.get("display_count") or payload["display_count"])
+    return payload
+
+
+def capture_macos_screencapture_payload(
+    config: dict,
+    *,
+    runner=subprocess.run,
+    screens_provider=None,
+    display_layout: list[dict] | None = None,
+) -> dict:
+    binary = Path("/usr/sbin/screencapture")
+    if not binary.exists():
+        raise RuntimeError("macOS screencapture is unavailable")
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="ipet-screen-", suffix=".jpg", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+        result = runner(
+            [str(binary), "-x", "-t", "jpg", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        if getattr(result, "returncode", 1) != 0:
+            detail = _clean_vision_text(getattr(result, "stderr", ""), max_length=160)
+            raise RuntimeError(detail or "screencapture failed")
+        image = QImage(tmp_path)
+        if image.isNull():
+            raise RuntimeError("screencapture produced an unreadable image")
+        mime_type, data_url = _encode_pixmap_frame(image, config)
+        if display_layout is not None:
+            layout = [dict(item) for item in display_layout]
+        else:
+            provider = screens_provider or QGuiApplication.screens
+            layout = _screen_layout(list(provider() or []))
+        return _payload_from_encoded_frame(
+            mime_type,
+            data_url,
+            capture_backend="macos_screencapture",
+            display_layout=layout,
+            visual_hash=_visual_hash_from_image_like(image),
+        )
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def capture_screen_frame_payload(
+    screen,
+    config: dict,
+    *,
+    platform_name: str | None = None,
+    macos_capture=capture_macos_screencapture_payload,
+    qt_capture=capture_qt_screen_frame_payload,
+    allow_qt_fallback: bool = True,
+    display_layout: list[dict] | None = None,
+) -> dict:
+    if _is_macos(platform_name):
+        try:
+            if macos_capture is capture_macos_screencapture_payload:
+                return macos_capture(config, display_layout=display_layout)
+            return macos_capture(config)
+        except Exception:
+            if not allow_qt_fallback:
+                raise
+    return qt_capture(screen, config)
+
+
+def encode_screen_frame(screen, config: dict) -> tuple[str, str]:
+    payload = capture_qt_screen_frame_payload(screen, config)
+    return payload["mime_type"], payload["data_url"]
+
+
+def _clean_vision_text(value, *, max_length: int) -> str:
+    text = str(value or "").replace("\x00", " ").strip()
+    text = " ".join(text.split())
+    return text[:max_length]
+
+
+def collect_screen_observations(config: dict | None = None, *, platform_name: str | None = None, runner=subprocess.run) -> dict:
+    vision_cfg = normalize_vision_config(config or {})
+    if not vision_cfg.get("include_ui_metadata") or not _is_macos(platform_name):
+        return {}
+    script = """
+tell application "System Events"
+    set frontProc to first application process whose frontmost is true
+    set procName to name of frontProc
+    try
+        set windowTitle to name of front window of frontProc
+    on error
+        set windowTitle to ""
+    end try
+    try
+        set menuNames to name of every menu bar item of menu bar 1 of frontProc
+        set AppleScript's text item delimiters to ", "
+        set menuText to menuNames as text
+    on error
+        set menuText to ""
+    end try
+end tell
+return procName & linefeed & menuText & linefeed & windowTitle
+""".strip()
+    try:
+        result = runner(["osascript", "-e", script], capture_output=True, text=True, timeout=0.8)
+    except Exception as exc:
+        return {"unknowns": [f"无法读取 macOS 前台应用元数据：{exc}"]}
+    if getattr(result, "returncode", 1) != 0:
+        detail = _clean_vision_text(getattr(result, "stderr", ""), max_length=120)
+        return {"unknowns": [f"无法读取 macOS 前台应用元数据：{detail or 'osascript failed'}"]}
+    lines = str(getattr(result, "stdout", "") or "").splitlines()
+    app_name = _clean_vision_text(lines[0] if lines else "", max_length=80)
+    menu_text = _clean_vision_text(lines[1] if len(lines) > 1 else "", max_length=240)
+    window_title = _clean_vision_text(lines[2] if len(lines) > 2 else "", max_length=160)
+    if not app_name:
+        return {"unknowns": ["无法确认 macOS 前台应用"]}
+    menu_items = [item.strip() for item in menu_text.split(",") if item.strip()]
+    app_menu = app_name
+    if len(menu_items) >= 2 and menu_items[0].lower() == "apple":
+        app_menu = _clean_vision_text(menu_items[1], max_length=80) or app_name
+    change_summary = f"macOS 前台应用切换为：{app_menu}"
+    return {
+        "change_summary": change_summary,
+        "important_objects": [app_menu] if app_menu else [],
+        "visible_text": menu_items[:6],
+        "confidence": 0.88,
+        "desktop_context": {
+            "foreground_app": app_menu,
+            "frontmost_process": app_name,
+            "window_title": window_title,
+            "menu_bar_items": menu_items[:16],
+        },
+    }
+
+
+ACTIVE_VISION_ALLOWED_ACTIONS = {"focus_target"}
+ACTIVE_VISION_CLICK_POLICY = "window_focus_only"
+ACTIVE_VISION_SURVEY_MODE = "desktop_survey"
+ACTIVE_VISION_FOCUS_MODE = "focus_target"
+ACTIVE_VISION_MIN_MAX_WIDTH = 1920
+ACTIVE_VISION_MIN_JPEG_QUALITY = 88
+ACTIVE_VISION_MAX_CANDIDATES = 12
+ACTIVE_VISION_WINDOW_ENUMERATION_TIMEOUT_SEC = 3.0
+ACTIVE_VISION_RUNNING_APP_FALLBACK_TIMEOUT_SEC = 2.5
+
+
+def _osascript_args(script: str) -> list[str]:
+    args = ["osascript"]
+    for line in str(script or "").splitlines():
+        stripped = line.rstrip()
+        if stripped:
+            args.extend(["-e", stripped])
+    return args
+
+
+def _active_target_id(app: str, title: str, bounds: dict[str, int], index: int) -> str:
+    seed = "\x00".join(
+        [
+            _clean_vision_text(app, max_length=120),
+            _clean_vision_text(title, max_length=200),
+            str(bounds.get("x", 0)),
+            str(bounds.get("y", 0)),
+            str(bounds.get("width", 0)),
+            str(bounds.get("height", 0)),
+            str(index),
+        ]
+    )
+    return "macos:" + hashlib.sha1(seed.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def _safe_focus_point(bounds: dict[str, int]) -> dict[str, int]:
+    x = int(bounds.get("x") or 0)
+    y = int(bounds.get("y") or 0)
+    width = max(0, int(bounds.get("width") or 0))
+    titlebar_y = y + 12
+    focus_x = x + min(max(width // 2, 24), 180)
+    return {"x": focus_x, "y": titlebar_y}
+
+
+def _active_vision_capture_config(vision_cfg: dict) -> dict:
+    config = dict(vision_cfg or {})
+    config["max_width"] = max(int(config.get("max_width") or 0), ACTIVE_VISION_MIN_MAX_WIDTH)
+    config["jpeg_quality"] = max(int(config.get("jpeg_quality") or 0), ACTIVE_VISION_MIN_JPEG_QUALITY)
+    return config
+
+
+def _parse_macos_desktop_targets(output: str) -> list[dict]:
+    targets: list[dict] = []
+    for index, line in enumerate(str(output or "").splitlines()):
+        parts = line.split("\t")
+        if len(parts) < 8:
+            continue
+        app = _clean_vision_text(parts[0], max_length=120)
+        title = _clean_vision_text(parts[1], max_length=200)
+        try:
+            x, y, width, height = [int(float(part or 0)) for part in parts[2:6]]
+        except Exception:
+            continue
+        if not app or width < 80 or height < 40:
+            continue
+        frontmost = str(parts[6]).strip().lower() == "true"
+        minimized = str(parts[7]).strip().lower() == "true"
+        bounds = {"x": x, "y": y, "width": width, "height": height}
+        targets.append(
+            {
+                "target_id": _active_target_id(app, title, bounds, index),
+                "app": app,
+                "title": title,
+                "bounds": bounds,
+                "frontmost": frontmost,
+                "minimized": minimized,
+                "focus_point": _safe_focus_point(bounds),
+            }
+        )
+    return targets[:12]
+
+
+def discover_macos_active_vision_desktop_targets(
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> tuple[list[dict], list[str]]:
+    if not _is_macos(platform_name):
+        return [], []
+    script = r"""
+tell application "System Events"
+    set windowRows to {}
+    repeat with proc in application processes
+        try
+            if background only of proc is false then
+                set appName to name of proc as text
+                set isFront to frontmost of proc
+                repeat with w in windows of proc
+                    try
+                        set wTitle to name of w as text
+                        set wPos to position of w
+                        set wSize to size of w
+                        set wMinimized to false
+                        try
+                            set wMinimized to value of attribute "AXMinimized" of w
+                        end try
+                        set rowText to appName & tab & wTitle & tab & (item 1 of wPos as integer) & tab & (item 2 of wPos as integer) & tab & (item 1 of wSize as integer) & tab & (item 2 of wSize as integer) & tab & (isFront as text) & tab & (wMinimized as text)
+                        set end of windowRows to rowText
+                    end try
+                end repeat
+            end if
+        end try
+    end repeat
+    set AppleScript's text item delimiters to linefeed
+    set joinedRows to windowRows as text
+    set AppleScript's text item delimiters to ""
+    return joinedRows
+end tell
+""".strip()
+    try:
+        result = runner(
+            _osascript_args(script),
+            capture_output=True,
+            text=True,
+            timeout=ACTIVE_VISION_WINDOW_ENUMERATION_TIMEOUT_SEC,
+            check=False,
+        )
+    except Exception as exc:
+        return [], [f"System Events window enumeration failed: {exc}"]
+    if getattr(result, "returncode", 1) != 0:
+        detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=180)
+        return [], [f"System Events window enumeration failed: {detail or 'osascript failed'}"]
+    return _parse_macos_desktop_targets(str(getattr(result, "stdout", "") or "")), []
+
+
+def enumerate_active_vision_desktop_targets(
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> list[dict]:
+    targets, _errors = discover_macos_active_vision_desktop_targets(platform_name=platform_name, runner=runner)
+    return targets
+
+
+def _active_candidate_id(source: str, app: str, title: str, index: int) -> str:
+    seed = "\x00".join([source, app, title, str(index)])
+    return f"{source}:{hashlib.sha1(seed.encode('utf-8', errors='ignore')).hexdigest()[:14]}"
+
+
+def _sanitize_active_candidate(candidate: dict, *, index: int = 0, source: str = "") -> dict:
+    item = candidate if isinstance(candidate, dict) else {}
+    candidate_source = _clean_vision_text(item.get("source") or source or "unknown", max_length=40)
+    app = _clean_vision_text(item.get("app"), max_length=120)
+    title = _clean_vision_text(item.get("title") or item.get("window_title") or app, max_length=200)
+    target_id = _clean_vision_text(item.get("target_id") or item.get("candidate_id"), max_length=120)
+    if not target_id:
+        target_id = _active_candidate_id(candidate_source, app, title, index)
+    bounds_source = item.get("bounds") if isinstance(item.get("bounds"), dict) else {}
+    bounds = {
+        "x": int(bounds_source.get("x") or 0),
+        "y": int(bounds_source.get("y") or 0),
+        "width": max(0, int(bounds_source.get("width") or 0)),
+        "height": max(0, int(bounds_source.get("height") or 0)),
+    }
+    focus_point = item.get("focus_point") if isinstance(item.get("focus_point"), dict) else {}
+    focusable = bool(item.get("focusable", candidate_source in {"window_enumeration", "running_app", "desktop_context"}))
+    if candidate_source == "screenshot_region":
+        focusable = False
+    sanitized = {
+        "target_id": target_id,
+        "source": candidate_source,
+        "app": app,
+        "title": title,
+        "bounds": bounds,
+        "frontmost": bool(item.get("frontmost", False)),
+        "minimized": bool(item.get("minimized", False)),
+        "focus_point": dict(focus_point) if focus_point else {},
+        "focusable": focusable,
+        "score": float(item.get("score") or (90 if candidate_source == "window_enumeration" else 70 if focusable else 20)),
+    }
+    for key in ("bundle_id", "pid", "reason"):
+        text = _clean_vision_text(item.get(key), max_length=160)
+        if text:
+            sanitized[key] = text
+    return sanitized
+
+
+def _active_candidates_from_desktop_targets(desktop_targets: list[dict]) -> list[dict]:
+    candidates: list[dict] = []
+    for index, target in enumerate(desktop_targets or []):
+        if not isinstance(target, dict):
+            continue
+        candidates.append(
+            _sanitize_active_candidate(
+                {
+                    **target,
+                    "source": target.get("source") or "window_enumeration",
+                    "focusable": not bool(target.get("minimized", False)),
+                    "score": 90 if target.get("frontmost") else 85,
+                },
+                index=index,
+                source="window_enumeration",
+            )
+        )
+    return candidates
+
+
+def _active_screenshot_candidate(display_layout: list[dict] | None = None) -> dict:
+    bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+    if display_layout:
+        try:
+            min_x = min(int(item.get("x") or 0) for item in display_layout)
+            min_y = min(int(item.get("y") or 0) for item in display_layout)
+            max_x = max(int(item.get("x") or 0) + int(item.get("width") or 0) for item in display_layout)
+            max_y = max(int(item.get("y") or 0) + int(item.get("height") or 0) for item in display_layout)
+            bounds = {"x": min_x, "y": min_y, "width": max(0, max_x - min_x), "height": max(0, max_y - min_y)}
+        except Exception:
+            bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+    return _sanitize_active_candidate(
+        {
+            "target_id": "screenshot:full_desktop",
+            "source": "screenshot_region",
+            "title": "active full desktop screenshot",
+            "bounds": bounds,
+            "focusable": False,
+            "score": 15,
+        },
+        source="screenshot_region",
+    )
+
+
+_ACTIVE_VISION_SYSTEM_PROCESS_NAMES = {
+    "airportd",
+    "backupd",
+    "accessibilityuiserver",
+    "accessoryupdaterd",
+    "amfid",
+    "cfprefsd",
+    "controlcenter",
+    "configd",
+    "coreaudiod",
+    "corelocationagent",
+    "coreservicesuiagent",
+    "corespeechd_system",
+    "dasd",
+    "diskarbitrationd",
+    "distnoted",
+    "dock",
+    "duetexpertd",
+    "endpointsecurityd",
+    "fseventsd",
+    "iomfb_bics_daemon",
+    "keybagd",
+    "kernel_task",
+    "launchd",
+    "liquiddetectiond",
+    "logd",
+    "loginwindow",
+    "lsd",
+    "mediaremoted",
+    "mds",
+    "mdworker",
+    "notifyd",
+    "osascript",
+    "powerd",
+    "reportcrash",
+    "remoted",
+    "runningboardd",
+    "secd",
+    "smd",
+    "software update",
+    "softwareupdated",
+    "systemstats",
+    "systemuiserver",
+    "syslogd",
+    "tccd",
+    "trustd",
+    "uarpassetmanagerd",
+    "usereventagent",
+    "usbmuxd",
+    "wallpaperagent",
+    "windowserver",
+    "windowmanager",
+    "xprotect",
+}
+
+_ACTIVE_VISION_LOW_PRIORITY_APP_NAMES = {
+    "activity monitor",
+    "codex",
+    "console",
+    "finder",
+    "system settings",
+    "terminal",
+}
+
+
+def _is_active_vision_system_process_name(name: str) -> bool:
+    cleaned = _clean_vision_text(name, max_length=120)
+    if not cleaned or cleaned.startswith("."):
+        return True
+    return cleaned.lower() in _ACTIVE_VISION_SYSTEM_PROCESS_NAMES
+
+
+def _active_vision_name_key(name: str) -> str:
+    return _clean_vision_text(name, max_length=120).casefold()
+
+
+def _app_bundle_name_from_process_path(process_path: str) -> str:
+    raw_path = str(process_path or "").strip()
+    if not raw_path:
+        return ""
+    for part in Path(raw_path).parts:
+        if part.lower().endswith(".app") and len(part) > 4:
+            return _clean_vision_text(part[:-4], max_length=120)
+    return ""
+
+
+def _running_app_candidate_score(name: str, *, frontmost: bool = False, from_process_path: bool = False) -> float:
+    if _active_vision_name_key(name) in _ACTIVE_VISION_LOW_PRIORITY_APP_NAMES:
+        return 45.0 if frontmost else 35.0
+    if frontmost:
+        return 75.0
+    return 65.0 if from_process_path else 70.0
+
+
+def _parse_system_events_running_app_candidates(output: str, *, start_index: int = 0) -> list[dict]:
+    candidates: list[dict] = []
+    for line in str(output or "").splitlines():
+        parts = line.split("\t")
+        name = _clean_vision_text(parts[0] if parts else "", max_length=120)
+        if _is_active_vision_system_process_name(name):
+            continue
+        bundle_id = _clean_vision_text(parts[1] if len(parts) > 1 else "", max_length=160)
+        pid = _clean_vision_text(parts[2] if len(parts) > 2 else "", max_length=80)
+        frontmost = str(parts[3] if len(parts) > 3 else "").strip().lower() == "true"
+        candidate = {
+            "target_id": _active_candidate_id("running_app", bundle_id or name, name, start_index + len(candidates)),
+            "source": "running_app",
+            "app": name,
+            "title": name,
+            "frontmost": frontmost,
+            "focusable": True,
+            "score": _running_app_candidate_score(name, frontmost=frontmost),
+        }
+        if bundle_id:
+            candidate["bundle_id"] = bundle_id
+        if pid:
+            candidate["pid"] = pid
+        candidates.append(_sanitize_active_candidate(candidate, index=start_index + len(candidates), source="running_app"))
+        if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+            break
+    return candidates
+
+
+def _system_events_running_app_candidates(*, runner=subprocess.run) -> tuple[list[dict], list[str]]:
+    script = r"""
+tell application "System Events"
+    set appRows to {}
+    repeat with proc in (application processes whose background only is false)
+        try
+            set appName to name of proc as text
+            set bundleId to ""
+            set unixId to ""
+            set isFront to frontmost of proc
+            try
+                set bundleId to bundle identifier of proc as text
+            end try
+            try
+                set unixId to unix id of proc as text
+            end try
+            set rowText to appName & tab & bundleId & tab & unixId & tab & (isFront as text)
+            set end of appRows to rowText
+        end try
+    end repeat
+    set AppleScript's text item delimiters to linefeed
+    set joinedRows to appRows as text
+    set AppleScript's text item delimiters to ""
+    return joinedRows
+end tell
+""".strip()
+    try:
+        result = runner(
+            _osascript_args(script),
+            capture_output=True,
+            text=True,
+            timeout=ACTIVE_VISION_RUNNING_APP_FALLBACK_TIMEOUT_SEC,
+            check=False,
+        )
+    except Exception as exc:
+        return [], [f"System Events running app fallback failed: {exc}"]
+    if getattr(result, "returncode", 1) != 0:
+        detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=180)
+        return [], [f"System Events running app fallback failed: {detail or 'osascript failed'}"]
+    return _parse_system_events_running_app_candidates(str(getattr(result, "stdout", "") or "")), []
+
+
+def enumerate_active_vision_running_app_candidates(
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+    include_errors: bool = False,
+) -> list[dict] | tuple[list[dict], list[str]]:
+    if not _is_macos(platform_name):
+        return ([], []) if include_errors else []
+    candidates: list[dict] = []
+    errors: list[str] = []
+    try:
+        import AppKit  # type: ignore
+
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        for index, app in enumerate(list(workspace.runningApplications() or [])):
+            try:
+                name = _clean_vision_text(app.localizedName(), max_length=120)
+                bundle_id = _clean_vision_text(app.bundleIdentifier(), max_length=160)
+                pid = str(int(app.processIdentifier()))
+                frontmost = bool(app.isActive())
+                hidden = bool(app.isHidden())
+                activation_policy = int(app.activationPolicy())
+            except Exception:
+                continue
+            if not name or hidden or activation_policy != 0:
+                continue
+            candidates.append(
+                _sanitize_active_candidate(
+                    {
+                        "target_id": _active_candidate_id("running_app", bundle_id or name, name, index),
+                        "source": "running_app",
+                        "app": name,
+                        "title": name,
+                        "bundle_id": bundle_id,
+                        "pid": pid,
+                        "frontmost": frontmost,
+                        "focusable": True,
+                        "score": _running_app_candidate_score(name, frontmost=frontmost),
+                    },
+                    index=index,
+                    source="running_app",
+                )
+            )
+            if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+                return (candidates, errors) if include_errors else candidates
+    except Exception as exc:
+        errors.append(f"AppKit running app enumeration unavailable: {exc}")
+    if not candidates:
+        system_events_candidates, system_events_errors = _system_events_running_app_candidates(runner=runner)
+        errors.extend(system_events_errors)
+        if system_events_candidates:
+            return (system_events_candidates[:ACTIVE_VISION_MAX_CANDIDATES], errors) if include_errors else system_events_candidates[
+                :ACTIVE_VISION_MAX_CANDIDATES
+            ]
+    try:
+        result = runner(["/bin/ps", "-axo", "comm="], capture_output=True, text=True, timeout=0.8, check=False)
+    except Exception:
+        return (candidates[:ACTIVE_VISION_MAX_CANDIDATES], errors) if include_errors else candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+    if getattr(result, "returncode", 1) != 0:
+        detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=180)
+        errors.append(f"running process fallback failed: {detail or 'ps failed'}")
+        return (candidates[:ACTIVE_VISION_MAX_CANDIDATES], errors) if include_errors else candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+    seen: set[str] = {_active_vision_name_key(str(item.get("app") or "")) for item in candidates}
+    ps_lines = str(getattr(result, "stdout", "") or "").splitlines()
+    app_bundle_candidates: list[dict] = []
+    for line in ps_lines:
+        app_name = _app_bundle_name_from_process_path(line)
+        key = _active_vision_name_key(app_name)
+        if not app_name or key in seen:
+            continue
+        if _is_active_vision_system_process_name(app_name):
+            continue
+        seen.add(key)
+        app_bundle_candidates.append(
+            _sanitize_active_candidate(
+                {
+                    "target_id": _active_candidate_id("running_app", app_name, app_name, len(candidates) + len(app_bundle_candidates)),
+                    "source": "running_app",
+                    "app": app_name,
+                    "title": app_name,
+                    "focusable": True,
+                    "score": _running_app_candidate_score(app_name, from_process_path=True),
+                },
+                source="running_app",
+            )
+        )
+        if len(candidates) + len(app_bundle_candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+            break
+    if app_bundle_candidates:
+        combined = sorted(
+            candidates + app_bundle_candidates,
+            key=lambda value: float(value.get("score") or 0.0),
+            reverse=True,
+        )[:ACTIVE_VISION_MAX_CANDIDATES]
+        return (combined, errors) if include_errors else combined
+    for line in str(getattr(result, "stdout", "") or "").splitlines():
+        name = Path(line.strip()).name
+        key = _active_vision_name_key(name)
+        if not name or key in seen or name.startswith("."):
+            continue
+        if _is_active_vision_system_process_name(name):
+            continue
+        seen.add(key)
+        candidates.append(
+            _sanitize_active_candidate(
+                {
+                    "target_id": _active_candidate_id("running_process", name, name, len(candidates)),
+                    "source": "running_process",
+                    "app": name,
+                    "title": name,
+                    "focusable": False,
+                    "score": 25,
+                },
+                source="running_process",
+            )
+        )
+        if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+            break
+    return (candidates[:ACTIVE_VISION_MAX_CANDIDATES], errors) if include_errors else candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+
+
+def _merge_active_target_candidates(*candidate_groups: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen_ids: set[str] = set()
+    for group in candidate_groups:
+        for index, item in enumerate(group or []):
+            if not isinstance(item, dict):
+                continue
+            candidate = _sanitize_active_candidate(item, index=index)
+            target_id = str(candidate.get("target_id") or "")
+            if not target_id or target_id in seen_ids:
+                continue
+            seen_ids.add(target_id)
+            merged.append(candidate)
+            if len(merged) >= ACTIVE_VISION_MAX_CANDIDATES:
+                return sorted(merged, key=lambda value: float(value.get("score") or 0.0), reverse=True)
+    return sorted(merged, key=lambda value: float(value.get("score") or 0.0), reverse=True)[:ACTIVE_VISION_MAX_CANDIDATES]
+
+
+def discover_active_vision_target_candidates(
+    *,
+    desktop_targets: list[dict] | None = None,
+    desktop_targets_provider=enumerate_active_vision_desktop_targets,
+    running_apps_provider=enumerate_active_vision_running_app_candidates,
+    target_candidates: list[dict] | None = None,
+    display_layout: list[dict] | None = None,
+    platform_name: str | None = None,
+) -> dict:
+    discovery_errors: list[str] = []
+    discovered_targets = list(desktop_targets or [])
+    if not discovered_targets and desktop_targets_provider:
+        try:
+            if desktop_targets_provider is enumerate_active_vision_desktop_targets:
+                discovered_targets, errors = discover_macos_active_vision_desktop_targets(platform_name=platform_name or sys.platform)
+                discovery_errors.extend(errors)
+            else:
+                raw_targets = desktop_targets_provider(platform_name=platform_name or sys.platform)
+                if isinstance(raw_targets, dict):
+                    discovered_targets = list(raw_targets.get("desktop_targets") or [])
+                    discovery_errors.extend(str(item) for item in raw_targets.get("discovery_errors") or [])
+                    target_candidates = list(target_candidates or []) + list(raw_targets.get("target_candidates") or [])
+                else:
+                    discovered_targets = list(raw_targets or [])
+        except TypeError:
+            try:
+                discovered_targets = list(desktop_targets_provider() or [])
+            except Exception as exc:
+                discovery_errors.append(f"desktop target discovery failed: {exc}")
+        except Exception as exc:
+            discovery_errors.append(str(exc))
+    running_candidates: list[dict] = []
+    if running_apps_provider:
+        try:
+            if running_apps_provider is enumerate_active_vision_running_app_candidates:
+                running_result = running_apps_provider(platform_name=platform_name or sys.platform, include_errors=True)
+                if isinstance(running_result, tuple):
+                    running_candidates = list(running_result[0] or [])
+                    discovery_errors.extend(str(item) for item in (running_result[1] or []))
+                else:
+                    running_candidates = list(running_result or [])
+            else:
+                running_candidates = list(running_apps_provider(platform_name=platform_name or sys.platform) or [])
+        except TypeError:
+            try:
+                running_candidates = list(running_apps_provider() or [])
+            except Exception as exc:
+                discovery_errors.append(f"running app fallback failed: {exc}")
+        except Exception as exc:
+            discovery_errors.append(f"running app fallback failed: {exc}")
+    candidates = _merge_active_target_candidates(
+        _active_candidates_from_desktop_targets(discovered_targets),
+        list(target_candidates or []),
+        running_candidates,
+        [_active_screenshot_candidate(display_layout)],
+    )
+    return {
+        "desktop_targets": discovered_targets[:12],
+        "target_candidates": candidates,
+        "discovery_errors": [_clean_vision_text(item, max_length=180) for item in discovery_errors if str(item or "").strip()][:6],
+    }
+
+
+def _find_desktop_target(desktop_targets: list[dict] | tuple[dict, ...] | None, target_id: str) -> dict:
+    wanted = _clean_vision_text(target_id, max_length=120)
+    for target in desktop_targets or []:
+        if not isinstance(target, dict):
+            continue
+        if _clean_vision_text(target.get("target_id"), max_length=120) == wanted:
+            return dict(target)
+    return {}
+
+
+def _find_active_target(
+    desktop_targets: list[dict] | tuple[dict, ...] | None,
+    target_candidates: list[dict] | tuple[dict, ...] | None,
+    target_id: str,
+) -> dict:
+    target = _find_desktop_target(desktop_targets, target_id)
+    if target:
+        target.setdefault("source", "window_enumeration")
+        target.setdefault("focusable", True)
+        return target
+    wanted = _clean_vision_text(target_id, max_length=120)
+    for candidate in target_candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        if _clean_vision_text(candidate.get("target_id"), max_length=120) == wanted:
+            return dict(candidate)
+    return {}
+
+
+def _active_vision_focus_script(target: dict, click_policy: str) -> str:
+    if click_policy != ACTIVE_VISION_CLICK_POLICY:
+        return ""
+    app = json.dumps(_clean_vision_text(target.get("app"), max_length=120))
+    title = json.dumps(_clean_vision_text(target.get("title"), max_length=200))
+    focus_point = target.get("focus_point") if isinstance(target.get("focus_point"), dict) else {}
+    try:
+        click_x = int(focus_point.get("x"))
+        click_y = int(focus_point.get("y"))
+    except Exception:
+        return ""
+    # This path is intentionally limited to window focus: Accessibility raise
+    # plus one System Events click at the surveyed title-bar/window-top point.
+    return f"""
+tell application "System Events"
+    set targetApp to {app}
+    set targetTitle to {title}
+    set accessibilityRaiseStatus to "unknown"
+    set windowFocusClickStatus to "unknown"
+    if targetApp is "" then return "accessibility_raise=unknown:missing_app" & linefeed & "window_focus_click=unknown:missing_app"
+    if not (exists application process targetApp) then return "accessibility_raise=unknown:app_not_found" & linefeed & "window_focus_click=unknown:app_not_found"
+    tell application process targetApp
+        set frontmost to true
+        try
+            if targetTitle is not "" then
+                perform action "AXRaise" of first window whose name is targetTitle
+            else
+                perform action "AXRaise" of first window
+            end if
+            set accessibilityRaiseStatus to "success"
+        on error errMsg
+            set accessibilityRaiseStatus to "unknown:" & errMsg
+        end try
+    end tell
+    try
+        click at {{{click_x}, {click_y}}}
+        set windowFocusClickStatus to "success"
+    on error errMsg
+        set windowFocusClickStatus to "unknown:" & errMsg
+    end try
+    return "accessibility_raise=" & accessibilityRaiseStatus & linefeed & "window_focus_click=" & windowFocusClickStatus
+end tell
+""".strip()
+
+
+def _parse_active_vision_focus_result(output: str) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for line in str(output or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in {"accessibility_raise", "window_focus_click"}:
+            statuses[key] = _clean_vision_text(value, max_length=160) or "unknown"
+    return statuses
+
+
+def _activate_running_app_with_open(target: dict, *, runner=subprocess.run) -> tuple[bool, str]:
+    app_name = _clean_vision_text(target.get("app") or target.get("title"), max_length=120)
+    if not app_name:
+        return False, "running app activation unavailable: missing app name"
+    try:
+        result = runner(["/usr/bin/open", "-a", app_name], capture_output=True, text=True, timeout=1.2, check=False)
+    except Exception as exc:
+        return False, f"open -a activation failed: {exc}"
+    if getattr(result, "returncode", 1) == 0:
+        return True, "success"
+    detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=160)
+    return False, f"open -a activation failed: {detail or 'open returned non-zero exit'}"
+
+
+def _activate_running_app_candidate(target: dict, *, runner=subprocess.run) -> tuple[bool, str]:
+    native_detail = ""
+    try:
+        import AppKit  # type: ignore
+
+        app = None
+        pid_text = str(target.get("pid") or "").strip()
+        if pid_text:
+            try:
+                app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid_text))
+            except Exception:
+                app = None
+        bundle_id = str(target.get("bundle_id") or "").strip()
+        if app is None and bundle_id:
+            matches = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle_id)
+            app = list(matches or [None])[0]
+        if app is None:
+            native_detail = "native running app activation unavailable"
+        else:
+            options = getattr(AppKit, "NSApplicationActivateIgnoringOtherApps", 1)
+            ok = bool(app.activateWithOptions_(options))
+            if ok:
+                return True, "success"
+            native_detail = "native running app activation returned false"
+    except Exception as exc:
+        native_detail = f"native running app activation unavailable: {exc}"
+    fallback_ok, fallback_detail = _activate_running_app_with_open(target, runner=runner)
+    if fallback_ok:
+        return True, fallback_detail
+    if native_detail:
+        return False, f"{native_detail}; {fallback_detail}"
+    return False, fallback_detail
+
+
+def _can_activate_app_level_candidate(target: dict) -> bool:
+    if target.get("focus_point"):
+        return False
+    if not bool(target.get("focusable")):
+        return False
+    return bool(_clean_vision_text(target.get("app") or target.get("title"), max_length=120))
+
+
+def run_active_vision_light_interaction(
+    *,
+    mode: str = ACTIVE_VISION_SURVEY_MODE,
+    target_id: str = "",
+    target_hint: str = "",
+    desktop_targets: list[dict] | tuple[dict, ...] | None = None,
+    target_candidates: list[dict] | tuple[dict, ...] | None = None,
+    click_policy: str = ACTIVE_VISION_CLICK_POLICY,
+    actions: list[str] | tuple[str, ...] | None = None,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> dict:
+    requested = [str(item or "").strip() for item in (actions or []) if str(item or "").strip()]
+    normalized_mode = _clean_vision_text(mode, max_length=40) or ACTIVE_VISION_SURVEY_MODE
+    if normalized_mode != ACTIVE_VISION_FOCUS_MODE:
+        requested = []
+    allowed = [action for action in requested if action in ACTIVE_VISION_ALLOWED_ACTIONS]
+    blocked = [action for action in requested if action not in ACTIVE_VISION_ALLOWED_ACTIONS]
+    target = _find_active_target(desktop_targets, target_candidates, target_id)
+    trace = {
+        "status": "success",
+        "mode": normalized_mode,
+        "target_id": _clean_vision_text(target_id, max_length=120),
+        "target_hint": _clean_vision_text(target_hint, max_length=80),
+        "click_policy": ACTIVE_VISION_CLICK_POLICY,
+        "desktop_targets": list(desktop_targets or [])[:12],
+        "target_candidates": list(target_candidates or [])[:12],
+        "selected_candidate": dict(target) if target else {},
+        "focused_target": {},
+        "click_point": {},
+        "action_trace": [],
+        "actions": [],
+        "blocked_actions": blocked,
+        "unknowns": [],
+        "focus_result": {},
+    }
+    if normalized_mode == ACTIVE_VISION_SURVEY_MODE:
+        return trace
+    if click_policy and click_policy != ACTIVE_VISION_CLICK_POLICY:
+        trace["blocked_actions"].append(f"click_policy:{_clean_vision_text(click_policy, max_length=40)}")
+    if not _is_macos(platform_name):
+        trace["unknowns"].append("active vision light interaction is only implemented on macOS")
+        return trace
+    if not target:
+        trace["status"] = "error"
+        trace["unknowns"].append("active vision target not found")
+        trace["focus_result"] = {"status": "error", "method": "target_lookup", "reason": "active vision target not found"}
+        return trace
+    for action in allowed:
+        if action == ACTIVE_VISION_FOCUS_MODE and _can_activate_app_level_candidate(target):
+            ok, detail = _activate_running_app_candidate(target, runner=runner)
+            entry = {
+                "action": "activate_running_app",
+                "status": "success" if ok else "unknown",
+                "target_id": trace["target_id"],
+                "app": _clean_vision_text(target.get("app"), max_length=120),
+                "title": _clean_vision_text(target.get("title"), max_length=200),
+            }
+            if not ok:
+                entry["detail"] = detail
+                trace["unknowns"].append(f"activate_running_app failed: {detail}")
+            trace["action_trace"].append(entry)
+            trace["focus_result"] = {
+                "status": "success" if ok else "error",
+                "method": "activate_running_app",
+                "reason": "" if ok else detail,
+            }
+            if ok:
+                trace["actions"].append(action)
+                trace["focused_target"] = dict(target)
+            continue
+        script = _active_vision_focus_script(target, click_policy) if action == ACTIVE_VISION_FOCUS_MODE else ""
+        if not script:
+            trace["blocked_actions"].append(action)
+            continue
+        try:
+            result = runner(["osascript", "-e", script], capture_output=True, text=True, timeout=1.2, check=False)
+        except Exception as exc:
+            trace["unknowns"].append(f"{action} failed: {exc}")
+            continue
+        if getattr(result, "returncode", 1) == 0:
+            step_statuses = _parse_active_vision_focus_result(getattr(result, "stdout", ""))
+            focus_point = target.get("focus_point") if isinstance(target.get("focus_point"), dict) else {}
+            app_name = _clean_vision_text(target.get("app"), max_length=120)
+            title = _clean_vision_text(target.get("title"), max_length=200)
+            for step in ("accessibility_raise", "window_focus_click"):
+                status = step_statuses.get(step) or "unknown"
+                entry = {
+                    "action": step,
+                    "status": "success" if status == "success" else "unknown",
+                    "target_id": trace["target_id"],
+                    "app": app_name,
+                    "title": title,
+                }
+                if step == "window_focus_click" and status == "success":
+                    entry["click_policy"] = ACTIVE_VISION_CLICK_POLICY
+                    entry["click_point"] = dict(focus_point)
+                    trace["click_point"] = dict(focus_point)
+                if status != "success":
+                    entry["detail"] = status
+                    trace["unknowns"].append(f"{step} failed: {status}")
+                trace["action_trace"].append(entry)
+            if step_statuses.get("accessibility_raise") == "success" and step_statuses.get("window_focus_click") == "success":
+                trace["actions"].append(action)
+                trace["focused_target"] = dict(target)
+                trace["focus_result"] = {"status": "success", "method": ACTIVE_VISION_CLICK_POLICY}
+        else:
+            detail = _clean_vision_text(getattr(result, "stderr", ""), max_length=120)
+            trace["unknowns"].append(f"{action} failed: {detail or 'osascript failed'}")
+    if trace["unknowns"]:
+        trace["status"] = "partial" if trace["actions"] else "error"
+        if not trace.get("focus_result"):
+            trace["focus_result"] = {
+                "status": trace["status"],
+                "method": ACTIVE_VISION_CLICK_POLICY,
+                "reason": "; ".join(trace["unknowns"][:3]),
+            }
+    elif trace["actions"] and not trace.get("focus_result"):
+        trace["focus_result"] = {"status": "success", "method": ACTIVE_VISION_CLICK_POLICY}
+    return trace
+
+
+def _runtime_inline_frame_from_payload(frame_payload: dict, *, purpose: str = "main") -> dict:
+    mime_type = str(frame_payload.get("mime_type") or "").strip().lower()
+    data_url = str(frame_payload.get("data_url") or "").strip()
+    if mime_type not in {"image/jpeg", "image/png"} or not data_url.startswith("data:image/"):
+        return {}
+    inline = {
+        "mime_type": mime_type,
+        "data_url": data_url,
+        "frame_id": _clean_vision_text(frame_payload.get("frame_id"), max_length=80),
+        "frame_hash": _clean_vision_text(frame_payload.get("frame_hash"), max_length=120),
+        "purpose": _clean_vision_text(purpose, max_length=40),
+    }
+    return {key: value for key, value in inline.items() if value}
+
+
+def _decode_frame_image(data_url: str):
+    try:
+        header, encoded = str(data_url or "").split(",", 1)
+    except ValueError:
+        return None
+    if not header.startswith("data:image/"):
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except Exception:
+        return None
+    image = QImage()
+    try:
+        if not image.loadFromData(raw):
+            return None
+    except Exception:
+        return None
+    return image
+
+
+def _display_union_bounds(display_layout: list[dict] | None) -> dict[str, int]:
+    layout = display_layout if isinstance(display_layout, list) else []
+    if not layout:
+        return {"x": 0, "y": 0, "width": 0, "height": 0}
+    try:
+        min_x = min(int(item.get("x") or 0) for item in layout if isinstance(item, dict))
+        min_y = min(int(item.get("y") or 0) for item in layout if isinstance(item, dict))
+        max_x = max(int(item.get("x") or 0) + int(item.get("width") or 0) for item in layout if isinstance(item, dict))
+        max_y = max(int(item.get("y") or 0) + int(item.get("height") or 0) for item in layout if isinstance(item, dict))
+    except Exception:
+        return {"x": 0, "y": 0, "width": 0, "height": 0}
+    return {"x": min_x, "y": min_y, "width": max(0, max_x - min_x), "height": max(0, max_y - min_y)}
+
+
+def _active_detail_frames_from_capture(frame_payload: dict, selected_candidate: dict, config: dict) -> list[dict]:
+    bounds = selected_candidate.get("bounds") if isinstance(selected_candidate.get("bounds"), dict) else {}
+    width = int(bounds.get("width") or 0)
+    height = int(bounds.get("height") or 0)
+    if width < 80 or height < 40:
+        return []
+    image = _decode_frame_image(str(frame_payload.get("data_url") or ""))
+    if image is None or image.isNull():
+        return []
+    display_bounds = _display_union_bounds(frame_payload.get("display_layout") if isinstance(frame_payload.get("display_layout"), list) else None)
+    if display_bounds["width"] <= 0 or display_bounds["height"] <= 0:
+        display_bounds = {"x": 0, "y": 0, "width": image.width(), "height": image.height()}
+    scale_x = image.width() / max(1, display_bounds["width"])
+    scale_y = image.height() / max(1, display_bounds["height"])
+    pad_x = max(20, int(width * 0.06))
+    pad_y = max(20, int(height * 0.06))
+    crop_x = int((int(bounds.get("x") or 0) - display_bounds["x"] - pad_x) * scale_x)
+    crop_y = int((int(bounds.get("y") or 0) - display_bounds["y"] - pad_y) * scale_y)
+    crop_w = int((width + pad_x * 2) * scale_x)
+    crop_h = int((height + pad_y * 2) * scale_y)
+    crop_x = max(0, min(image.width() - 1, crop_x))
+    crop_y = max(0, min(image.height() - 1, crop_y))
+    crop_w = max(1, min(image.width() - crop_x, crop_w))
+    crop_h = max(1, min(image.height() - crop_y, crop_h))
+    try:
+        crop = image.copy(crop_x, crop_y, crop_w, crop_h)
+        mime_type, data_url = _encode_pixmap_frame(crop, config)
+    except Exception:
+        return []
+    frame_hash = _vision_hash_from_data_url(data_url)
+    detail_payload = {
+        "mime_type": mime_type,
+        "data_url": data_url,
+        "frame_id": f"{_clean_vision_text(frame_payload.get('frame_id'), max_length=60) or 'active'}-detail-1",
+        "frame_hash": frame_hash,
+        "purpose": "detail_crop",
+        "source_frame_id": _clean_vision_text(frame_payload.get("frame_id"), max_length=80),
+        "target_id": _clean_vision_text(selected_candidate.get("target_id"), max_length=120),
+        "crop_bounds": {"x": crop_x, "y": crop_y, "width": crop_w, "height": crop_h},
+    }
+    return [detail_payload]
+
+
+def capture_active_vision_frame_payload(
+    window,
+    command_payload: dict,
+    config: dict,
+    *,
+    screen_provider=None,
+    frame_encoder=capture_screen_frame_payload,
+    observation_provider=collect_screen_observations,
+    desktop_targets_provider=enumerate_active_vision_desktop_targets,
+    running_apps_provider=enumerate_active_vision_running_app_candidates,
+    interaction_runner=run_active_vision_light_interaction,
+    sleeper=time.sleep,
+    platform_name: str | None = None,
+) -> dict:
+    vision_cfg = normalize_vision_config(config or {})
+    active_capture_cfg = _active_vision_capture_config(vision_cfg)
+    active_cfg = normalize_active_observation_config(vision_cfg.get("active_observation", {}))
+    payload = command_payload if isinstance(command_payload, dict) else {}
+    mode = _clean_vision_text(payload.get("mode") or ACTIVE_VISION_SURVEY_MODE, max_length=40)
+    if mode not in {ACTIVE_VISION_SURVEY_MODE, ACTIVE_VISION_FOCUS_MODE}:
+        mode = ACTIVE_VISION_SURVEY_MODE
+    target_id = _clean_vision_text(payload.get("target_id"), max_length=120)
+    target_hint = _clean_vision_text(payload.get("target_hint"), max_length=80)
+    requested_actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
+    if mode == ACTIVE_VISION_FOCUS_MODE and not requested_actions:
+        requested_actions = [ACTIVE_VISION_FOCUS_MODE]
+    if mode == ACTIVE_VISION_SURVEY_MODE:
+        requested_actions = []
+    if active_cfg.get("allowed_interaction") == "none":
+        requested_actions = []
+    click_policy = _clean_vision_text(payload.get("click_policy") or ACTIVE_VISION_CLICK_POLICY, max_length=80)
+    settle_ms = int(payload.get("settle_ms") or active_cfg["settle_ms"])
+    desktop_targets = payload.get("desktop_targets") if isinstance(payload.get("desktop_targets"), list) else []
+    target_candidates = payload.get("target_candidates") if isinstance(payload.get("target_candidates"), list) else []
+    discovery = discover_active_vision_target_candidates(
+        desktop_targets=desktop_targets,
+        desktop_targets_provider=desktop_targets_provider,
+        running_apps_provider=running_apps_provider,
+        target_candidates=target_candidates,
+        platform_name=platform_name or sys.platform,
+    )
+    desktop_targets = discovery["desktop_targets"]
+    target_candidates = discovery["target_candidates"]
+    discovery_errors = discovery["discovery_errors"]
+    was_visible = False
+    try:
+        was_visible = bool(window.isVisible()) if hasattr(window, "isVisible") else False
+    except Exception:
+        was_visible = False
+    trace = {
+        "enabled": True,
+        "status": "success",
+        "mode": mode,
+        "target_id": target_id or (ACTIVE_VISION_SURVEY_MODE if mode == ACTIVE_VISION_SURVEY_MODE else ""),
+        "target_hint": target_hint,
+        "click_policy": ACTIVE_VISION_CLICK_POLICY,
+        "desktop_targets": list(desktop_targets or [])[:12],
+        "target_candidates": list(target_candidates or [])[:12],
+        "discovery_errors": list(discovery_errors or [])[:6],
+        "focused_target": {},
+        "selected_candidate": {},
+        "action_trace": [],
+        "click_point": {},
+        "actions": [],
+        "blocked_actions": [],
+        "unknowns": [],
+        "focus_result": {},
+        "verify_result": {},
+        "detail_frames_count": 0,
+    }
+    try:
+        if was_visible and hasattr(window, "hide"):
+            window.hide()
+        if mode == ACTIVE_VISION_FOCUS_MODE:
+            interaction_trace = interaction_runner(
+                mode=mode,
+                target_id=target_id,
+                target_hint=target_hint,
+                desktop_targets=desktop_targets,
+                target_candidates=target_candidates,
+                click_policy=click_policy,
+                actions=requested_actions,
+                platform_name=platform_name or sys.platform,
+            )
+            if isinstance(interaction_trace, dict):
+                trace.update({key: value for key, value in interaction_trace.items() if key != "data_url"})
+        try:
+            sleeper(max(0.0, min(2.0, settle_ms / 1000.0)))
+        except Exception:
+            pass
+        provider = screen_provider or QGuiApplication.primaryScreen
+        screen = provider()
+        if screen is None:
+            raise RuntimeError("primary screen is unavailable")
+        if frame_encoder is capture_screen_frame_payload and _is_macos(platform_name):
+            frame_payload = frame_encoder(screen, active_capture_cfg, allow_qt_fallback=False)
+        else:
+            frame_payload = frame_encoder(screen, active_capture_cfg)
+        frame_payload = ScreenVisionController._payload_from_frame_payload(frame_payload)
+        if not target_candidates:
+            discovery = discover_active_vision_target_candidates(
+                desktop_targets=desktop_targets,
+                desktop_targets_provider=None,
+                running_apps_provider=None,
+                target_candidates=[],
+                display_layout=frame_payload.get("display_layout") if isinstance(frame_payload.get("display_layout"), list) else None,
+                platform_name=platform_name or sys.platform,
+            )
+            target_candidates = discovery["target_candidates"]
+            trace["target_candidates"] = list(target_candidates or [])[:12]
+        selected_candidate = trace.get("selected_candidate") if isinstance(trace.get("selected_candidate"), dict) else {}
+        if not selected_candidate and target_id:
+            selected_candidate = _find_active_target(desktop_targets, target_candidates, target_id)
+            trace["selected_candidate"] = dict(selected_candidate) if selected_candidate else {}
+        detail_frames = _active_detail_frames_from_capture(frame_payload, selected_candidate, active_capture_cfg) if selected_candidate else []
+        runtime_frames = [_runtime_inline_frame_from_payload(frame_payload, purpose="main")]
+        runtime_frames.extend(_runtime_inline_frame_from_payload(item, purpose="detail_crop") for item in detail_frames)
+        runtime_frames = [item for item in runtime_frames if item]
+        if runtime_frames:
+            frame_payload["vision_frames"] = runtime_frames[:3]
+        trace["detail_frames_count"] = len(detail_frames)
+        trace["verify_result"] = {
+            "status": "captured",
+            "method": str(frame_payload.get("capture_backend") or "screen_capture")[:80],
+            "frame_hash": str(frame_payload.get("frame_hash") or "")[:120],
+        }
+        try:
+            observation_payload = observation_provider(vision_cfg, platform_name=platform_name) if observation_provider else {}
+        except TypeError:
+            observation_payload = observation_provider(vision_cfg) if observation_provider else {}
+        except Exception as exc:
+            observation_payload = {"unknowns": [f"active vision metadata observation failed: {exc}"]}
+        if isinstance(observation_payload, dict):
+            for key in ("unknowns", "desktop_context", "foreground_app", "window_title"):
+                if observation_payload.get(key) and not frame_payload.get(key):
+                    frame_payload[key] = observation_payload[key]
+        frame_payload["active_observation"] = trace
+        return frame_payload
+    except Exception:
+        trace["status"] = "error"
+        raise
+    finally:
+        if was_visible and hasattr(window, "show"):
+            try:
+                window.show()
+            except Exception:
+                pass
+            if hasattr(window, "raise_"):
+                try:
+                    window.raise_()
+                except Exception:
+                    pass
+
+
+class ScreenVisionController:
+    def __init__(
+        self,
+        parent=None,
+        *,
+        timer_factory=QTimer,
+        screen_provider=None,
+        frame_encoder=capture_screen_frame_payload,
+        observation_provider=collect_screen_observations,
+        task_runner=None,
+        post_frame=None,
+        background_capture: bool | None = None,
+    ) -> None:
+        self._timer = timer_factory(parent)
+        self._timer.timeout.connect(self.capture_once)
+        self._screen_provider = screen_provider or QGuiApplication.primaryScreen
+        self._frame_encoder = frame_encoder
+        self._observation_provider = observation_provider
+        self._task_runner = task_runner or self._run_background_task
+        self._post_frame = post_frame or self._post_frame_request
+        self._background_capture = _is_macos() if background_capture is None else bool(background_capture)
+        self._config = normalize_vision_config({})
+        self._backend_url = DEFAULT_BACKEND_URL
+        self.last_error = ""
+        self._capture_lock = threading.Lock()
+        self._capture_in_flight = False
+
+    def apply_config(self, config: dict) -> None:
+        source = config if isinstance(config, dict) else {}
+        self._config = normalize_vision_config(source.get("vision", {}))
+        chat_cfg = source.get("chat", {}) if isinstance(source.get("chat", {}), dict) else {}
+        self._backend_url = str(chat_cfg.get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
+        if not self._config["enabled"]:
+            self.stop()
+            return
+        self._timer.start(int(self._config["capture_interval_ms"]))
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def capture_once(self) -> None:
+        if not self._config["enabled"]:
+            return
+        if not self._begin_capture_task():
+            return
+        try:
+            screen = self._screen_provider()
+            if screen is None:
+                raise RuntimeError("primary screen is unavailable")
+            url = f"{self._backend_url.rstrip('/')}/api/vision/frame"
+            config = dict(self._config)
+            if self._background_capture:
+                display_layout = self._capture_display_layout()
+                self._task_runner(lambda: self._complete_capture_encode_and_post(url, screen, config, display_layout))
+                return
+            frame_payload = self._frame_encoder(screen, config)
+            payload = self._payload_from_frame_payload(frame_payload)
+            self._task_runner(lambda: self._complete_capture_post(url, payload, config))
+        except Exception as exc:
+            self._finish_capture_task()
+            self.last_error = str(exc)
+            print(f"自动视觉捕获失败: {exc}")
+
+    def _begin_capture_task(self) -> bool:
+        with self._capture_lock:
+            if self._capture_in_flight:
+                return False
+            self._capture_in_flight = True
+            return True
+
+    def _finish_capture_task(self) -> None:
+        with self._capture_lock:
+            self._capture_in_flight = False
+
+    @staticmethod
+    def _payload_from_frame_payload(frame_payload) -> dict:
+        if isinstance(frame_payload, dict):
+            return dict(frame_payload)
+        mime_type, data_url = frame_payload
+        return {"mime_type": mime_type, "data_url": data_url}
+
+    @staticmethod
+    def _capture_display_layout() -> list[dict]:
+        try:
+            return _screen_layout(list(QGuiApplication.screens() or []))
+        except Exception:
+            return []
+
+    def _complete_capture_encode_and_post(self, url: str, screen, config: dict, display_layout: list[dict] | None = None) -> None:
+        try:
+            if self._frame_encoder is capture_screen_frame_payload and self._background_capture and _is_macos():
+                frame_payload = self._frame_encoder(
+                    screen,
+                    config,
+                    allow_qt_fallback=False,
+                    display_layout=display_layout,
+                )
+            else:
+                frame_payload = self._frame_encoder(screen, config)
+            payload = self._payload_from_frame_payload(frame_payload)
+            self._complete_capture_post(url, payload, config)
+        except Exception as exc:
+            self.last_error = str(exc)
+            print(f"自动视觉捕获失败: {exc}")
+            self._finish_capture_task()
+
+    def _complete_capture_post(self, url: str, payload: dict, config: dict) -> None:
+        try:
+            try:
+                observation_payload = self._observation_provider(config) if self._observation_provider else {}
+            except Exception as exc:
+                observation_payload = {"unknowns": [f"本机屏幕元数据观察失败：{exc}"]}
+            if isinstance(observation_payload, dict):
+                for key in (
+                    "change_summary",
+                    "important_objects",
+                    "visible_text",
+                    "confidence",
+                    "unknowns",
+                    "desktop_context",
+                    "foreground_app",
+                    "window_title",
+                ):
+                    if observation_payload.get(key):
+                        payload[key] = observation_payload[key]
+            self._post_frame(url, payload, self._post_timeout_sec(config))
+            self.last_error = ""
+        except Exception as exc:
+            self.last_error = str(exc)
+            print(f"自动视觉上传失败: {exc}")
+        finally:
+            self._finish_capture_task()
+
+    @staticmethod
+    def _run_background_task(task) -> None:
+        thread = threading.Thread(target=task, name="IpetVisionCapturePost", daemon=True)
+        thread.start()
+
+    @staticmethod
+    def _post_timeout_sec(config: dict) -> float:
+        analyzer = config.get("analyzer") if isinstance(config.get("analyzer"), dict) else {}
+        if analyzer.get("enabled") and analyzer.get("provider") not in ("", "none", None):
+            try:
+                return max(2.0, float(analyzer.get("timeout_sec", 15.0)) + 1.0)
+            except Exception:
+                return 16.0
+        return 2.0
+
+    @staticmethod
+    def _post_frame_request(url: str, payload: dict, timeout: float):
+        return requests.post(
+            url,
+            json=payload,
+            headers={LOCAL_API_TOKEN_HEADER: LOCAL_API_TOKEN},
+            timeout=timeout,
+        )
+
+
 class DesktopPet(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -1555,6 +3126,7 @@ class DesktopPet(QMainWindow):
         self._drag_start_global = QPoint()
         self._drag_start_geometry = self.geometry()
         self._python_event_filters_installed = False
+        self.vision_controller = ScreenVisionController(self)
 
         self.bridge = PetBridge()
         self.bridge.stateChanged.connect(self.on_web_state_changed)
@@ -1603,6 +3175,7 @@ class DesktopPet(QMainWindow):
         self.ensure_active_runtime_sidecar()
         self.ensure_backend_service()
         self.ensure_asr_service()
+        self.vision_controller.apply_config(self.config)
 
         self.browser.loadFinished.connect(self.on_web_loaded)
         self.browser.setUrl(QUrl.fromLocalFile(str((ROOT_DIR / "index.html").resolve())))
@@ -1897,6 +3470,28 @@ class DesktopPet(QMainWindow):
             self._write_runtime_host_heartbeat()
             return
 
+        if command_type == "active_vision_capture":
+            try:
+                frame = capture_active_vision_frame_payload(self, payload, self.config.get("vision", {}))
+                trace = frame.get("active_observation") if isinstance(frame.get("active_observation"), dict) else {}
+                self._write_runtime_command_response(command, "success", {"frame": frame, "trace": trace})
+            except Exception as exc:
+                self._write_runtime_command_response(
+                    command,
+                    "error",
+                    {
+                        "error": str(exc),
+                        "trace": {
+                            "status": "error",
+                            "target_hint": _clean_vision_text(payload.get("target_hint"), max_length=80),
+                            "actions": [],
+                            "unknowns": [str(exc)],
+                        },
+                    },
+                )
+            self._write_runtime_host_heartbeat()
+            return
+
         self._write_runtime_command_response(command, "error", {"error": f"unsupported command: {command_type}"})
         self._write_runtime_host_heartbeat()
 
@@ -1911,6 +3506,7 @@ class DesktopPet(QMainWindow):
             self.ensure_asr_service()
         else:
             self.stop_asr_service()
+        self.vision_controller.apply_config(self.config)
         self.apply_config_to_web()
 
     def open_settings_page(self) -> None:
@@ -1981,6 +3577,8 @@ class DesktopPet(QMainWindow):
 
         backend_log_path = _truncate_runtime_log(_runtime_log_path("backend"))
         try:
+            env = os.environ.copy()
+            env[LOCAL_API_TOKEN_ENV] = LOCAL_API_TOKEN
             with backend_log_path.open("a", encoding="utf-8") as backend_log:
                 self.backend_process = subprocess.Popen(
                     cmd,
@@ -1988,6 +3586,7 @@ class DesktopPet(QMainWindow):
                     stdout=backend_log,
                     stderr=subprocess.STDOUT,
                     creationflags=creationflags,
+                    env=env,
                 )
             self.backend_started_by_app = True
         except Exception as exc:
@@ -2027,7 +3626,6 @@ class DesktopPet(QMainWindow):
             return False
 
     def ensure_hermes_sidecar(self) -> None:
-        self.config.setdefault("runtime", {}).setdefault("active", RUNTIME_HERMES)
         self.ensure_active_runtime_sidecar()
 
     def ensure_active_runtime_sidecar(self) -> None:
@@ -2325,6 +3923,8 @@ class DesktopPet(QMainWindow):
             return
         self._shutdown_in_progress = True
 
+        self.vision_controller.stop()
+
         try:
             if hasattr(self, "_config_poll_timer") and self._config_poll_timer.isActive():
                 self._config_poll_timer.stop()
@@ -2570,6 +4170,7 @@ class DesktopPet(QMainWindow):
                 "mouth_parameter_ids": list(self.lipsync_meta.get("mouth_open_ids", [])),
                 "mouth_form_parameter_ids": list(self.lipsync_meta.get("mouth_form_ids", [])),
             },
+            "vision": normalize_vision_config(self.config.get("vision", {})),
         }
 
     def on_web_loaded(self, ok: bool) -> None:
@@ -2702,6 +4303,7 @@ class DesktopPet(QMainWindow):
 
     def save_config(self) -> None:
         self.config["model_path"] = normalize_model_path(self.config.get("model_path", ""))
+        self.config["vision"] = normalize_vision_config(self.config.get("vision", {}))
         _normalize_hermes_sidecar_config(self.config)
         _normalize_hermes_chat_config(self.config)
         self.config["window"]["x"] = self.x()

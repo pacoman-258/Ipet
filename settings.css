@@ -798,9 +798,14 @@ button:disabled {
 }
 
 .runtime-core,
+.vision-block,
 .conversation-block,
 .agent-block {
   grid-column: 1 / -1;
+}
+
+.vision-status {
+  margin-top: 10px;
 }
 
 .runtime-block-head {

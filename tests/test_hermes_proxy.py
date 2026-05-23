@@ -66,7 +66,11 @@ class HermesProxyTests(unittest.TestCase):
         self.assertEqual(fake.requests[0][1], "/api/chat/stream")
 
     def test_chat_stream_returns_clear_error_when_hermes_disabled(self) -> None:
-        with mock.patch.object(backend_app, "_load_full_config", return_value={"hermes": {"enabled": False}}):
+        config = {
+            "runtime": {"active": "hermes", "adapters": {"hermes": {"enabled": False}}},
+            "hermes": {"enabled": False},
+        }
+        with mock.patch.object(backend_app, "_load_full_config", return_value=config):
             resp = self.client.post("/api/chat/stream", json={"text": "hi", "expression_mode": False})
         self.assertEqual(resp.status_code, 200)
         self.assertIn("event: error", resp.text)
