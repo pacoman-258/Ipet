@@ -28,6 +28,10 @@ async def cleanup_runtime_session(client: Any, runtime_session_id: str) -> dict[
             payload = await delete_runtime_session(session_id)
         else:
             payload = await client.request_json("DELETE", f"/api/chat/topics/{quote(session_id, safe='')}")
-        return {"ok": True, "payload": payload if isinstance(payload, dict) else {}, "error": ""}
+        payload_dict = payload if isinstance(payload, dict) else {}
+        if payload_dict.get("ok") is False:
+            error = str(payload_dict.get("error") or payload_dict.get("detail") or "runtime cleanup failed")
+            return {"ok": False, "payload": payload_dict, "error": error}
+        return {"ok": True, "payload": payload_dict, "error": ""}
     except Exception as exc:
         return {"ok": False, "payload": {}, "error": str(exc)}

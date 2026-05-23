@@ -88,3 +88,24 @@ class RuntimeTemporarySessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["payload"], {})
         self.assertIn("delete failed", payload["error"])
+
+    async def test_cleanup_runtime_session_treats_payload_ok_false_as_failure(self) -> None:
+        class FakeClient:
+            async def delete_runtime_session(self, session_id):
+                return {"ok": False, "error": "still exists"}
+
+        payload = await cleanup_runtime_session(FakeClient(), "ipet-temp-abc")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["payload"], {"ok": False, "error": "still exists"})
+        self.assertEqual(payload["error"], "still exists")
+
+    async def test_cleanup_runtime_session_uses_payload_detail_for_failure_error(self) -> None:
+        class FakeClient:
+            async def delete_runtime_session(self, session_id):
+                return {"ok": False, "detail": "delete unavailable"}
+
+        payload = await cleanup_runtime_session(FakeClient(), "ipet-temp-abc")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"], "delete unavailable")
