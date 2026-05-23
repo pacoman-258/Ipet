@@ -25,7 +25,7 @@ class MCPServersListingTests(unittest.TestCase):
             "servers": [{"name": "playwright_mcp", "health_status": "ready"}],
         }
         with mock.patch.object(
-            backend_app, "_get_hermes_client", return_value=fake_client
+            backend_app, "_get_runtime_client", return_value=fake_client
         ), mock.patch.object(
             backend_app,
             "_get_mcp_bridge",
@@ -54,7 +54,7 @@ class MCPServersListingTests(unittest.TestCase):
             ],
             "online": 1,
         }
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake_client):
             resp = self.client.get("/api/mcp/health")
 
         self.assertEqual(resp.status_code, 200)

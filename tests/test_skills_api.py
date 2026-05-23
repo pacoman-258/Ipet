@@ -184,7 +184,7 @@ class SkillsApiTests(unittest.TestCase):
                 }
             ]
         )
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake_client):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -215,7 +215,7 @@ class SkillsApiTests(unittest.TestCase):
                 }
             ]
         )
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake_client):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -259,7 +259,7 @@ class SkillsApiTests(unittest.TestCase):
                 }
             ]
         )
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake_client):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -344,7 +344,7 @@ class SkillsApiTests(unittest.TestCase):
                     {"ok": True, "runtime": "hermes", "deleted": "imported-skill"},
                 ]
             )
-            with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake_client):
+            with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake_client):
                 resp = self.client.post("/api/skills/import-local", json={"path": str(source_dir)})
                 self.assertEqual(resp.status_code, 200)
                 imported = resp.json()
@@ -1244,6 +1244,7 @@ class SkillsApiTests(unittest.TestCase):
                 bridge = backend_app._build_runtime_tool_bridge(
                     {
                         "chat_mode": "react",
+                        "settings_config": {"chat": {"skills": {"enabled": True}}},
                         "execution_phase": backend_app.PHASE_SKILL_EXECUTION,
                         "active_skill_ids": [],
                         "selection_origin": "planner",

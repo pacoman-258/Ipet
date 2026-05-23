@@ -4352,10 +4352,15 @@ async def _chat_stream_via_hermes(req: ChatStreamRequest) -> StreamingResponse:
 async def _chat_approval_via_runtime(req: ChatApprovalRequest) -> StreamingResponse:
     client = _get_runtime_client()
     payload = _approval_request_payload(req)
+    harness = MemoryHarness(
+        conversation_store=_get_conversation_store(),
+        memory_store=_get_ipet_memory_store(),
+        runtime_client=client,
+    )
 
     async def event_gen():
         try:
-            async for event, data in client.stream_sse("/api/chat/approval", payload):
+            async for event, data in harness.stream_approval(payload):
                 yield _sse(event, data)
         except (HermesUnavailable, RuntimeUnavailable) as exc:
             yield _sse("error", {"message": str(exc), "runtime": getattr(client, "runtime_id", RUNTIME_HERMES)})

@@ -17,15 +17,17 @@ from backend.ipet_memory_store import IpetMemoryStore
 class _FakeRuntimeClient:
     runtime_id = "astrbot"
 
-    def __init__(self, *, events=None) -> None:
+    def __init__(self, *, events=None, approval_events=None) -> None:
         self.events = events or [("token", {"delta": "收到"}), ("done", {"text": "收到"})]
+        self.approval_events = approval_events or [("phase", {"phase": "action", "text": "approved"}), ("done", {"text": "收到"})]
         self.stream_payloads: list[dict] = []
         self.delete_calls: list[str] = []
         self.request_json_calls: list[tuple[str, str, dict | None]] = []
 
     async def stream_sse(self, path, payload):
         self.stream_payloads.append({"path": path, "payload": dict(payload)})
-        for event, data in self.events:
+        events = self.approval_events if path == "/api/chat/approval" else self.events
+        for event, data in events:
             if event == "sleep":
                 await asyncio.sleep(float(data))
                 continue
@@ -111,6 +113,113 @@ class MemoryHarnessApiTests(unittest.TestCase):
         self.assertEqual(self.conversations.list_topics(), [])
         self.assertEqual(self.memories.search("临时偏好"), [])
         self.assertEqual(len(runtime.delete_calls), 1)
+
+    def test_approval_resume_saves_and_cleans_after_runtime_task_finishes(self) -> None:
+        runtime = _FakeRuntimeClient(
+            events=[
+                (
+                    "approval_required",
+                    {
+                        "turn_id": "runtime-approval-turn",
+                        "phase": "action",
+                        "text": "approve tool?",
+                        "tools": [{"name": "tool"}],
+                    },
+                )
+            ],
+            approval_events=[
+                ("phase", {"phase": "action", "text": "running tool"}),
+                ("token", {"delta": "已完成"}),
+                ("done", {"text": "已完成"}),
+            ],
+        )
+        with self._patched_app(runtime):
+            first_resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "session_id": "api-approval",
+                    "text": "请记住：我喜欢 approval harness。",
+                    "expression_mode": False,
+                    "memory_mode": "persistent",
+                },
+            )
+            self.assertEqual(first_resp.status_code, 200)
+            first_events = _parse_sse_events(first_resp.text)
+            self.assertEqual(first_events[-1][0], "approval_required")
+            runtime_session_id = runtime.stream_payloads[0]["payload"]["session_id"]
+            self.assertTrue(runtime_session_id.startswith("ipet-temp-"))
+            self.assertIsNone(self.conversations.get_topic_detail("api-approval"))
+            self.assertEqual(runtime.delete_calls, [])
+
+            approval_resp = self.client.post(
+                "/api/chat/approval",
+                json={"turn_id": "runtime-approval-turn", "approved": True},
+            )
+
+        self.assertEqual(approval_resp.status_code, 200)
+        approval_events = _parse_sse_events(approval_resp.text)
+        self.assertEqual(approval_events[-1][0], "done")
+        self.assertEqual(approval_events[-1][1]["topic_id"], "api-approval")
+        self.assertEqual(runtime.stream_payloads[1]["path"], "/api/chat/approval")
+        self.assertEqual(runtime.stream_payloads[1]["payload"]["turn_id"], "runtime-approval-turn")
+        self.assertEqual(runtime.delete_calls, [runtime_session_id])
+        detail = self.conversations.get_topic_detail("api-approval")
+        self.assertIsNotNone(detail)
+        self.assertEqual([item["content"] for item in detail["messages"]], ["请记住：我喜欢 approval harness。", "已完成"])
+        self.assertTrue(self.memories.search("approval harness"))
+
+    def test_approval_error_preserves_pending_turn_for_retry(self) -> None:
+        runtime = _FakeRuntimeClient(
+            events=[
+                (
+                    "approval_required",
+                    {
+                        "turn_id": "runtime-retry-turn",
+                        "phase": "action",
+                        "text": "approve retry?",
+                        "tools": [{"name": "tool"}],
+                    },
+                )
+            ],
+            approval_events=[("error", {"message": "runtime temporarily unavailable"})],
+        )
+        with self._patched_app(runtime):
+            first_resp = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "session_id": "api-approval-retry",
+                    "text": "请记住：我喜欢 approval retry。",
+                    "expression_mode": False,
+                    "memory_mode": "persistent",
+                },
+            )
+            runtime_session_id = runtime.stream_payloads[0]["payload"]["session_id"]
+            failed_approval_resp = self.client.post(
+                "/api/chat/approval",
+                json={"turn_id": "runtime-retry-turn", "approved": True},
+            )
+            self.assertEqual(first_resp.status_code, 200)
+            self.assertIn("event: approval_required", first_resp.text)
+            self.assertEqual(failed_approval_resp.status_code, 200)
+            self.assertIn("event: error", failed_approval_resp.text)
+            self.assertIsNone(self.conversations.get_topic_detail("api-approval-retry"))
+            self.assertEqual(runtime.delete_calls, [])
+
+            runtime.approval_events = [("token", {"delta": "重试完成"}), ("done", {"text": "重试完成"})]
+            retry_resp = self.client.post(
+                "/api/chat/approval",
+                json={"turn_id": "runtime-retry-turn", "approved": True},
+            )
+
+        self.assertEqual(retry_resp.status_code, 200)
+        retry_events = _parse_sse_events(retry_resp.text)
+        self.assertEqual(retry_events[-1][0], "done")
+        self.assertEqual(retry_events[-1][1]["topic_id"], "api-approval-retry")
+        self.assertEqual(runtime.delete_calls, [runtime_session_id])
+        detail = self.conversations.get_topic_detail("api-approval-retry")
+        self.assertIsNotNone(detail)
+        self.assertEqual([item["content"] for item in detail["messages"]], ["请记住：我喜欢 approval retry。", "重试完成"])
+        self.assertTrue(self.memories.search("approval retry"))
 
     def test_topic_endpoints_use_local_store_without_runtime_request_json(self) -> None:
         runtime = _FakeRuntimeClient()

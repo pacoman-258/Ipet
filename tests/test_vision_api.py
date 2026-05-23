@@ -4,12 +4,16 @@ import asyncio
 import json
 import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from backend.conversation_store import ConversationStore
+from backend.ipet_memory_store import IpetMemoryStore
 from backend.vision import VisionService
 
 
@@ -30,8 +34,28 @@ class VisionApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(backend_app.app)
         backend_app._VISION_SERVICE = None
+        self._ipet_store_tmp = tempfile.TemporaryDirectory()
+        root = Path(self._ipet_store_tmp.name)
+        self._ipet_store_patchers = [
+            mock.patch.object(
+                backend_app,
+                "_get_conversation_store",
+                return_value=ConversationStore(root / "ipet_conversations"),
+            ),
+            mock.patch.object(
+                backend_app,
+                "_get_ipet_memory_store",
+                return_value=IpetMemoryStore(root / "ipet_memory"),
+            ),
+        ]
+        for patcher in self._ipet_store_patchers:
+            patcher.start()
 
     def tearDown(self) -> None:
+        for patcher in reversed(getattr(self, "_ipet_store_patchers", [])):
+            patcher.stop()
+        if hasattr(self, "_ipet_store_tmp"):
+            self._ipet_store_tmp.cleanup()
         backend_app._VISION_SERVICE = None
         self.client.close()
 
@@ -1099,7 +1123,10 @@ class VisionApiTests(unittest.TestCase):
             resp = self.client.post("/api/chat/stream", json={"text": "普通聊天", "expression_mode": False})
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(fake.requests[0][2]["text"], "普通聊天")
+        plain_text = fake.requests[0][2]["text"]
+        self.assertIn("普通聊天", plain_text)
+        self.assertNotIn("强制视觉证据", plain_text)
+        self.assertNotIn("主动视觉证据", plain_text)
 
     def test_chat_stream_visual_question_without_evidence_requires_refusal(self) -> None:
         service = VisionService({"enabled": True, "inject_policy": "when_requested"}, now=lambda: 10.0)
@@ -1509,7 +1536,7 @@ class VisionApiTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         active_mock.assert_not_awaited()
-        self.assertEqual(fake.requests[0][2]["text"], "普通聊天")
+        self.assertEqual(fake.requests[0][2]["text"], "用户消息：普通聊天")
 
     def test_chat_stream_grounding_always_ignores_old_passive_frame_when_active_fails(self) -> None:
         service = VisionService({"enabled": True, "inject_policy": "when_requested", "grounding_mode": "always"}, now=lambda: 10.0)

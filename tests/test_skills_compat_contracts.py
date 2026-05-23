@@ -196,7 +196,7 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
                 ],
             }
         )
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -222,7 +222,7 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
                 ],
             }
         )
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake):
             resp = self.client.get("/api/skills")
 
         self.assertEqual(resp.status_code, 200)
@@ -267,7 +267,7 @@ class SkillsCompatibilityContractsTests(unittest.TestCase):
 
     def test_import_git_endpoint_forwards_subdir(self) -> None:
         fake = _FakeHermesClient({"ok": True, "runtime": "hermes", "skill": {"id": "pptx-helper"}})
-        with mock.patch.object(backend_app, "_get_hermes_client", return_value=fake):
+        with mock.patch.object(backend_app, "_get_runtime_client", return_value=fake):
             resp = self.client.post(
                 "/api/skills/import-git",
                 json={

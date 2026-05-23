@@ -262,5 +262,42 @@ class MemoryHarnessTests(unittest.TestCase):
         self.assertEqual(len(cleanup_files), 1)
         self.assertIn("still exists", cleanup_files[0].read_text(encoding="utf-8"))
 
+    def test_approval_done_cleanup_runs_if_client_closes_after_done_yield(self) -> None:
+        runtime = _FakeRuntimeClient(events=[("approval_required", {"turn_id": "approval-close"})])
+        harness = MemoryHarness(conversation_store=self.conversations, memory_store=self.memories, runtime_client=runtime)
+        events = asyncio.run(
+            self._collect(
+                harness.stream_chat(
+                    {
+                        "session_id": "conv-approval-close",
+                        "text": "请记住：我喜欢关闭后清理。",
+                        "chat_mode": "react",
+                        "memory_mode": "persistent",
+                    }
+                )
+            )
+        )
+        runtime_session_id = runtime.stream_payloads[0]["payload"]["session_id"]
+        self.assertEqual(events[-1][0], "approval_required")
+        self.assertEqual(runtime.delete_calls, [])
+        runtime.events = [("done", {"text": "清理完成"})]
+
+        async def consume_done_then_close() -> tuple[str, dict]:
+            stream = harness.stream_approval({"turn_id": "approval-close", "approved": True})
+            async for event, payload in stream:
+                self.assertEqual(event, "done")
+                await stream.aclose()
+                return event, payload
+            self.fail("expected approval done event")
+
+        event, payload = asyncio.run(consume_done_then_close())
+
+        self.assertEqual(event, "done")
+        self.assertEqual(payload["topic_id"], "conv-approval-close")
+        self.assertEqual(runtime.delete_calls, [runtime_session_id])
+        detail = self.conversations.get_topic_detail("conv-approval-close")
+        self.assertIsNotNone(detail)
+        self.assertEqual([item["content"] for item in detail["messages"]], ["请记住：我喜欢关闭后清理。", "清理完成"])
+
     async def _collect(self, stream):
         return [(event, payload) async for event, payload in stream]

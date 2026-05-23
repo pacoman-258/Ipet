@@ -22,7 +22,7 @@ class SettingsMcpDraftTests(unittest.TestCase):
         fake_client.request_json = mock.AsyncMock(return_value={"ok": True, "runtime": "hermes"})
         with mock.patch.object(
             backend_app,
-            "_get_hermes_client",
+            "_get_runtime_client",
             return_value=fake_client,
         ), mock.patch.object(
             backend_app,
