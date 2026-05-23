@@ -314,6 +314,10 @@ class AstrBotRuntimeAdapter:
             )
         return await self._request_json(method_upper, normalized, json_payload=json_payload)
 
+    async def delete_runtime_session(self, session_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return await self._delete_session(session_id)
+
     async def stream_sse(self, path: str, payload: dict[str, Any]) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         self._require_enabled()
         normalized = "/" + str(path or "").lstrip("/")
