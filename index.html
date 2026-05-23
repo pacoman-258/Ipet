@@ -1652,6 +1652,8 @@
       <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct 模式</button>
       <button class="chat-mode-btn" data-chat-mode="chat">聊天模式</button>
       <button class="chat-mode-btn" data-chat-mode="skill">技能模式</button>
+      <button class="chat-mode-btn is-active" data-memory-mode="persistent">保存</button>
+      <button class="chat-mode-btn" data-memory-mode="temporary">临时</button>
     </div>
     <div id="chat-history-drawer">
       <div class="chat-history-head">
@@ -1763,7 +1765,8 @@
       const chatHistoryStatusEl = document.getElementById("chat-history-status");
       const chatHistoryListEl = document.getElementById("chat-history-list");
       const chatSkillsToggleEl = document.getElementById("chat-skills-toggle");
-      const chatModeButtons = Array.from(document.querySelectorAll(".chat-mode-btn"));
+      const chatModeButtons = Array.from(document.querySelectorAll(".chat-mode-btn[data-chat-mode]"));
+      const memoryModeButtons = Array.from(document.querySelectorAll(".chat-mode-btn[data-memory-mode]"));
       const chatSkillsDrawerEl = document.getElementById("chat-skills-drawer");
       const chatSkillsRefreshEl = document.getElementById("chat-skills-refresh");
       const chatSkillsResetEl = document.getElementById("chat-skills-reset");
@@ -1829,6 +1832,7 @@
       let currentTopicId = String(state.chat.session_id || "default").trim() || "default";
       let currentTopicMeta = null;
       let currentChatMode = "react";
+      let currentMemoryMode = "persistent";
       let asrAudioContext = null;
       let asrMediaStream = null;
       let asrInputSource = null;
@@ -2035,6 +2039,11 @@
         return mode === "chat" || mode === "skill" ? mode : "react";
       }
 
+      function normalizeMemoryMode(value) {
+        const mode = String(value || "").trim().toLowerCase();
+        return mode === "temporary" ? "temporary" : "persistent";
+      }
+
       function dedupeSkillIds(values, allowedIds = null) {
         const allowedSet = Array.isArray(allowedIds) ? new Set(allowedIds.map(normalizeSkillId).filter(Boolean)) : null;
         const seen = new Set();
@@ -2069,6 +2078,13 @@
         applyChatModeUI();
       }
 
+      function setMemoryMode(mode) {
+        currentMemoryMode = normalizeMemoryMode(mode);
+        applyMemoryModeUI();
+        renderTopicHistoryList();
+        updateShellButtons();
+      }
+
       function applyChatModeUI() {
         for (const button of chatModeButtons) {
           const mode = normalizeChatMode(button.dataset.chatMode);
@@ -2093,6 +2109,16 @@
         if (chatSkillsLoaded) {
           setChatSkillsStatus(`当前会话已选择 ${activeChatSkillIds().length} 个技能。`);
         }
+      }
+
+      function applyMemoryModeUI() {
+        for (const button of memoryModeButtons) {
+          const mode = normalizeMemoryMode(button.dataset.memoryMode);
+          const active = mode === currentMemoryMode;
+          button.classList.toggle("is-active", active);
+          button.setAttribute("aria-pressed", active ? "true" : "false");
+        }
+        syncTopicIndicator();
       }
 
       function setChatSkillsStatus(message) {
@@ -2728,6 +2754,9 @@
       }
 
       function currentTopicLabel() {
+        if (currentMemoryMode === "temporary") {
+          return "临时聊天";
+        }
         return currentTopicMeta?.title || currentTopicId || "未创建";
       }
 
@@ -2797,6 +2826,11 @@
           return;
         }
         chatHistoryListEl.innerHTML = "";
+        if (currentMemoryMode === "temporary") {
+          setChatHistoryStatus("临时聊天不会写入历史。");
+          syncTopicIndicator();
+          return;
+        }
         if (!topicHistoryEnabled()) {
           setChatHistoryStatus("当前未启用话题保存。你仍然可以点击“新对话”创建临时会话。");
           syncTopicIndicator();
@@ -2857,6 +2891,10 @@
       }
 
       async function loadTopicHistory(force = false) {
+        if (currentMemoryMode === "temporary") {
+          renderTopicHistoryList();
+          return [];
+        }
         if (!topicHistoryEnabled()) {
           topicHistoryItems = [];
           topicHistoryLoaded = false;
@@ -4148,7 +4186,11 @@
                 currentChatMode = normalizeChatMode(payload.chat_mode);
                 applyChatModeUI();
               }
-              if (payload.topic_id) {
+              if (payload.memory_mode) {
+                currentMemoryMode = normalizeMemoryMode(payload.memory_mode);
+                applyMemoryModeUI();
+              }
+              if (payload.topic_id && currentMemoryMode !== "temporary") {
                 currentTopicId = String(payload.topic_id || "").trim() || currentTopicId;
                 state.chat.session_id = currentTopicId;
                 currentTopicMeta = topicHistoryItems.find((item) => item.topic_id === currentTopicId) || currentTopicMeta;
@@ -4186,7 +4228,11 @@
               feedSpeakBuffer(payload.delta || "");
             } else if (eventName === "done") {
               full = payload.text || full;
-              if (payload.topic_id) {
+              if (payload.memory_mode) {
+                currentMemoryMode = normalizeMemoryMode(payload.memory_mode);
+                applyMemoryModeUI();
+              }
+              if (payload.topic_id && currentMemoryMode !== "temporary") {
                 currentTopicId = String(payload.topic_id || "").trim() || currentTopicId;
                 state.chat.session_id = currentTopicId;
               }
@@ -4198,8 +4244,10 @@
                 pendingSpeakBuffer = full;
               }
               updateWorklogFinalText(ensureFinalMessage(), full || "(\u7a7a\u54cd\u5e94)");
-              if (topicHistoryEnabled()) {
+              if (currentMemoryMode !== "temporary" && topicHistoryEnabled()) {
                 await loadTopicHistory(true);
+              } else {
+                renderTopicHistoryList();
               }
               clearActiveThoughtSession(thoughtSessionId);
             } else if (eventName === "error") {
@@ -4284,7 +4332,9 @@
           await continueApproval(pendingApprovalInputTurnId, false, userText);
           return;
         }
-        await ensureTopicReady();
+        if (currentMemoryMode !== "temporary") {
+          await ensureTopicReady();
+        }
         if (currentChatMode === "skill") {
           await loadChatSkills(false);
           if (!activeChatSkillIds().length) {
@@ -4326,6 +4376,7 @@
               react_visibility: state.chat.react_visibility || "inline",
               max_reasoning_steps: Number(state.chat.max_reasoning_steps || 10),
               chat_mode: currentChatMode,
+              memory_mode: currentMemoryMode,
               skill_ids: currentChatMode === "chat" ? [] : activeChatSkillIds(),
               text: userText,
             }),
@@ -4587,6 +4638,7 @@
           }
           renderTopicHistoryList();
           applyChatModeUI();
+          applyMemoryModeUI();
           updateShellButtons();
           if (!state.chat.asr.enabled && (asrStarting || asrRecording || asrAwaitingFinal)) {
             cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
@@ -4670,6 +4722,16 @@
           toggleChatHistoryDrawer();
         });
         navChatButtonEl.addEventListener("click", async () => {
+          if (currentMemoryMode === "temporary") {
+            clearPendingDeleteTopic(false);
+            replaceChatMessages([]);
+            toggleChatSkillsDrawer(false);
+            toggleChatHistoryDrawer(false);
+            openChat();
+            renderTopicHistoryList();
+            updateShellButtons();
+            return;
+          }
           await createNewTopic(true);
         });
         windowMinimizeEl.addEventListener("click", () => {
@@ -4680,6 +4742,9 @@
         });
         for (const button of chatModeButtons) {
           button.addEventListener("click", () => setChatMode(button.dataset.chatMode));
+        }
+        for (const button of memoryModeButtons) {
+          button.addEventListener("click", () => setMemoryMode(button.dataset.memoryMode));
         }
         chatCloseEl.addEventListener("click", () => closeChat());
         chatSkillsToggleEl.addEventListener("click", () => toggleChatSkillsDrawer());
@@ -4824,6 +4889,7 @@
 
         syncPetDisplayName();
         applyChatModeUI();
+        applyMemoryModeUI();
         refreshStatus();
       }
 
