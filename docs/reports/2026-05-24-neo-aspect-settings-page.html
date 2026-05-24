@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neo Aspect 设置页重构报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f5f7;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(60, 60, 67, 0.16);
+      --accent: #0a84ff;
+      --danger: #ff3b30;
+      --card: rgba(255, 255, 255, 0.86);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(10, 132, 255, 0.16), transparent 32rem),
+        linear-gradient(135deg, #f7f8fb, var(--bg));
+      color: var(--text);
+      font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(960px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: clamp(30px, 5vw, 52px);
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 20px;
+    }
+
+    p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    section {
+      margin-top: 18px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      box-shadow: 0 18px 46px rgba(20, 26, 42, 0.08);
+      backdrop-filter: blur(18px) saturate(160%);
+    }
+
+    ul {
+      margin: 14px 0 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 7px 0;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(60, 60, 67, 0.08);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.92em;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .highlight {
+      border-left: 4px solid var(--accent);
+    }
+
+    .warning {
+      border-left: 4px solid var(--danger);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Neo Aspect 设置页重构报告</h1>
+      <p>本报告记录 2026-05-24 这一轮任务对 Ipet 设置页和 Qt 设置入口的改造结果。</p>
+      <div class="meta">
+        <span class="pill">分支：Neo_Aspect</span>
+        <span class="pill">范围：Web 设置页 / Qt 设置窗口 / UI 契约测试</span>
+        <span class="pill">状态：已完成并通过目标验证</span>
+      </div>
+    </header>
+
+    <section class="highlight">
+      <h2>本轮修改了哪些方面</h2>
+      <ul>
+        <li>将 <code>settings.html</code> 重做为 Neo Aspect 设置页，保留原有桌面窗口视觉风格，但内容改为 Body、Brain、Human Ops、Memory、Skills、Diagnostics。</li>
+        <li>将 <code>settings.js</code> 从旧运行时管理脚本改为 Ipet 本体配置脚本，支持静态预览、表单加载保存、诊断卡片、审阅队列和点击红点预览。</li>
+        <li>在 <code>settings.css</code> 中补充红点点击预览与审阅列表样式，并调整红点默认位置，避免被 Dock 遮挡。</li>
+        <li>修改 <code>main.py</code> 的设置页入口：Qt 宿主现在复用单个设置窗口，重复点击只聚焦或显示已有窗口，不再不断打开新页面。</li>
+        <li>新增 Neo Aspect 设置页测试，并把旧设置页 UI 测试改为确认已舍弃的 Hermes、AstrBot、MCP、runtime 管理控件不再出现。</li>
+        <li>更新架构设计文档和执行计划，记录设置页进入 Neo Aspect 内容模型，以及设置窗口单例行为。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>达成了什么效果</h2>
+      <ul>
+        <li>设置页现在表达的是新的 Ipet：有身体、有大脑、有人类式电脑操作、有记忆和技能沉淀。</li>
+        <li>Human Ops 的 <code>act</code> 审批逻辑在 UI 上可见，点击类动作通过红点和说明文字变成可审阅对象。</li>
+        <li>旧 agent runtime 生态不再占据设置页，不继续把 Ipet 伪装成运行时管理平台。</li>
+        <li>用户重复从 Qt 窗口打开设置页时，体验变成召回已有窗口，减少重复页面和状态混乱。</li>
+        <li>静态预览模式可在没有后端 API 时打开页面，便于视觉检查和快速设计迭代。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>已验证内容</h2>
+      <ul>
+        <li>通过浏览器视觉检查：总览、Body、Human Ops 面板可切换，红点预览显示在可见区域内。</li>
+        <li>通过单元测试：<code>tests.test_neo_aspect_settings_page</code>、<code>tests.test_neo_aspect_core</code>、<code>tests.test_main_runtime_env</code>。</li>
+        <li>通过编译检查：<code>py_compile app/settings_schema.py main.py</code>。</li>
+        <li>通过空白检查：目标文件 <code>git diff --check</code> 无尾随空白问题。</li>
+      </ul>
+    </section>
+
+    <section class="warning">
+      <h2>待办事项还有哪些</h2>
+      <ul>
+        <li>后端仍保留大量旧 runtime、MCP、Hermes、AstrBot 代码和 API，下一阶段应按模块直接删除或迁移。</li>
+        <li>根目录 UI 文件暂时还在过渡位置，最终应进入清晰的 frontend / body 边界。</li>
+        <li>Brain 目前已有决策数据结构，但真实 LLM 决策循环和单步执行状态机还需要落地。</li>
+        <li>Human Ops 需要从 preview / approval 数据结构走向真实 observe、click、type、hotkey、wait、verify 执行器。</li>
+        <li>Memory & Skills 还需要真实审阅队列、持久化、编辑、批准、拒绝和合并流程。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>推荐的下一步</h2>
+      <ul>
+        <li>优先做破坏性后端瘦身：删除 agent runtime、MCP 管理、Hermes/AstrBot 平台化配置入口，只保留能映射到 Body、Brain、Human Ops、Memory & Skills 的能力。</li>
+        <li>把 Brain 单步循环打通：输入用户目标和观察结果，输出唯一下一步 <code>say</code> / <code>observe</code> / <code>propose_act</code> / <code>propose_remember</code> / <code>propose_learn_skill</code>。</li>
+        <li>先实现 Human Ops 的最小闭环：观察屏幕、生成点击预览、人工批准、执行点击、再次观察。</li>
+        <li>为每轮任务继续生成 HTML 报告，形成 Ipet 重构过程的可审阅沉淀。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

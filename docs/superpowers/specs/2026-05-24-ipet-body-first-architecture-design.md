@@ -261,6 +261,8 @@ New settings sections:
 
 The settings page should not become a control panel for external agent ecosystems. It should configure Ipet itself.
 
+Desktop entry behavior: the Qt host owns a single settings window. Reopening settings should focus or reveal that existing window instead of creating another browser page or duplicate settings surface.
+
 ## Removal And Migration Direction
 
 The refactor can be aggressive. The following areas should be removed, archived, or replaced by the new modules:

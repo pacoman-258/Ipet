@@ -68,6 +68,59 @@ class _RuntimeCommandHost(_FakeWindow):
         pass
 
 
+class _FakeSettingsWindow:
+    def __init__(self, *, visible: bool = True) -> None:
+        self.visible = visible
+        self.calls: list[str] = []
+        self.urls: list[str] = []
+
+    def isVisible(self) -> bool:
+        return self.visible
+
+    def show(self) -> None:
+        self.calls.append("show")
+        self.visible = True
+
+    def raise_(self) -> None:
+        self.calls.append("raise")
+
+    def activateWindow(self) -> None:
+        self.calls.append("activate")
+
+    def setUrl(self, url) -> None:
+        self.calls.append("setUrl")
+        self.urls.append(str(url))
+
+
+class _SettingsWindowHost:
+    def __init__(self, window: _FakeSettingsWindow | None = None) -> None:
+        self.config = {"chat": {"backend_url": "http://127.0.0.1:8008"}}
+        self.settings_window = window
+        self._settings_window_url = "http://127.0.0.1:8008/settings" if window is not None else ""
+        self.created: list[_FakeSettingsWindow] = []
+        self.backend_calls = 0
+
+    def ensure_backend_service(self) -> None:
+        self.backend_calls += 1
+
+    def _create_settings_window(self, url: str):
+        window = _FakeSettingsWindow(visible=False)
+        self.created.append(window)
+        return window
+
+    def _settings_page_url(self) -> str:
+        return main.DesktopPet._settings_page_url(self)
+
+    def _settings_window_is_usable(self, window) -> bool:
+        return main.DesktopPet._settings_window_is_usable(self, window)
+
+    def _navigate_settings_window(self, window, url: str) -> None:
+        main.DesktopPet._navigate_settings_window(self, window, url)
+
+    def _show_or_focus_settings_window(self, url: str) -> None:
+        main.DesktopPet._show_or_focus_settings_window(self, url)
+
+
 class MainRuntimeEnvTests(unittest.TestCase):
     def test_augment_process_path_includes_project_and_user_bins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,6 +187,36 @@ class MainRuntimeEnvTests(unittest.TestCase):
     def test_webgl_remains_enabled_for_live2d(self) -> None:
         self.assertTrue(main._should_enable_webgl("darwin"))
         self.assertTrue(main._should_enable_webgl("win32"))
+
+    def test_open_settings_page_creates_single_qt_settings_window(self) -> None:
+        host = _SettingsWindowHost()
+
+        main.DesktopPet.open_settings_page(host)
+        main.DesktopPet.open_settings_page(host)
+
+        self.assertEqual(host.backend_calls, 2)
+        self.assertEqual(len(host.created), 1)
+        self.assertIs(host.settings_window, host.created[0])
+        self.assertEqual(host.created[0].calls, ["setUrl", "show", "raise", "activate", "raise", "activate"])
+        self.assertEqual(host._settings_window_url, "http://127.0.0.1:8008/settings")
+
+    def test_open_settings_page_refocuses_existing_settings_window(self) -> None:
+        window = _FakeSettingsWindow(visible=True)
+        host = _SettingsWindowHost(window)
+
+        main.DesktopPet.open_settings_page(host)
+
+        self.assertEqual(host.created, [])
+        self.assertEqual(window.calls, ["raise", "activate"])
+
+    def test_open_settings_page_shows_hidden_existing_settings_window(self) -> None:
+        window = _FakeSettingsWindow(visible=False)
+        host = _SettingsWindowHost(window)
+
+        main.DesktopPet.open_settings_page(host)
+
+        self.assertEqual(host.created, [])
+        self.assertEqual(window.calls, ["show", "raise", "activate"])
 
     def test_only_non_macos_forces_software_opengl(self) -> None:
         self.assertFalse(main._should_force_software_opengl("darwin"))

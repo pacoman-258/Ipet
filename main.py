@@ -11,7 +11,6 @@ import sys
 import threading
 import time
 import tempfile
-import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -3119,6 +3118,8 @@ class DesktopPet(QMainWindow):
         self._asr_warmup_monitor_thread: threading.Thread | None = None
         self._shutdown_in_progress = False
         self.control_panel = None
+        self.settings_window = None
+        self._settings_window_url = ""
         self.resize_margin = 8
         self._window_dragging = False
         self._window_resizing = False
@@ -3509,12 +3510,70 @@ class DesktopPet(QMainWindow):
         self.vision_controller.apply_config(self.config)
         self.apply_config_to_web()
 
+    def _settings_page_url(self) -> str:
+        chat_cfg = self.config.get("chat", {}) if isinstance(self.config, dict) else {}
+        if not isinstance(chat_cfg, dict):
+            chat_cfg = {}
+        backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)).strip() or DEFAULT_BACKEND_URL
+        return f"{backend_url.rstrip('/')}/settings"
+
+    def _clear_settings_window(self, window=None) -> None:
+        if window is None or getattr(self, "settings_window", None) is window:
+            self.settings_window = None
+            self._settings_window_url = ""
+
+    def _create_settings_window(self, url: str):
+        window = QWebEngineView()
+        window.setWindowTitle("Ipet 设置")
+        window.resize(1180, 760)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        window.page().setBackgroundColor(QColor(18, 18, 18, 255))
+
+        settings = window.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, _should_enable_webgl())
+        settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
+
+        try:
+            window.destroyed.connect(lambda *_args, settings_window=window: self._clear_settings_window(settings_window))
+        except Exception:
+            pass
+        return window
+
+    def _settings_window_is_usable(self, window) -> bool:
+        if window is None:
+            return False
+        try:
+            window.isVisible()
+        except Exception:
+            return False
+        return True
+
+    def _navigate_settings_window(self, window, url: str) -> None:
+        if self._settings_window_url == url:
+            return
+        window.setUrl(QUrl(url))
+        self._settings_window_url = url
+
+    def _show_or_focus_settings_window(self, url: str) -> None:
+        window = getattr(self, "settings_window", None)
+        if not self._settings_window_is_usable(window):
+            window = self._create_settings_window(url)
+            self.settings_window = window
+            self._settings_window_url = ""
+
+        self._navigate_settings_window(window, url)
+        if not window.isVisible():
+            window.show()
+        window.raise_()
+        window.activateWindow()
+
     def open_settings_page(self) -> None:
         self.ensure_backend_service()
-        backend_url = str(self.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).strip() or DEFAULT_BACKEND_URL
-        url = f"{backend_url.rstrip('/')}/settings"
+        url = self._settings_page_url()
         try:
-            webbrowser.open(url)
+            self._show_or_focus_settings_window(url)
         except Exception as exc:
             print(f"打开设置页失败: {exc}")
 
@@ -4335,6 +4394,11 @@ class DesktopPet(QMainWindow):
             self.save_config()
         except Exception as exc:
             print(f"保存配置失败: {exc}")
+        try:
+            if self.settings_window is not None:
+                self.settings_window.close()
+        except Exception:
+            pass
         self.shutdown_runtime()
         super().closeEvent(event)
         app = QApplication.instance()

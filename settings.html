@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>桌宠设置</title>
-  <link rel="stylesheet" href="/settings.css?v=8" />
+  <title>Ipet 设置</title>
+  <link rel="stylesheet" href="/settings.css?v=10" />
 </head>
 <body data-mode="ios" data-theme="light">
   <div class="app-shell">
@@ -14,855 +14,360 @@
         <strong id="settings-navbar-title">总览</strong>
       </div>
       <div class="menubar-actions">
-        <button id="reload-config-btn" class="ghost-button">重新读取磁盘配置</button>
-        <button id="reset-form-btn" class="ghost-button">恢复默认</button>
-        <button id="save-config-btn" class="primary-button">应用并保存</button>
+        <button id="reload-config-btn" class="ghost-button" type="button">重新读取</button>
+        <button id="reset-form-btn" class="ghost-button" type="button">恢复默认</button>
+        <button id="save-config-btn" class="primary-button" type="button">应用并保存</button>
       </div>
       <div class="menubar-right" aria-label="状态">
-        <span>MSG 19</span>
-        <span>◱ 0%</span>
-        <span>VOL</span>
-        <span>05-07</span>
+        <span>BODY</span>
+        <span>BRAIN</span>
+        <span>OPS</span>
       </div>
     </header>
 
     <main class="desktop-stage">
       <div class="content-area">
-      <section id="overview" class="dashboard-page desktop-overview">
-        <div class="overview-header">
-          <div>
-            <h2>统一设置中心</h2>
-            <p>Hermes、AstrBot、语音、技能和外观参数集中管理，保存后桌宠会同步刷新。</p>
-          </div>
-          <div class="overview-status-card" aria-label="控制台状态">
-            <span class="status-dot active"></span>
+        <section id="overview" class="dashboard-page desktop-overview" data-window-title="总览">
+          <div class="overview-header">
             <div>
-              <strong>Control Center</strong>
-              <span>本地配置面板</span>
+              <h2>Ipet Neo Aspect</h2>
+              <p>设置页保留原来的桌面窗口风格，内容改为身体、大脑、人类式操作、记忆与技能。</p>
             </div>
-          </div>
-        </div>
-        <div class="overview-stats" id="summary-cards"></div>
-      </section>
-
-      <section id="file-tools" class="panel-card file-tools-panel desktop-window" data-window-title="文件工具白名单" aria-labelledby="file-tools-title">
-        <div class="section-head compact">
-          <div>
-            <h4 id="file-tools-title">文件工具白名单目录</h4>
-            <p>这里维护文件工具可访问的目录。你可以手动添加，也可以调用桌宠宿主的原生目录选择器。</p>
-          </div>
-        </div>
-
-        <div class="allowlist-editor">
-          <label class="field wide">
-            <span>目录路径</span>
-            <input id="file-allowlist-input" type="text" placeholder="D:\projects\my-notes" />
-          </label>
-          <div class="button-row wrap allowlist-actions">
-            <button id="file-allowlist-add-btn" type="button" class="ghost-button">添加目录</button>
-            <button id="file-allowlist-pick-btn" type="button" class="pill-button" onclick="window.__pickFileAllowlistDirectory && window.__pickFileAllowlistDirectory()">选择目录</button>
-            <button id="file-allowlist-clear-btn" type="button" class="danger-button ghost-button">清空编辑列表</button>
-            <button id="file-allowlist-effective-btn" type="button" class="ghost-button" onclick="window.__refreshEffectiveFileAllowlist && window.__refreshEffectiveFileAllowlist()">查看当前生效目录</button>
-          </div>
-          <div id="file-allowlist-list" class="allowlist-list empty-state">当前还没有编辑中的白名单目录。</div>
-        </div>
-
-        <div class="section-head compact allowlist-current-head">
-          <div>
-            <h4>当前生效目录</h4>
-            <p>这里显示后端当前已保存并完成归一化处理的白名单目录。</p>
-          </div>
-        </div>
-        <div id="file-allowlist-effective-list" class="allowlist-list empty-state">当前还没有生效的白名单目录。</div>
-      </section>
-
-      <div id="toast" class="toast"></div>
-      <div id="status-banner" class="status-banner">准备加载配置...</div>
-
-      <section id="model" class="panel-card desktop-window" data-window-title="角色形象">
-        <div class="section-head">
-          <div>
-            <h3>角色形象</h3>
-            <p>管理桌宠形象资源，支持快速切换项目内形象，并直接试播动作和表情。</p>
-          </div>
-        </div>
-
-        <div class="form-grid two-col">
-          <label class="field wide">
-            <span>形象路径</span>
-            <input id="model-path" type="text" />
-          </label>
-          <label class="field">
-            <span>项目内形象</span>
-            <select id="local-model-select"></select>
-          </label>
-          <div class="field inline-actions">
-            <span>形象操作</span>
-            <div class="button-row wrap">
-              <button id="refresh-local-models-btn" class="ghost-button">刷新形象列表</button>
-              <button id="use-local-model-btn" class="ghost-button">填入路径</button>
-              <button id="preview-local-model-btn" class="pill-button">立即切换</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="preview-grid">
-          <div class="preview-card">
-            <h4>动作预览</h4>
-            <p class="preview-note">点击按钮后会让当前桌宠直接播放对应动作。</p>
-            <div id="model-motion-list" class="chip-list empty-state">选择项目形象后显示动作</div>
-          </div>
-          <div class="preview-card">
-            <h4>表情预览</h4>
-            <p class="preview-note">点击按钮即可让桌宠切换表情，适合快速检查形象资源是否齐全。</p>
-            <div id="model-expression-list" class="chip-list empty-state">选择项目形象后显示表情</div>
-          </div>
-        </div>
-      </section>
-
-      <section id="chat" class="panel-card runtime-panel desktop-window" data-window-title="运行时与语音">
-        <div class="section-head">
-          <div>
-            <h3>运行时与语音</h3>
-            <p>管理默认 AstrBot 连接、可选 Hermes 内核，以及对话、语音合成和语音识别。</p>
-          </div>
-        </div>
-
-        <div class="runtime-grid">
-          <div class="runtime-block runtime-core">
-            <div class="runtime-block-head">
+            <div class="overview-status-card" aria-label="控制台状态">
+              <span class="status-dot active"></span>
               <div>
-                <h4>Hermes 当前模型</h4>
-                <p>只保存 Hermes 内核当前使用的模型别名，具体加载与记忆交给 Hermes 处理。</p>
-              </div>
-              <span class="runtime-pill">Hermes 内核</span>
-            </div>
-
-            <div class="form-grid two-col">
-              <label class="field">
-                <span>当前模型</span>
-                <input id="chat-model" type="text" placeholder="hermes-agent" />
-              </label>
-              <label class="field">
-                <span>后端地址</span>
-                <input id="chat-backend-url" type="text" />
-              </label>
-            </div>
-
-            <div class="runtime-switch-grid single">
-              <div class="runtime-switch-group">
-                <span>Hermes 模型快捷切换</span>
-                <div id="runtime-main-model-presets" class="runtime-preset-list"></div>
+                <strong>Local Control</strong>
+                <span>本机设置面板</span>
               </div>
             </div>
           </div>
+          <div class="overview-stats" id="summary-cards"></div>
+        </section>
 
-          <div class="runtime-block runtime-core">
-            <div class="runtime-block-head">
-              <div>
-                <h4>内核运行时</h4>
-                <p>选择桌宠聊天请求要连接的 Agent 内核。AstrBot 保持默认，Hermes 作为可选次选内核。</p>
-              </div>
-              <span id="runtime-status-pill" class="runtime-pill">检测中</span>
-            </div>
-            <div class="form-grid two-col">
-              <label class="toggle-line">
-                <input id="runtime-active-hermes" type="radio" name="runtime-active" value="hermes" />
-                <span>Hermes</span>
-              </label>
-              <label class="toggle-line">
-                <input id="runtime-active-astrbot" type="radio" name="runtime-active" value="astrbot" />
-                <span>AstrBot</span>
-              </label>
-            </div>
-            <div id="runtime-status-detail" class="field-hint">运行时状态会随配置加载自动刷新。</div>
-          </div>
+        <div id="toast" class="toast"></div>
+        <div id="status-banner" class="status-banner">准备加载配置...</div>
 
-          <div class="runtime-block runtime-core">
-            <div class="runtime-block-head">
-              <div>
-                <h4>Hermes Agent 连接</h4>
-                <p>Hermes 是可选次选内核；选择 Hermes 时，决策、会话、技能、MCP 和工具执行由 Hermes 负责。</p>
-              </div>
-              <span id="hermes-status-pill" class="runtime-pill">检测中</span>
-            </div>
-
-            <div class="form-grid two-col">
-              <label class="toggle-line">
-                <input id="hermes-enabled" type="checkbox" />
-                <span>启用 Hermes Agent</span>
-              </label>
-              <label class="toggle-line">
-                <input id="hermes-auto-start" type="checkbox" />
-                <span>由桌宠启动 sidecar</span>
-              </label>
-              <label class="field">
-                <span>Hermes 地址</span>
-                <input id="hermes-base-url" type="text" placeholder="http://127.0.0.1:9119" />
-              </label>
-              <label class="field">
-                <span>健康检查路径</span>
-                <input id="hermes-health-path" type="text" placeholder="/api/status" />
-              </label>
-              <label class="field wide">
-                <span>启动命令</span>
-                <input id="hermes-command" type="text" placeholder="uv run hermes dashboard --host 127.0.0.1 --port 9119 --no-open --tui" />
-              </label>
-              <label class="field">
-                <span>工作目录</span>
-                <input id="hermes-cwd" type="text" placeholder="../hermes-agent" />
-              </label>
-              <label class="field">
-                <span>启动超时秒数</span>
-                <input id="hermes-startup-timeout-sec" type="number" min="1" step="1" />
-              </label>
-            </div>
-            <div id="hermes-status-detail" class="field-hint">Hermes 状态会随配置加载自动刷新。</div>
-          </div>
-
-          <div class="runtime-block runtime-core">
-            <div class="runtime-block-head">
-              <div>
-                <h4>AstrBot 连接</h4>
-                <p>桌宠通过 AstrBot HTTP API 对话；插件、知识库和消息平台仍在 AstrBot WebUI 管理。</p>
-              </div>
-              <span id="astrbot-status-pill" class="runtime-pill">检测中</span>
-            </div>
-
-            <div class="form-grid two-col">
-              <label class="toggle-line">
-                <input id="astrbot-enabled" type="checkbox" />
-                <span>启用 AstrBot</span>
-              </label>
-              <label class="toggle-line">
-                <input id="astrbot-auto-start" type="checkbox" />
-                <span>由桌宠启动 sidecar</span>
-              </label>
-              <label class="field">
-                <span>AstrBot 地址</span>
-                <input id="astrbot-base-url" type="text" placeholder="http://127.0.0.1:6185" />
-              </label>
-              <label class="field">
-                <span>健康检查路径</span>
-                <input id="astrbot-health-path" type="text" placeholder="/" />
-              </label>
-              <label class="field">
-                <span>用户名</span>
-                <input id="astrbot-username" type="text" placeholder="ipet" />
-              </label>
-              <label class="field">
-                <span>Dashboard 用户名</span>
-                <input id="astrbot-dashboard-username" type="text" placeholder="ipet" />
-              </label>
-              <label class="field">
-                <span>API Key 环境变量</span>
-                <input id="astrbot-api-key-env" type="text" placeholder="ASTRBOT_API_KEY" />
-              </label>
-              <label class="field wide">
-                <span>API Key</span>
-                <input id="astrbot-api-key" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥" />
-              </label>
-              <label class="toggle-line">
-                <input id="astrbot-api-key-clear" type="checkbox" />
-                <span>保存时清空 API Key</span>
-              </label>
-              <label class="field wide">
-                <span>Dashboard 密码</span>
-                <input id="astrbot-dashboard-password" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密码；ASTRBOT_DASHBOARD_PASSWORD 可覆盖" />
-              </label>
-              <label class="toggle-line">
-                <input id="astrbot-dashboard-password-clear" type="checkbox" />
-                <span>保存时清空 Dashboard 密码</span>
-              </label>
-              <label class="field wide">
-                <span>启动命令</span>
-                <input id="astrbot-command" type="text" placeholder="uv run astrbot" />
-              </label>
-              <label class="field">
-                <span>工作目录</span>
-                <input id="astrbot-cwd" type="text" placeholder="../AstrBot" />
-              </label>
-              <label class="field">
-                <span>启动超时秒数</span>
-                <input id="astrbot-startup-timeout-sec" type="number" min="1" step="1" />
-              </label>
-            </div>
-            <div id="astrbot-api-key-state" class="field-hint">API Key 状态会随配置加载自动刷新。</div>
-            <div id="astrbot-dashboard-password-state" class="field-hint">Dashboard 密码状态会随配置加载自动刷新。</div>
-            <div id="astrbot-status-detail" class="field-hint">AstrBot 状态会随配置加载自动刷新。</div>
-          </div>
-
-          <div class="runtime-block runtime-core">
-            <div class="runtime-block-head">
-              <div>
-                <h4>NapCatQQ 接入指引</h4>
-                <p>QQ 由 AstrBot + NapCatQQ 托管；桌宠只展示 OneBot v11 反向 WebSocket 连接信息。</p>
-              </div>
-              <span id="napcatqq-status-pill" class="runtime-pill">指引</span>
-            </div>
-            <div class="form-grid two-col">
-              <label class="toggle-line">
-                <input id="napcatqq-enabled" type="checkbox" />
-                <span>显示 NapCatQQ 指引</span>
-              </label>
-              <label class="field">
-                <span>反向 WebSocket 地址</span>
-                <input id="napcatqq-reverse-ws-url" type="text" placeholder="ws://127.0.0.1:6199/ws" />
-              </label>
-              <label class="field">
-                <span>适配器</span>
-                <input id="napcatqq-adapter-name" type="text" placeholder="aiocqhttp" />
-              </label>
-              <label class="field">
-                <span>NapCat WebUI</span>
-                <input id="napcatqq-webui-url" type="text" placeholder="可选，仅用于记录" />
-              </label>
-            </div>
-            <div id="napcatqq-status-detail" class="field-hint">在 AstrBot 中启用 OneBot v11/aiocqhttp 后，让 NapCatQQ 连接上面的 `/ws` 地址。</div>
-          </div>
-
-          <div class="runtime-block voice-block">
-            <div class="runtime-block-head">
-              <div>
-                <h4>语音合成</h4>
-                <p>语音合成保持原功能，可直接套用预设或编辑接口配置。</p>
-              </div>
-            </div>
-            <div class="form-grid two-col">
-              <label class="field">
-                <span>语音</span>
-                <input id="chat-voice" type="text" />
-              </label>
-              <label class="field">
-                <span>合成方式</span>
-                <select id="chat-tts-provider">
-                  <option value="edge_tts">Edge TTS</option>
-                  <option value="custom_http">自定义 HTTP</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>语速</span>
-                <div class="range-wrap">
-                  <input id="chat-rate-pct" type="range" min="-50" max="100" />
-                  <strong id="chat-rate-label">+0%</strong>
-                </div>
-              </label>
-              <label class="field">
-                <span>合成预设</span>
-                <div class="button-row stretch">
-                  <select id="tts-preset-select"></select>
-                  <button id="apply-tts-preset-btn" class="pill-button">一键填入</button>
-                </div>
-              </label>
-              <label class="field wide">
-                <span>合成接口配置</span>
-                <textarea id="chat-tts-provider-url" rows="6"></textarea>
-              </label>
+        <section id="body" class="panel-card desktop-window" data-window-title="Body">
+          <div class="section-head">
+            <div>
+              <h3>Body</h3>
+              <p>管理 Live2D 身体、表情动作、声音、气泡和桌面存在感。</p>
             </div>
           </div>
 
-          <div class="runtime-block voice-block">
-            <div class="runtime-block-head">
-              <div>
-                <h4>语音识别</h4>
-                <p>按住说话和实时识别保持原逻辑，只在聊天窗内生效。</p>
-              </div>
-            </div>
-            <div class="form-grid two-col">
-              <label class="field">
-                <span>识别开关</span>
-                <label class="inline-toggle">
-                  <input id="chat-asr-enabled" type="checkbox" />
-                  <span>启用按住说话</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>按住说话键</span>
-                <select id="chat-asr-push-to-talk-key">
-                  <option value="Alt">Alt 键</option>
-                  <option value="Ctrl">Ctrl 键</option>
-                  <option value="Space">空格键</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>实时识别</span>
-                <label class="inline-toggle">
-                  <input id="chat-asr-interim-results" type="checkbox" />
-                  <span>边说边写入输入框</span>
-                </label>
-              </label>
-              <div class="field">
-                <span>说明</span>
-                <span class="field-hint">按住设定按键开始录音，松开后只写入输入框，不会自动发送。</span>
-              </div>
+          <div class="form-grid two-col">
+            <label class="field wide">
+              <span>Live2D 形象路径</span>
+              <input id="model-path" type="text" />
+            </label>
+            <label class="field">
+              <span>语音</span>
+              <input id="chat-voice" type="text" />
+            </label>
+            <label class="field">
+              <span>合成方式</span>
+              <select id="chat-tts-provider">
+                <option value="edge_tts">Edge TTS</option>
+                <option value="custom_http">自定义 HTTP</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>语速百分比</span>
+              <input id="chat-rate-pct" type="number" min="-50" max="100" step="1" />
+            </label>
+            <label class="field">
+              <span>缩放</span>
+              <input id="pet-scale" type="number" min="0.05" max="5" step="0.01" />
+            </label>
+            <label class="field">
+              <span>透明度</span>
+              <input id="pet-opacity" type="number" min="0.1" max="1" step="0.01" />
+            </label>
+            <label class="field">
+              <span>偏移 X</span>
+              <input id="pet-offset-x" type="number" />
+            </label>
+            <label class="field">
+              <span>偏移 Y</span>
+              <input id="pet-offset-y" type="number" />
+            </label>
+            <label class="field">
+              <span>旋转</span>
+              <input id="pet-rotation" type="number" min="-180" max="180" step="0.1" />
+            </label>
+            <label class="field wide">
+              <span>背景图片路径</span>
+              <input id="pet-background-image" type="text" />
+            </label>
+          </div>
+
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="pet-edit-mode" type="checkbox" />
+              <span>编辑模式</span>
+            </label>
+            <label class="toggle-card">
+              <input id="pet-follow-mouse" type="checkbox" />
+              <span>视线跟随鼠标</span>
+            </label>
+            <label class="toggle-card">
+              <input id="pet-background-enabled" type="checkbox" />
+              <span>启用背景图</span>
+            </label>
+            <label class="toggle-card">
+              <input id="window-locked" type="checkbox" />
+              <span>锁定窗口位置</span>
+            </label>
+          </div>
+
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>窗口 X</span>
+              <input id="window-x" type="number" />
+            </label>
+            <label class="field">
+              <span>窗口 Y</span>
+              <input id="window-y" type="number" />
+            </label>
+            <label class="field">
+              <span>窗口宽</span>
+              <input id="window-width" type="number" min="120" />
+            </label>
+            <label class="field">
+              <span>窗口高</span>
+              <input id="window-height" type="number" min="120" />
+            </label>
+            <label class="field">
+              <span>按键说话</span>
+              <input id="chat-asr-push-to-talk-key" type="text" />
+            </label>
+            <label class="toggle-line">
+              <input id="chat-asr-enabled" type="checkbox" />
+              <span>启用语音输入</span>
+            </label>
+          </div>
+        </section>
+
+        <section id="brain" class="panel-card desktop-window" data-window-title="Brain">
+          <div class="section-head">
+            <div>
+              <h3>Brain</h3>
+              <p>Ipet 自己的大模型大脑：负责回复、意图理解、单步决策和人格表达。</p>
             </div>
           </div>
 
-          <div class="runtime-block vision-block">
-            <div class="runtime-block-head">
-              <div>
-                <h4>自动视觉</h4>
-                <p>Ipet 本地采集最近屏幕帧，只向当前运行时传递临时证据上下文。</p>
-              </div>
-              <span id="vision-status-pill" class="runtime-pill">默认关闭</span>
-            </div>
-            <div class="form-grid two-col">
-              <label class="field">
-                <span>视觉开关</span>
-                <label class="inline-toggle">
-                  <input id="vision-enabled" type="checkbox" />
-                  <span>启用自动视觉</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>注入策略</span>
-                <select id="vision-inject-policy">
-                  <option value="off">不注入</option>
-                  <option value="when_requested">按需注入</option>
-                  <option value="always_summary">总是注入摘要</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>证据约束</span>
-                <label class="inline-toggle">
-                  <input id="vision-force-grounding" type="checkbox" />
-                  <span>强制视觉 grounding</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>主动观察</span>
-                <label class="inline-toggle">
-                  <input id="vision-active-observation-enabled" type="checkbox" />
-                  <span>强制视觉问题先让 Ipet 主动观察屏幕</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>主动观察交互</span>
-                <select id="vision-active-observation-allowed-interaction">
-                  <option value="light">light：聚焦/切换/小幅滚动</option>
-                  <option value="none">none：只让出视野并截图</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>主动观察等待毫秒</span>
-                <input id="vision-active-observation-settle-ms" type="number" min="100" max="2000" step="50" />
-              </label>
-              <label class="field">
-                <span>主动观察超时秒数</span>
-                <input id="vision-active-observation-timeout-sec" type="number" min="1" max="20" step="1" />
-              </label>
-              <label class="field">
-                <span>强制视觉是否使用周期截图</span>
-                <label class="inline-toggle">
-                  <input id="vision-passive-capture-use-for-forced" type="checkbox" />
-                  <span>主动观察不可用时允许复用旧周期截图</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>视觉分析器</span>
-                <label class="inline-toggle">
-                  <input id="vision-analyzer-enabled" type="checkbox" />
-                  <span>启用图像理解分析</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>分析器提供商</span>
-                <input id="vision-analyzer-provider" type="text" list="vision-analyzer-provider-options" placeholder="留空则使用当前运行时 / AstrBot" />
-                <datalist id="vision-analyzer-provider-options">
-                  <option value="openai_compatible_vlm"></option>
-                  <option value="local_vlm"></option>
-                  <option value="macos_vision_ocr"></option>
-                  <option value="none"></option>
-                </datalist>
-              </label>
-              <label class="field">
-                <span>VLM Base URL</span>
-                <input id="vision-analyzer-base-url" type="text" placeholder="空则按 provider 默认或回退运行时" />
-              </label>
-              <label class="field">
-                <span>VLM 模型</span>
-                <div class="button-row stretch">
-                  <input id="vision-analyzer-model" type="text" placeholder="例如 gpt-4o-mini / qwen-vl" />
-                  <button id="fetch-vision-analyzer-models-btn" class="ghost-button" type="button">拉取 VLM 模型</button>
-                </div>
-              </label>
-              <label class="field">
-                <span>VLM 模型列表</span>
-                <div class="button-row stretch">
-                  <select id="vision-analyzer-model-select"></select>
-                  <button id="apply-vision-analyzer-model-btn" class="pill-button" type="button">一键填入</button>
-                </div>
-              </label>
-              <label class="field">
-                <span>VLM API Key</span>
-                <input id="vision-analyzer-api-key" type="password" placeholder="留空保存会保留当前密钥" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>清空 VLM Key</span>
-                <label class="inline-toggle">
-                  <input id="vision-analyzer-api-key-clear" type="checkbox" />
-                  <span>保存时清空已保存的 VLM API Key</span>
-                </label>
-                <span id="vision-analyzer-api-key-state" class="field-hint">尚未配置 VLM API Key。</span>
-              </label>
-              <label class="field">
-                <span>图像细节</span>
-                <select id="vision-analyzer-image-detail">
-                  <option value="low">low</option>
-                  <option value="auto">auto</option>
-                  <option value="high">high</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>采集间隔毫秒</span>
-                <input id="vision-capture-interval-ms" type="number" min="1000" max="60000" step="500" />
-              </label>
-              <label class="field">
-                <span>最大宽度</span>
-                <input id="vision-max-width" type="number" min="320" max="2560" step="80" />
-              </label>
-              <label class="field">
-                <span>JPEG 质量</span>
-                <input id="vision-jpeg-quality" type="number" min="35" max="95" step="1" />
-              </label>
-              <label class="field">
-                <span>上下文有效秒数</span>
-                <input id="vision-context-ttl-sec" type="number" min="5" max="300" step="5" />
-              </label>
-              <label class="field">
-                <span>变化阈值</span>
-                <input id="vision-routing-visual-change-threshold" type="number" min="0" max="64" step="1" />
-              </label>
-              <label class="field">
-                <span>VLM 冷却秒数</span>
-                <input id="vision-routing-vlm-cooldown-sec" type="number" min="0" max="300" step="1" />
-              </label>
-              <label class="field">
-                <span>稳定等待毫秒</span>
-                <input id="vision-routing-stable-after-change-ms" type="number" min="0" max="10000" step="100" />
-              </label>
-              <label class="field">
-                <span>OCR 最大字符数</span>
-                <input id="vision-analyzer-max-text-chars" type="number" min="40" max="2000" step="40" />
-              </label>
-              <label class="field">
-                <span>VLM 最大观察数</span>
-                <input id="vision-analyzer-max-observations" type="number" min="1" max="8" step="1" />
-              </label>
-              <label class="field">
-                <span>运行时回退</span>
-                <label class="inline-toggle">
-                  <input id="vision-analyzer-fallback-to-runtime" type="checkbox" />
-                  <span>provider 为空或不可用时使用当前主模型</span>
-                </label>
-              </label>
-            </div>
-            <div id="vision-status-detail" class="field-hint vision-status">自动视觉默认关闭，不落盘；运行时只接收受控证据摘要。</div>
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>模型端点</span>
+              <input id="brain-model-endpoint" type="text" placeholder="http://127.0.0.1:11434" />
+            </label>
+            <label class="field">
+              <span>模型名称</span>
+              <input id="brain-model-name" type="text" placeholder="gpt-5.4" />
+            </label>
+            <label class="field wide">
+              <span>API Key</span>
+              <input id="brain-api-key" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥" />
+            </label>
+            <label class="toggle-line">
+              <input id="brain-api-key-clear" type="checkbox" />
+              <span>保存时清空大脑密钥</span>
+            </label>
+            <label class="field wide">
+              <span>人格设定</span>
+              <textarea id="brain-persona" rows="6"></textarea>
+            </label>
+            <label class="field wide">
+              <span>当前自我状态</span>
+              <textarea id="brain-self-state" rows="4" placeholder="例如：专注陪伴、等待用户确认下一步。"></textarea>
+            </label>
+            <label class="field">
+              <span>回复风格</span>
+              <select id="brain-response-style">
+                <option value="lively">活泼</option>
+                <option value="calm">冷静</option>
+                <option value="concise">简洁</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>单步决策温度</span>
+              <input id="brain-decision-temperature" type="number" min="0" max="1.5" step="0.05" />
+            </label>
           </div>
+        </section>
 
-          <div class="runtime-block conversation-block">
-            <div class="runtime-block-head">
-              <div>
-                <h4>快捷会话切换</h4>
-                <p>这里只切换会话入口，记忆与长期上下文交给当前运行时。</p>
-              </div>
-            </div>
-            <div class="form-grid two-col">
-              <label class="field">
-                <span>会话 ID</span>
-                <input id="chat-session-id" type="text" />
-              </label>
-              <div class="field wide">
-                <span>常用会话</span>
-                <div id="runtime-session-presets" class="runtime-preset-list session-preset-list"></div>
-              </div>
+        <section id="human-ops" class="panel-card desktop-window" data-window-title="Human Ops">
+          <div class="section-head">
+            <div>
+              <h3>Human Ops</h3>
+              <p>看屏幕、点击、输入、快捷键、打开 App、等待和读取反馈。say / observe 可自由执行；act 需要批准。</p>
             </div>
           </div>
 
-          <div class="runtime-block agent-block">
-            <div class="runtime-block-head">
-              <div>
-                <h4>智能体行为</h4>
-                <p>桌宠只传递提示词、表情和审批交互，具体任务流程由当前运行时处理。</p>
-              </div>
-            </div>
-            <div class="form-grid two-col">
-              <label class="field wide">
-                <span>系统提示词</span>
-                <div class="button-row wrap prompt-tools">
-                  <button id="import-system-prompt-btn" type="button" class="ghost-button">导入配置</button>
-                  <span class="field-hint">直接把整个配置文件内容导入为系统提示词</span>
-                </div>
-                <input id="system-prompt-file-input" type="file" accept=".json,application/json" class="visually-hidden" />
-                <textarea id="chat-system-prompt" rows="6"></textarea>
-              </label>
-              <label class="field">
-                <span>智能体推理</span>
-                <label class="inline-toggle">
-                  <input id="chat-react-enabled" type="checkbox" />
-                  <span>启用内联推理</span>
-                </label>
-              </label>
-              <label class="field">
-                <span>推理步数</span>
-                <input id="chat-max-reasoning-steps" type="number" min="1" />
-              </label>
-              <label class="field">
-                <span>推理轨迹显示</span>
-                <select id="chat-react-visibility">
-                  <option value="inline">在聊天中显示</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="toggle-grid compact-toggle-grid">
-              <label class="toggle-card">
-                <input id="chat-expression-mode" type="checkbox" />
-                <span>开启表情联动</span>
-              </label>
-              <label class="toggle-card">
-                <input id="tooling-enabled" type="checkbox" />
-                <span>启用工具调用</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="skills" class="panel-card desktop-window" data-window-title="Hermes 技能">
-        <div class="section-head">
-          <div>
-            <h3>Hermes 技能</h3>
-            <p>管理写入 Hermes 的技能包、默认启用范围，以及本地目录和 Git 仓库导入入口。</p>
-          </div>
-        </div>
-
-        <div class="toggle-grid">
-          <label class="toggle-card">
-            <input id="skills-enabled" type="checkbox" />
-            <span>启用 Hermes 技能</span>
-          </label>
-        </div>
-
-        <div class="hero-summary" id="skills-summary"></div>
-
-        <div class="form-grid two-col">
-          <label class="field wide">
-            <span>&#26412;&#22320;&#25216;&#33021;&#30446;&#24405;</span>
-            <input id="skill-local-path" type="text" placeholder="D:\skills\my-skill" />
-          </label>
-          <div class="field inline-actions">
-            <span>&#26412;&#22320;&#23548;&#20837;</span>
-            <div class="button-row wrap">
-              <button id="skill-local-pick-btn" type="button" class="ghost-button">&#36873;&#25321;&#30446;&#24405;</button>
-              <button id="skill-local-import-btn" type="button" class="pill-button">写入 Hermes</button>
-            </div>
-            <span class="field-hint">会按 `SKILL.md` 规范校验后复制到 Hermes 受管目录。</span>
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="ops-observe-screen" type="checkbox" />
+              <span>允许看屏幕</span>
+            </label>
+            <label class="toggle-card">
+              <input id="ops-accessibility" type="checkbox" />
+              <span>允许读取可访问性结构</span>
+            </label>
+            <label class="toggle-card">
+              <input id="ops-require-act-review" type="checkbox" />
+              <span>act 需要批准</span>
+            </label>
+            <label class="toggle-card">
+              <input id="ops-require-memory-review" type="checkbox" />
+              <span>remember 需要批准</span>
+            </label>
+            <label class="toggle-card">
+              <input id="ops-require-skill-review" type="checkbox" />
+              <span>learn_skill 需要批准</span>
+            </label>
+            <label class="toggle-card">
+              <input id="ops-clipboard-review" type="checkbox" />
+              <span>剪贴板写入前确认</span>
+            </label>
           </div>
 
-          <label class="field wide">
-            <span>Git &#20179;&#24211;&#22320;&#22336;</span>
-            <input id="skill-git-url" type="text" placeholder="https://github.com/user/repo.git" />
-          </label>
-          <label class="field">
-            <span>Git &#30446;&#26631;&#21517;&#31216;</span>
-            <input id="skill-git-name" type="text" placeholder="optional-skill-id" />
-          </label>
-          <label class="field">
-            <span>Git 分支 / 标签 / 提交</span>
-            <input id="skill-git-ref" type="text" placeholder="main" />
-          </label>
-          <label class="field">
-            <span>&#25216;&#33021;&#23376;&#30446;&#24405;</span>
-            <input id="skill-git-subdir" type="text" placeholder="skills/pptx" />
-          </label>
-          <div class="field inline-actions">
-            <span>Git 导入</span>
-            <div class="button-row wrap">
-              <button id="skill-git-import-btn" type="button" class="pill-button">导入并写入 Hermes</button>
-            </div>
-            <span class="field-hint">支持标准第三方技能仓库；如果技能位于仓库子目录，请填写类似 `skills/pptx` 的路径。</span>
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>红点 X</span>
+              <input id="click-preview-x" type="number" />
+            </label>
+            <label class="field">
+              <span>红点 Y</span>
+              <input id="click-preview-y" type="number" />
+            </label>
+            <label class="field">
+              <span>点击说明</span>
+              <input id="click-preview-label" type="text" />
+            </label>
+            <label class="field">
+              <span>红点大小</span>
+              <input id="click-preview-size" type="number" min="8" max="36" step="1" />
+            </label>
           </div>
-        </div>
 
-        <div class="panel-header">
-          <div>
-            <h4>已写入 Hermes 的技能</h4>
-            <p>内置与第三方 Hermes 技能会在这里统一展示。默认启用项保存到配置里，临时切换不会立刻改写磁盘。</p>
+          <div class="click-preview-surface" aria-label="点击预览示意区">
+            <span id="click-preview-dot" class="click-preview-dot"></span>
+            <strong id="click-preview-caption">我想点击这里</strong>
           </div>
-        </div>
-        <div id="skills-list" class="server-grid empty-state">Hermes 技能列表尚未加载。</div>
-        <div id="skills-status" class="field-hint">Hermes 技能面板就绪后会自动从 `/api/skills` 拉取数据。</div>
-      </section>
+        </section>
 
-      <section id="mcp" class="panel-card desktop-window" data-window-title="Hermes MCP">
-        <div class="section-head">
-          <div>
-            <h3>Hermes MCP</h3>
-            <p>统一管理写入 Hermes 的 MCP 服务。内建文件工具由全局开关和允许目录控制，第三方服务通过服务配置安装。</p>
-          </div>
-        </div>
-
-        <div class="toggle-grid">
-          <label class="toggle-card">
-            <input id="third-party-enabled" type="checkbox" />
-            <span>启用第三方 MCP</span>
-          </label>
-        </div>
-
-        <div class="form-grid two-col">
-          <label class="field">
-            <span>Hermes MCP 预设</span>
-            <div class="button-row stretch">
-              <select id="mcp-preset-select"></select>
-              <button id="mcp-apply-preset-btn" class="ghost-button">填入预设</button>
-            </div>
-          </label>
-          <label class="field">
-            <span>服务名称</span>
-            <input id="mcp-server-name" type="text" placeholder="playwright_mcp" />
-          </label>
-          <label class="field wide">
-            <span>MCP 服务配置</span>
-            <textarea id="mcp-config-json" rows="6" placeholder='{"mcpServers":{"playwright_mcp":{"command":"npx","args":["@playwright/mcp@latest"]}}}'></textarea>
-          </label>
-          <div class="field inline-actions wide">
-            <span>写入 Hermes</span>
-            <div class="button-row wrap">
-              <button id="mcp-create-btn" class="pill-button">创建并写入</button>
-              <button id="mcp-reload-btn" class="ghost-button">刷新状态</button>
+        <section id="memory" class="panel-card desktop-window" data-window-title="Memory">
+          <div class="section-head">
+            <div>
+              <h3>Memory</h3>
+              <p>长期事实、用户偏好、关系记忆和任务经验。写入前必须给人类 review。</p>
             </div>
           </div>
-        </div>
 
-        <div id="mcp-server-list" class="server-grid empty-state">正在加载 Hermes MCP 状态...</div>
-      </section>
-
-      <section id="pet" class="panel-card desktop-window" data-window-title="形象参数">
-        <div class="section-head">
-          <div>
-            <h3>&#24418;&#35937;&#21442;&#25968;</h3>
-            <p>&#25511;&#21046;&#26700;&#23456;&#32553;&#25918;&#12289;&#36879;&#26126;&#24230;&#12289;&#35270;&#32447;&#36319;&#38543;&#19982;&#32972;&#26223;&#23637;&#31034;&#12290;</p>
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="memory-conversation-saving" type="checkbox" />
+              <span>保存对话</span>
+            </label>
+            <label class="toggle-card">
+              <input id="memory-long-term-enabled" type="checkbox" />
+              <span>启用长期记忆</span>
+            </label>
+            <label class="toggle-card">
+              <input id="memory-preferences-enabled" type="checkbox" />
+              <span>记录用户偏好</span>
+            </label>
+            <label class="toggle-card">
+              <input id="memory-relationship-enabled" type="checkbox" />
+              <span>记录关系记忆</span>
+            </label>
           </div>
-        </div>
 
-        <div class="form-grid two-col">
-          <label class="field">
-            <span>&#32553;&#25918;</span>
-            <input id="pet-scale" type="number" min="0.05" max="5" step="0.01" />
-          </label>
-          <label class="field">
-            <span>&#36879;&#26126;&#24230;</span>
-            <input id="pet-opacity" type="number" min="0.1" max="1" step="0.01" />
-          </label>
-          <label class="field">
-            <span>&#20559;&#31227; X</span>
-            <input id="pet-offset-x" type="number" />
-          </label>
-          <label class="field">
-            <span>&#20559;&#31227; Y</span>
-            <input id="pet-offset-y" type="number" />
-          </label>
-          <label class="field">
-            <span>&#26059;&#36716;</span>
-            <input id="pet-rotation" type="number" min="-180" max="180" step="0.1" />
-          </label>
-          <label class="field">
-            <span>&#32972;&#26223;&#36974;&#32617;</span>
-            <input id="pet-background-overlay-opacity" type="number" min="0" max="0.9" step="0.05" />
-          </label>
-        </div>
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>保留天数</span>
+              <input id="memory-retention-days" type="number" min="1" step="1" />
+            </label>
+            <label class="field">
+              <span>待审阅上限</span>
+              <input id="memory-review-limit" type="number" min="1" step="1" />
+            </label>
+            <label class="field wide">
+              <span>记忆草案队列</span>
+              <textarea id="memory-review-queue" rows="6" placeholder="每行一条待审阅记忆。"></textarea>
+            </label>
+          </div>
+        </section>
 
-        <div class="toggle-grid">
-          <label class="toggle-card">
-            <input id="pet-edit-mode" type="checkbox" />
-            <span>&#32534;&#36753;&#27169;&#24335;</span>
-          </label>
-          <label class="toggle-card">
-            <input id="pet-follow-mouse" type="checkbox" />
-            <span>&#35270;&#32447;&#36319;&#38543;&#40736;&#26631;</span>
-          </label>
-          <label class="toggle-card">
-            <input id="pet-background-enabled" type="checkbox" />
-            <span>&#21551;&#29992;&#32972;&#26223;&#22270;</span>
-          </label>
-        </div>
-
-        <div class="form-grid two-col">
-          <label class="field wide">
-            <span>&#32972;&#26223;&#22270;&#29255;&#36335;&#24452;</span>
-            <input id="pet-background-image" type="text" placeholder="D:\backgrounds\scene.png" />
-          </label>
-          <div class="field inline-actions">
-            <span>&#32972;&#26223;&#22270;&#25805;&#20316;</span>
-            <div class="button-row wrap">
-              <button id="pet-background-pick-btn" type="button" class="ghost-button">&#36873;&#25321;&#22270;&#29255;</button>
-              <button id="pet-background-clear-btn" type="button" class="ghost-button">&#28165;&#38500;&#32972;&#26223;</button>
+        <section id="skills" class="panel-card desktop-window" data-window-title="Skills">
+          <div class="section-head">
+            <div>
+              <h3>Skills</h3>
+              <p>技能是 Ipet 学到的可复用操作流程，不是插件。Ipet 可主动建议，保存前由人类 review。</p>
             </div>
-            <span class="field-hint">&#20165;&#25903;&#25345;&#26412;&#22320;&#22270;&#29255;&#25991;&#20214;&#12290;&#20445;&#23384;&#21518;&#20250;&#21516;&#27493;&#21040;&#26700;&#23456;&#26174;&#31034;&#31383;&#21475;&#12290;</span>
           </div>
-        </div>
-      </section>
 
-      <section id="window" class="panel-card desktop-window" data-window-title="窗口">
-        <div class="section-head">
-          <div>
-            <h3>窗口</h3>
-            <p>这里的值会直接影响桌宠主窗口，保存后会自动同步。</p>
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="skills-recipes-enabled" type="checkbox" />
+              <span>启用技能配方</span>
+            </label>
+            <label class="toggle-card">
+              <input id="skills-auto-propose" type="checkbox" />
+              <span>任务完成后主动建议</span>
+            </label>
+            <label class="toggle-card">
+              <input id="skills-review-required" type="checkbox" />
+              <span>保存前必须审阅</span>
+            </label>
           </div>
-        </div>
 
-        <div class="form-grid two-col">
-          <label class="field">
-            <span>窗口 X</span>
-            <input id="window-x" type="number" />
-          </label>
-          <label class="field">
-            <span>窗口 Y</span>
-            <input id="window-y" type="number" />
-          </label>
-          <label class="field">
-            <span>窗口宽</span>
-            <input id="window-width" type="number" min="120" />
-          </label>
-          <label class="field">
-            <span>窗口高</span>
-            <input id="window-height" type="number" min="120" />
-          </label>
-        </div>
+          <div class="form-grid two-col">
+            <label class="field wide">
+              <span>已保存技能配方</span>
+              <textarea id="skills-recipe-list" rows="8" placeholder="每段记录一个操作流程。"></textarea>
+            </label>
+            <label class="field wide">
+              <span>技能草案队列</span>
+              <textarea id="skills-proposal-queue" rows="8" placeholder="Ipet 提议保存的新经验会先进入这里。"></textarea>
+            </label>
+          </div>
+        </section>
 
-        <div class="toggle-grid">
-          <label class="toggle-card">
-            <input id="window-locked" type="checkbox" />
-            <span>锁定窗口位置</span>
-          </label>
-        </div>
-      </section>
+        <section id="diagnostics" class="panel-card desktop-window" data-window-title="Diagnostics">
+          <div class="section-head">
+            <div>
+              <h3>Diagnostics</h3>
+              <p>只显示 Ipet 本体的健康状态、最近观察和最近批准动作。</p>
+            </div>
+          </div>
+
+          <div class="hero-summary" id="diagnostic-cards"></div>
+          <div class="review-list" id="diagnostic-log"></div>
+        </section>
       </div>
     </main>
 
     <aside class="desktop-icons" aria-label="桌面快捷入口">
-      <button class="desktop-icon tone-red" data-window-target="chat" data-title="运行时与语音"><span>⌘</span><strong>运行时</strong></button>
-      <button class="desktop-icon tone-gray" data-window-target="window" data-title="窗口"><span>⚙</span><strong>窗口</strong></button>
-      <button class="desktop-icon tone-orange" data-window-target="skills" data-title="Hermes 技能"><span>H</span><strong>技能</strong></button>
-      <button class="desktop-icon tone-blue" data-window-target="mcp" data-title="Hermes MCP"><span>◇</span><strong>MCP</strong></button>
-      <button class="desktop-icon tone-pink" data-window-target="file-tools" data-title="文件工具白名单"><span>☼</span><strong>文件工具</strong></button>
-      <button class="desktop-icon tone-purple" data-window-target="pet" data-title="形象参数"><span>♙</span><strong>形象参数</strong></button>
-      <button class="desktop-icon tone-green" data-window-target="model" data-title="角色形象"><span>▣</span><strong>角色形象</strong></button>
+      <button class="desktop-icon tone-green" data-window-target="body" data-title="Body"><span>B</span><strong>身体</strong></button>
+      <button class="desktop-icon tone-purple" data-window-target="brain" data-title="Brain"><span>Ψ</span><strong>大脑</strong></button>
+      <button class="desktop-icon tone-red" data-window-target="human-ops" data-title="Human Ops"><span>●</span><strong>操作</strong></button>
+      <button class="desktop-icon tone-pink" data-window-target="memory" data-title="Memory"><span>◇</span><strong>记忆</strong></button>
+      <button class="desktop-icon tone-orange" data-window-target="skills" data-title="Skills"><span>S</span><strong>技能</strong></button>
+      <button class="desktop-icon tone-gray" data-window-target="diagnostics" data-title="Diagnostics"><span>⌁</span><strong>诊断</strong></button>
     </aside>
 
     <nav class="desktop-dock" aria-label="设置 Dock">
       <button class="dock-item active" data-window-target="overview" data-title="总览" title="总览"><span class="dock-glyph">▦</span><strong>总览</strong></button>
-      <button class="dock-item" data-window-target="window" data-title="窗口" title="窗口"><span class="dock-glyph">⚙</span><strong>窗口</strong></button>
-      <button class="dock-item" data-window-target="chat" data-title="运行时与语音" title="运行时与语音"><span class="dock-glyph">⌘</span><strong>运行时</strong></button>
-      <button class="dock-item" data-window-target="mcp" data-title="Hermes MCP" title="Hermes MCP"><span class="dock-glyph">◇</span><strong>MCP</strong></button>
-      <button class="dock-item" data-window-target="pet" data-title="形象参数" title="形象参数"><span class="dock-glyph">♙</span><strong>形象</strong></button>
-      <button class="dock-item" data-window-target="model" data-title="角色形象" title="角色形象"><span class="dock-glyph">▣</span><strong>角色</strong></button>
-      <button class="dock-item" data-window-target="file-tools" data-title="文件工具白名单" title="文件工具白名单"><span class="dock-glyph">☼</span><strong>文件</strong></button>
-      <button class="dock-item" data-window-target="skills" data-title="Hermes 技能" title="Hermes 技能"><span class="dock-glyph">H</span><strong>技能</strong></button>
+      <button class="dock-item" data-window-target="body" data-title="Body" title="Body"><span class="dock-glyph">B</span><strong>身体</strong></button>
+      <button class="dock-item" data-window-target="brain" data-title="Brain" title="Brain"><span class="dock-glyph">Ψ</span><strong>大脑</strong></button>
+      <button class="dock-item" data-window-target="human-ops" data-title="Human Ops" title="Human Ops"><span class="dock-glyph">●</span><strong>操作</strong></button>
+      <button class="dock-item" data-window-target="memory" data-title="Memory" title="Memory"><span class="dock-glyph">◇</span><strong>记忆</strong></button>
+      <button class="dock-item" data-window-target="skills" data-title="Skills" title="Skills"><span class="dock-glyph">S</span><strong>技能</strong></button>
+      <button class="dock-item" data-window-target="diagnostics" data-title="Diagnostics" title="Diagnostics"><span class="dock-glyph">⌁</span><strong>诊断</strong></button>
     </nav>
   </div>
 
-  <script src="/settings.js?v=6"></script>
+  <script src="/settings.js?v=8"></script>
 </body>
 </html>

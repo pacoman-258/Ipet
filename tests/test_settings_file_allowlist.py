@@ -348,37 +348,39 @@ class SettingsFileAllowlistTests(unittest.TestCase):
             self.assertIn("no-cache", resp.headers.get("pragma", "").lower())
             self.assertEqual(resp.headers.get("expires"), "0")
 
-    def test_settings_js_binds_file_allowlist_pick_handler(self) -> None:
+    def test_settings_js_uses_neo_aspect_config_endpoint_without_file_picker_ui(self) -> None:
         resp = self.client.get("/settings.js")
 
         self.assertEqual(resp.status_code, 200)
         body = resp.text
-        self.assertIn('const fileAllowlistPickerEndpoint = "/api/settings/file-allowlist/pick";', body)
-        self.assertIn('els.fileAllowlistPickBtn.addEventListener("click", () => wrapAction(pickAllowlistDirectory));', body)
-        self.assertIn('els.fileAllowlistEffectiveBtn.addEventListener("click", () => wrapAction(refreshEffectiveFileAllowlist));', body)
-        self.assertIn("async function pickAllowlistDirectory()", body)
+        self.assertIn("/api/settings/config", body)
+        self.assertIn("function fallbackSettings()", body)
+        self.assertNotIn('"/api/settings/file-allowlist/pick"', body)
+        self.assertNotIn("pickAllowlistDirectory", body)
+        self.assertNotIn("refreshEffectiveFileAllowlist", body)
 
-    def test_settings_js_preserves_posix_paths_for_macos(self) -> None:
+    def test_settings_js_drops_legacy_path_normalizers_from_ui(self) -> None:
         resp = self.client.get("/settings.js")
 
         self.assertEqual(resp.status_code, 200)
         body = resp.text
-        self.assertIn("function prefersWindowsPaths()", body)
-        self.assertIn("function looksLikeWindowsPath(value)", body)
-        self.assertIn('normalized = normalized.replace(/\\\\/g, "/");', body)
+        self.assertNotIn("function prefersWindowsPaths()", body)
+        self.assertNotIn("function looksLikeWindowsPath(value)", body)
+        self.assertNotIn('normalized = normalized.replace(/\\\\/g, "/");', body)
+        self.assertIn('petBackgroundImage: $("pet-background-image")', body)
 
-    def test_settings_js_binds_single_hermes_model_controls(self) -> None:
+    def test_settings_js_drops_single_hermes_model_controls(self) -> None:
         resp = self.client.get("/settings.js")
 
         self.assertEqual(resp.status_code, 200)
         body = resp.text
-        self.assertIn('chatModel: $("chat-model")', body)
-        self.assertIn('runtimeMainModelPresets: $("runtime-main-model-presets")', body)
-        self.assertIn('runtimeSessionPresets: $("runtime-session-presets")', body)
-        self.assertIn("function renderHermesRuntimeModelPresets()", body)
-        self.assertIn("function renderHermesSessionPresets()", body)
-        self.assertIn('els.chatModel.addEventListener("input", renderHermesRuntimeModelPresets);', body)
-        self.assertIn('els.chatSessionId.addEventListener("input", renderHermesSessionPresets);', body)
+        self.assertIn('brainModelName: $("brain-model-name")', body)
+        self.assertIn('brainModelEndpoint: $("brain-model-endpoint")', body)
+        self.assertNotIn('chatModel: $("chat-model")', body)
+        self.assertNotIn('runtimeMainModelPresets: $("runtime-main-model-presets")', body)
+        self.assertNotIn('runtimeSessionPresets: $("runtime-session-presets")', body)
+        self.assertNotIn("function renderHermesRuntimeModelPresets()", body)
+        self.assertNotIn("function renderHermesSessionPresets()", body)
         self.assertNotIn("fetchRouterModels", body)
         self.assertNotIn("fetchRouterModelsBtn", body)
         self.assertNotIn("chatRouterModel", body)
@@ -391,22 +393,25 @@ class SettingsFileAllowlistTests(unittest.TestCase):
         self.assertEqual(html_resp.status_code, 200)
         self.assertEqual(js_resp.status_code, 200)
         self.assertIn('id="pet-background-image"', html_resp.text)
-        self.assertIn('id="pet-background-pick-btn"', html_resp.text)
-        self.assertIn('petBackgroundPickBtn', js_resp.text)
-        self.assertIn('petBackgroundPickerEndpoint', js_resp.text)
+        self.assertIn('petBackgroundImage: $("pet-background-image")', js_resp.text)
+        self.assertNotIn('id="pet-background-pick-btn"', html_resp.text)
+        self.assertNotIn('petBackgroundPickBtn', js_resp.text)
+        self.assertNotIn('petBackgroundPickerEndpoint', js_resp.text)
 
-    def test_settings_assets_include_astrbot_dashboard_password_controls(self) -> None:
+    def test_settings_assets_exclude_astrbot_dashboard_password_controls(self) -> None:
         html_resp = self.client.get("/settings")
         js_resp = self.client.get("/settings.js")
 
         self.assertEqual(html_resp.status_code, 200)
         self.assertEqual(js_resp.status_code, 200)
-        self.assertIn('id="astrbot-dashboard-username"', html_resp.text)
-        self.assertIn('id="astrbot-dashboard-password"', html_resp.text)
-        self.assertIn('id="astrbot-dashboard-password-clear"', html_resp.text)
-        self.assertIn('id="astrbot-dashboard-password-state"', html_resp.text)
-        self.assertIn('astrbotDashboardUsername: $("astrbot-dashboard-username")', js_resp.text)
-        self.assertIn('dashboard_password_action: astrobotDashboardPasswordAction', js_resp.text)
+        self.assertIn('id="brain-api-key"', html_resp.text)
+        self.assertIn('brainApiKey: $("brain-api-key")', js_resp.text)
+        self.assertNotIn('id="astrbot-dashboard-username"', html_resp.text)
+        self.assertNotIn('id="astrbot-dashboard-password"', html_resp.text)
+        self.assertNotIn('id="astrbot-dashboard-password-clear"', html_resp.text)
+        self.assertNotIn('id="astrbot-dashboard-password-state"', html_resp.text)
+        self.assertNotIn('astrbotDashboardUsername: $("astrbot-dashboard-username")', js_resp.text)
+        self.assertNotIn('dashboard_password_action: astrobotDashboardPasswordAction', js_resp.text)
 
 
 if __name__ == "__main__":
