@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet Neo Backend Destructive Refactor Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #5f6b7a;
+      --line: #d8e0ea;
+      --accent: #0f766e;
+      --warn: #8a4b25;
+      --code: #17202a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+    }
+
+    .page {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 38px 22px 54px;
+    }
+
+    header {
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      color: var(--warn);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    h1 {
+      margin: 8px 0 12px;
+      font-size: clamp(32px, 5vw, 52px);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    main {
+      display: grid;
+      gap: 20px;
+      padding-top: 24px;
+    }
+
+    section {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    ul {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    li + li { margin-top: 6px; }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef3f6;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 12px 0 0;
+      padding: 14px;
+      border-radius: 8px;
+      background: var(--code);
+      color: #eef5f7;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: #eaf7f4;
+      color: var(--accent);
+      font-weight: 750;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div class="eyebrow">2026-05-25 · Neo_Aspect</div>
+      <h1>Neo Aspect 破坏性后端重构报告</h1>
+      <p class="lead">本轮把 Ipet 收缩到 Body、Brain、Human Ops、Memory &amp; Skills 四模块：后端改为最小 Neo 契约，桌面宿主切掉旧管理入口，文档和协作规则同步改写。</p>
+    </header>
+
+    <main>
+      <section>
+        <h2>状态</h2>
+        <p><span class="status">DONE</span></p>
+        <p>本报告覆盖后端、桌面宿主、测试、工作流与项目文档。所有 reviewer 指出的阻塞问题已修复，并通过定向验证。</p>
+      </section>
+
+      <section>
+        <h2>子代理分工</h2>
+        <ul>
+          <li><code>worker-backend</code>：重写 <code>backend/app.py</code> 为 Neo 最小 API，并新增后端契约测试。</li>
+          <li><code>worker-desktop</code>：重构 <code>main.py</code> 的桌面宿主启动、设置页聚焦、服务检查和本机命令通道。</li>
+          <li><code>worker-docs</code>：重写 README、AGENTS、工作流、项目结构、所有权和架构文档，并生成本报告底稿。</li>
+          <li><code>reviewers</code>：分别审阅后端契约、桌面宿主和文档残留，推动补齐 TTS、坏配置恢复、旧 helper 删除和文档审计。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>已改内容</h2>
+        <div class="grid">
+          <div>
+            <p><strong>后端与桌面</strong></p>
+            <ul>
+              <li><code>backend/app.py</code></li>
+              <li><code>main.py</code></li>
+              <li><code>tests/test_neo_backend_contract.py</code></li>
+              <li><code>tests/test_main_runtime_env.py</code></li>
+            </ul>
+          </div>
+          <div>
+            <p><strong>文档与报告</strong></p>
+            <ul>
+              <li><code>README.md</code> / <code>README.zh-CN.md</code> / <code>README.html</code></li>
+              <li><code>AGENTS.md</code></li>
+              <li><code>docs/WORKFLOW.md</code></li>
+              <li><code>docs/PROJECT_STRUCTURE.md</code></li>
+              <li><code>docs/SUBAGENTS.md</code></li>
+              <li><code>docs/architecture.md</code></li>
+              <li><code>docs/architecture_ZH.md</code></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>达成效果</h2>
+        <ul>
+          <li>后端现在只暴露 Neo 所需的健康、设置、对话占位、主题、技能空壳、语音与音频读取契约。</li>
+          <li>设置配置只保留 Neo 九个顶层字段，坏配置会恢复默认形状，Brain 密钥不会回显。</li>
+          <li>语音接口恢复前端既有 <code>audio_url</code> 返回字段，同时保留 <code>url</code>。</li>
+          <li>桌面宿主不再保留旧 sidecar helper 或第三方管理面调用；本机命令通道改名为 desktop command。</li>
+          <li>设置页已存在时会聚焦现有 Qt 窗口，而不是重复打开。</li>
+          <li>文档统一为 Body、Brain、Human Ops、Memory &amp; Skills，并记录每轮 HTML 报告要求。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>验证</h2>
+        <pre><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py backend/app.py
+OK
+
+/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_neo_backend_contract -v
+8 tests OK
+
+/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_main_runtime_env -v
+46 tests OK
+
+/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_neo_backend_contract tests.test_neo_aspect_settings_page tests.test_neo_aspect_core -v
+25 tests OK
+
+Neo document audit
+no matches</code></pre>
+      </section>
+
+      <section>
+        <h2>待办</h2>
+        <ul>
+          <li>Brain 仍是占位回复，需要接入真实大模型 turn runner 和“每次决定下一步”的决策循环。</li>
+          <li>Human Ops 还需要正式的 observe、act review、红点点击预览、键盘输入和等待反馈 API。</li>
+          <li>Memory &amp; Skills 仍需实现 review 队列、保存批准、技能沉淀和可复用流程执行记录。</li>
+          <li>Body 侧仍需把 Live2D、表情、动作、气泡、声音和桌面存在感整理到更清晰的模块目录。</li>
+          <li>旧测试文件中与 Neo 无关的历史用例还没有成组删除或重写。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>推荐下一步</h2>
+        <p>下一轮建议先做 Brain 到 Human Ops 的最小纵切：用户输入目标，Brain 产出 say / observe / act proposal，act 通过红点预览等待人类批准，批准后执行并回读结果。</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

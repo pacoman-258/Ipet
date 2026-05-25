@@ -16,16 +16,6 @@ from urllib.parse import urlparse
 
 import requests
 from backend.active_vision import normalize_active_observation_config
-from backend.hermes import DEFAULT_HERMES_CONFIG, normalize_hermes_config
-from backend.runtime_config import (
-    DEFAULT_RUNTIME_CONFIG,
-    RUNTIME_ASTRBOT,
-    RUNTIME_HERMES,
-    local_service_health_url,
-    mirror_runtime_compat,
-    normalize_runtime_config,
-    runtime_sidecar_config,
-)
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
 
 
@@ -250,17 +240,16 @@ else:
 
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
-RUNTIME_LOG_DIR = ROOT_DIR / ".runtime-logs"
+SERVICE_LOG_DIR = ROOT_DIR / ".service-logs"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8008"
 DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
-DEFAULT_HERMES_MODEL = "hermes-agent"
+DEFAULT_CHAT_MODEL = "gpt-5.4"
+DEFAULT_BRAIN_MODEL = DEFAULT_CHAT_MODEL
 DEFAULT_ASR_CONFIG = _default_asr_config()
-DEFAULT_TOOL_TIMEOUT_SEC = 180
-LEGACY_TOOL_TIMEOUT_SEC = 10
-RUNTIME_COMMAND_PATH = ROOT_DIR / ".pet_runtime_command.json"
-RUNTIME_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_runtime_command.response.json"
-RUNTIME_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_runtime_host.heartbeat.json"
+DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
+DESKTOP_COMMAND_RESPONSE_PATH = ROOT_DIR / ".pet_desktop_command.response.json"
+DESKTOP_HOST_HEARTBEAT_PATH = ROOT_DIR / ".pet_desktop_host.heartbeat.json"
 AUTOGEN_MODEL_SUFFIX = ".autogen.model3.json"
 BACKEND_VENV_DIRNAME = ".venv-py312"
 
@@ -348,15 +337,15 @@ def _python_entry_for_venv(venv_dir: Path) -> Path:
     return venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def _runtime_log_path(name: str) -> Path:
+def _service_log_path(name: str) -> Path:
     try:
-        RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        SERVICE_LOG_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
         return ROOT_DIR / f".{name}.log"
-    return RUNTIME_LOG_DIR / f"{name}.log"
+    return SERVICE_LOG_DIR / f"{name}.log"
 
 
-def _truncate_runtime_log(path: Path) -> Path:
+def _truncate_service_log(path: Path) -> Path:
     try:
         path.write_text("", encoding="utf-8")
     except Exception:
@@ -364,7 +353,7 @@ def _truncate_runtime_log(path: Path) -> Path:
     return path
 
 
-def _tail_runtime_log(path: Path, *, max_lines: int = 20) -> str:
+def _tail_service_log(path: Path, *, max_lines: int = 20) -> str:
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
@@ -452,10 +441,41 @@ def _find_default_model() -> str:
 
 
 DEFAULT_CONFIG = {
-    "hermes": json.loads(json.dumps(DEFAULT_HERMES_CONFIG)),
-    "runtime": json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG)),
     "vision": json.loads(json.dumps(DEFAULT_VISION_CONFIG)),
     "model_path": _find_default_model(),
+    "brain": {
+        "model_endpoint": "",
+        "model_name": DEFAULT_CHAT_MODEL,
+        "persona": "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。",
+        "self_state": "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
+        "response_style": "lively",
+        "decision_temperature": 0.4,
+    },
+    "human_ops": {
+        "observe_screen": True,
+        "accessibility": True,
+        "require_act_review": True,
+        "require_memory_review": True,
+        "require_skill_review": True,
+        "clipboard_write_review": True,
+        "click_preview": {"x": 160, "y": 54, "label": "目标位置", "size": 16},
+    },
+    "memory": {
+        "conversation_saving": True,
+        "long_term_enabled": True,
+        "preferences_enabled": True,
+        "relationship_enabled": True,
+        "retention_days": 365,
+        "review_limit": 20,
+        "review_queue": [],
+    },
+    "skills": {
+        "recipes_enabled": True,
+        "auto_propose": True,
+        "review_required": True,
+        "recipes": [],
+        "proposal_queue": [],
+    },
     "window": {
         "x": 120,
         "y": 80,
@@ -477,7 +497,7 @@ DEFAULT_CONFIG = {
     },
     "chat": {
         "backend_url": DEFAULT_BACKEND_URL,
-        "model": DEFAULT_HERMES_MODEL,
+        "model": DEFAULT_BRAIN_MODEL,
         "session_id": "default",
         "voice": "zh-CN-XiaoxiaoNeural",
         "rate_pct": 0,
@@ -488,22 +508,6 @@ DEFAULT_CONFIG = {
         "react_enabled": True,
         "react_visibility": "inline",
         "max_reasoning_steps": 10,
-        "tooling": {
-            "enabled": True,
-            "mode": "mcp_local_phase2",
-            "file_allowlist": [str(ROOT_DIR)],
-            "network_allow_domains": [],
-            "max_tool_calls_per_turn": 6,
-            "tool_timeout_sec": DEFAULT_TOOL_TIMEOUT_SEC,
-            "third_party": {
-                "enabled": True,
-                "servers": [],
-            },
-        },
-        "skills": {
-            "enabled": True,
-            "default_active_ids": [],
-        },
         "asr": json.loads(json.dumps(DEFAULT_ASR_CONFIG)),
         "system_prompt": "",
     },
@@ -547,94 +551,39 @@ def build_custom_http_tts_preset(key: str) -> str:
 def deep_merge(base: dict, override: dict) -> dict:
     merged = json.loads(json.dumps(base))
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = deep_merge(merged[key], value)
-        else:
-            merged[key] = value
+        if key not in merged:
+            continue
+        base_value = merged.get(key)
+        if isinstance(base_value, dict):
+            if isinstance(value, dict):
+                merged[key] = deep_merge(base_value, value)
+            continue
+        if isinstance(value, dict):
+            continue
+        merged[key] = value
     return merged
 
 
-def _migrate_tool_timeout(tooling: dict | None) -> None:
-    if not isinstance(tooling, dict):
-        return
-    try:
-        timeout_sec = int(tooling.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC))
-    except Exception:
-        timeout_sec = DEFAULT_TOOL_TIMEOUT_SEC
-    if timeout_sec == LEGACY_TOOL_TIMEOUT_SEC:
-        tooling["tool_timeout_sec"] = DEFAULT_TOOL_TIMEOUT_SEC
+def _keep_neo_config_shape(config: dict) -> None:
+    allowed = set(DEFAULT_CONFIG)
+    for key in list(config):
+        if key not in allowed:
+            config.pop(key, None)
 
 
-LEGACY_CHAT_CONFIG_KEYS = (
-    "llm_provider",
-    "api_base_url",
-    "api_key",
-    "router_enabled",
-    "router_llm_provider",
-    "router_api_base_url",
-    "router_api_key",
-    "router_model",
-    "memory_window",
-    "topic_history",
-    "long_term_memory",
-)
-
-
-def _normalize_hermes_chat_config(config: dict) -> None:
+def _normalize_neo_chat_config(config: dict) -> None:
     chat_cfg = config.get("chat")
     if not isinstance(chat_cfg, dict):
         chat_cfg = {}
         config["chat"] = chat_cfg
-    for key in LEGACY_CHAT_CONFIG_KEYS:
-        chat_cfg.pop(key, None)
+    allowed = set(DEFAULT_CONFIG["chat"])
+    for key in list(chat_cfg):
+        if key not in allowed:
+            chat_cfg.pop(key, None)
     model = str(chat_cfg.get("model") or "").strip()
-    chat_cfg["model"] = model or DEFAULT_HERMES_MODEL
+    chat_cfg["model"] = model or DEFAULT_BRAIN_MODEL
     session_id = str(chat_cfg.get("session_id") or "").strip()
     chat_cfg["session_id"] = session_id or "default"
-
-
-def _normalize_hermes_sidecar_config(config: dict) -> None:
-    mirror_runtime_compat(config, root_dir=ROOT_DIR)
-
-
-def _runtime_display_name(runtime_id: str) -> str:
-    return "AstrBot" if runtime_id == RUNTIME_ASTRBOT else "Hermes Agent"
-
-
-def _runtime_missing_command_message(runtime_id: str, runtime_cfg: dict, *, root_dir: Path | None = None) -> str:
-    root = root_dir or ROOT_DIR
-    cwd = str(runtime_cfg.get("cwd") or "").strip() or str(root)
-    health = local_service_health_url(runtime_cfg)
-    label = _runtime_display_name(runtime_id)
-    example = (
-        'Example astrbot.command: ["uv", "run", "astrbot"]'
-        if runtime_id == RUNTIME_ASTRBOT
-        else 'Example hermes.command: ["uv", "run", "hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--tui"]'
-    )
-    return "\n".join(
-        [
-            f"{label} auto_start is enabled but no command is configured.",
-            f"cwd: {cwd}",
-            f"health: {health}",
-            example,
-        ]
-    )
-
-
-def _hermes_missing_command_message(hermes_cfg: dict, *, root_dir: Path | None = None) -> str:
-    root = root_dir or ROOT_DIR
-    cwd = str(hermes_cfg.get("cwd") or "").strip() or str(root)
-    base_url = str(hermes_cfg.get("base_url") or DEFAULT_HERMES_CONFIG["base_url"]).strip()
-    health_path = str(hermes_cfg.get("health_path") or DEFAULT_HERMES_CONFIG["health_path"]).strip()
-    return "\n".join(
-        [
-            "Hermes Agent auto_start is enabled but no command is configured.",
-            f"cwd: {cwd}",
-            f"health: {base_url.rstrip('/')}/{health_path.lstrip('/')}",
-            "Set hermes.cwd to the real Hermes Agent checkout, not the repo-local Hermes storage directory.",
-            'Example hermes.command: ["uv", "run", "hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--tui"]',
-        ]
-    )
 
 
 def load_config() -> dict:
@@ -660,10 +609,9 @@ def load_config() -> dict:
     except Exception:
         pet_cfg["background_overlay_opacity"] = 0.42
     pet_cfg["background_overlay_opacity"] = max(0.0, min(0.9, pet_cfg["background_overlay_opacity"]))
-    _migrate_tool_timeout(config.get("chat", {}).get("tooling", {}))
     config["vision"] = normalize_vision_config(config.get("vision", {}))
-    _normalize_hermes_sidecar_config(config)
-    _normalize_hermes_chat_config(config)
+    _keep_neo_config_shape(config)
+    _normalize_neo_chat_config(config)
     return config
 
 
@@ -723,24 +671,7 @@ def parse_service_host_port(base_url: str, *, default_port: int) -> tuple[str, i
 
 
 def backend_supports_required_routes(base_url: str) -> bool:
-    try:
-        resp = requests.get(f"{base_url.rstrip('/')}/openapi.json", timeout=1.5)
-        if resp.status_code != 200:
-            return False
-        payload = resp.json()
-    except Exception:
-        return False
-
-    paths = payload.get("paths", {}) if isinstance(payload, dict) else {}
-    if not isinstance(paths, dict):
-        return False
-
-    topic_detail = paths.get("/api/chat/topics/{topic_id}")
-    if isinstance(topic_detail, dict) and "delete" in topic_detail:
-        return True
-
-    topic_delete = paths.get("/api/chat/topics/{topic_id}/delete")
-    return isinstance(topic_delete, dict) and "post" in topic_delete
+    return is_service_healthy(base_url)
 
 
 def is_local_service_url(base_url: str) -> bool:
@@ -845,7 +776,7 @@ def _infer_motion_group(file_name: str) -> str:
     return mapping.get(token.lower(), token[:1].upper() + token[1:])
 
 
-def _resolve_runtime_directory_seed(start_dir_text: str) -> str:
+def _resolve_desktop_directory_seed(start_dir_text: str) -> str:
     text = str(start_dir_text or "").strip()
     if not text:
         return str(ROOT_DIR)
@@ -936,7 +867,7 @@ def extract_lipsync_meta(model_json: dict) -> dict:
     }
 
 
-def ensure_runtime_model_from_json(model_path: Path, model_json: dict) -> tuple[Path, dict, list[dict]]:
+def ensure_live2d_model_from_json(model_path: Path, model_json: dict) -> tuple[Path, dict, list[dict]]:
     groups = _extract_motion_groups(model_json)
     exprs = _extract_expression_defs(model_json)
     need_patch = False
@@ -960,16 +891,16 @@ def ensure_runtime_model_from_json(model_path: Path, model_json: dict) -> tuple[
     if exprs:
         patched["FileReferences"]["Expressions"] = exprs
 
-    runtime_path = model_path.with_name(f"{model_path.stem}.autogen.model3.json")
+    generated_path = model_path.with_name(f"{model_path.stem}.autogen.model3.json")
     try:
-        with runtime_path.open("w", encoding="utf-8") as f:
+        with generated_path.open("w", encoding="utf-8") as f:
             json.dump(patched, f, ensure_ascii=False, indent=2)
-        return runtime_path, groups, exprs
+        return generated_path, groups, exprs
     except Exception:
         return model_path, groups, exprs
 
 
-def ensure_runtime_model(model_path: Path) -> tuple[Path, dict, list[dict]]:
+def ensure_live2d_model(model_path: Path) -> tuple[Path, dict, list[dict]]:
     if not model_path.exists():
         return model_path, {}, []
     try:
@@ -977,7 +908,7 @@ def ensure_runtime_model(model_path: Path) -> tuple[Path, dict, list[dict]]:
             model_json = json.load(f)
     except Exception:
         return model_path, {}, []
-    return ensure_runtime_model_from_json(model_path, model_json)
+    return ensure_live2d_model_from_json(model_path, model_json)
 
 
 def action_items_from_defs(groups: dict, exprs: list[dict]) -> list[dict]:
@@ -1076,7 +1007,7 @@ class ControlPanel(QWidget):
         chat_box = QGroupBox("对话")
         chat_layout = QGridLayout(chat_box)
         self.chat_model_input = QLineEdit()
-        self.chat_model_input.setPlaceholderText(DEFAULT_HERMES_MODEL)
+        self.chat_model_input.setPlaceholderText(DEFAULT_BRAIN_MODEL)
         self.chat_voice_input = QLineEdit()
         self.chat_voice_input.setPlaceholderText("zh-CN-XiaoxiaoNeural")
         self.chat_tts_provider_combo = QComboBox()
@@ -1104,15 +1035,13 @@ class ControlPanel(QWidget):
         self.system_prompt_input.setFixedHeight(88)
         self.backend_test_button = QPushButton("测试后端")
         self.backend_status_label = QLabel("unknown")
-        self.tooling_enabled_check = QCheckBox("启用工具调用（含第三方MCP）")
-        self.tooling_enabled_check.setChecked(True)
         rate_row = QWidget()
         rate_row_layout = QHBoxLayout(rate_row)
         rate_row_layout.setContentsMargins(0, 0, 0, 0)
         rate_row_layout.setSpacing(6)
         rate_row_layout.addWidget(self.chat_rate_slider, 1)
         rate_row_layout.addWidget(self.chat_rate_value_label, 0)
-        chat_layout.addWidget(QLabel("Hermes 当前模型"), 0, 0)
+        chat_layout.addWidget(QLabel("Brain 模型"), 0, 0)
         chat_layout.addWidget(self.chat_model_input, 0, 1)
         chat_layout.addWidget(self.backend_test_button, 0, 2)
         chat_layout.addWidget(QLabel("语音"), 1, 0)
@@ -1134,33 +1063,6 @@ class ControlPanel(QWidget):
         chat_layout.addWidget(self.system_prompt_input, 8, 1, 1, 2)
         chat_layout.addWidget(QLabel("状态"), 9, 0)
         chat_layout.addWidget(self.backend_status_label, 9, 1, 1, 2)
-        chat_layout.addWidget(QLabel("工具"), 10, 0)
-        chat_layout.addWidget(self.tooling_enabled_check, 10, 1, 1, 2)
-
-        mcp_box = QGroupBox("第三方 MCP")
-        mcp_layout = QGridLayout(mcp_box)
-        self.third_party_enabled_check = QCheckBox("启用第三方MCP")
-        self.third_party_enabled_check.setChecked(True)
-        self.mcp_git_url_input = QLineEdit()
-        self.mcp_git_url_input.setPlaceholderText("Git 仓库地址")
-        self.mcp_install_git_button = QPushButton("从 Git 安装")
-        self.mcp_register_local_button = QPushButton("注册本地目录")
-        self.mcp_reload_button = QPushButton("重载 MCP")
-        self.mcp_server_combo = QComboBox()
-        self.mcp_toggle_button = QPushButton("启用/停用所选")
-        self.mcp_status_view = QPlainTextEdit()
-        self.mcp_status_view.setReadOnly(True)
-        self.mcp_status_view.setFixedHeight(120)
-        mcp_layout.addWidget(self.third_party_enabled_check, 0, 0, 1, 3)
-        mcp_layout.addWidget(QLabel("Git 地址"), 1, 0)
-        mcp_layout.addWidget(self.mcp_git_url_input, 1, 1)
-        mcp_layout.addWidget(self.mcp_install_git_button, 1, 2)
-        mcp_layout.addWidget(QLabel("已注册"), 2, 0)
-        mcp_layout.addWidget(self.mcp_server_combo, 2, 1)
-        mcp_layout.addWidget(self.mcp_toggle_button, 2, 2)
-        mcp_layout.addWidget(self.mcp_register_local_button, 3, 1)
-        mcp_layout.addWidget(self.mcp_reload_button, 3, 2)
-        mcp_layout.addWidget(self.mcp_status_view, 4, 0, 1, 3)
 
         pet_box = QGroupBox("形象参数")
         pet_form = QFormLayout(pet_box)
@@ -1234,7 +1136,6 @@ class ControlPanel(QWidget):
 
         root.addWidget(model_box)
         root.addWidget(chat_box)
-        root.addWidget(mcp_box)
         root.addWidget(pet_box)
         root.addWidget(window_box)
         root.addWidget(hint)
@@ -1251,10 +1152,6 @@ class ControlPanel(QWidget):
         self.backend_test_button.clicked.connect(self.on_test_backend)
         self.chat_rate_slider.valueChanged.connect(self.on_chat_rate_changed)
         self.chat_tts_preset_apply_button.clicked.connect(self.on_apply_tts_preset)
-        self.mcp_install_git_button.clicked.connect(self.on_install_mcp_from_git)
-        self.mcp_register_local_button.clicked.connect(self.on_register_local_mcp)
-        self.mcp_reload_button.clicked.connect(self.on_reload_mcp)
-        self.mcp_toggle_button.clicked.connect(self.on_toggle_mcp)
 
     def on_chat_rate_changed(self, value: int) -> None:
         self.chat_rate_value_label.setText(f"{int(value):+d}%")
@@ -1304,130 +1201,6 @@ class ControlPanel(QWidget):
         backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL))
         ok = is_backend_healthy(backend_url)
         self.backend_status_label.setText("online" if ok else "offline")
-        self.refresh_third_party_mcp(force_reload=False)
-
-    def refresh_third_party_mcp(self, force_reload: bool = False) -> None:
-        chat_cfg = self.pet_window.config.get("chat", {})
-        backend_url = str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
-        if not is_backend_healthy(backend_url):
-            self.mcp_status_view.setPlainText("后端离线，无法刷新第三方 MCP 状态。")
-            return
-
-        endpoint = "/api/mcp/reload" if force_reload else "/api/mcp/servers"
-        method = requests.post if force_reload else requests.get
-        try:
-            resp = method(f"{backend_url}{endpoint}", timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            servers = data.get("servers", [])
-        except Exception as exc:
-            self.mcp_status_view.setPlainText(f"刷新第三方 MCP 失败：{exc}")
-            return
-
-        widgets = [self.mcp_server_combo]
-        blockers = [QSignalBlocker(w) for w in widgets]
-        _ = blockers
-        self.mcp_server_combo.clear()
-
-        lines: list[str] = []
-        for item in servers if isinstance(servers, list) else []:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            runtime = str(item.get("runtime") or "")
-            install_status = str(item.get("install_status") or "")
-            health_status = str(item.get("health_status") or "")
-            source_type = str(item.get("source_type") or "")
-            tools = item.get("tools", [])
-            enabled_text = "enabled" if bool(item.get("enabled", True)) else "disabled"
-            label = f"{name} [{runtime}] {health_status}"
-            self.mcp_server_combo.addItem(label, item)
-            tool_names = []
-            if isinstance(tools, list):
-                for tool in tools:
-                    if isinstance(tool, dict):
-                        fn = tool.get("function", {})
-                        if isinstance(fn, dict):
-                            tname = str(fn.get("name") or "").strip()
-                            if tname:
-                                tool_names.append(tname)
-            lines.append(
-                f"{name}\n"
-                f"  runtime: {runtime}\n"
-                f"  source: {source_type}\n"
-                f"  install: {install_status}\n"
-                f"  health: {health_status}\n"
-                f"  state: {enabled_text}\n"
-                f"  tools: {', '.join(tool_names) if tool_names else '-'}"
-            )
-            error_text = str(item.get("error") or "").strip()
-            if error_text:
-                lines.append(f"  error: {error_text}")
-        self.mcp_status_view.setPlainText("\n\n".join(lines) if lines else "暂无第三方 MCP。")
-
-    def on_install_mcp_from_git(self) -> None:
-        self.pet_window.apply_from_panel()
-        repo_url = self.mcp_git_url_input.text().strip()
-        if not repo_url:
-            self.mcp_status_view.setPlainText("请先填写 Git 仓库地址。")
-            return
-        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
-        try:
-            resp = requests.post(f"{backend_url}/api/mcp/install", json={"repo_url": repo_url, "name": ""}, timeout=180)
-            resp.raise_for_status()
-        except Exception as exc:
-            self.mcp_status_view.setPlainText(f"Git 安装失败：{exc}")
-            return
-        self.pet_window.config = load_config()
-        self.pet_window.sync_panel()
-        self.refresh_third_party_mcp(force_reload=True)
-
-    def on_register_local_mcp(self) -> None:
-        self.pet_window.apply_from_panel()
-        directory = QFileDialog.getExistingDirectory(self, "选择第三方 MCP 目录", str(ROOT_DIR))
-        if not directory:
-            return
-        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
-        try:
-            resp = requests.post(
-                f"{backend_url}/api/mcp/register-local",
-                json={"path": directory, "name": ""},
-                timeout=180,
-            )
-            resp.raise_for_status()
-        except Exception as exc:
-            self.mcp_status_view.setPlainText(f"注册本地目录失败：{exc}")
-            return
-        self.pet_window.config = load_config()
-        self.pet_window.sync_panel()
-        self.refresh_third_party_mcp(force_reload=True)
-
-    def on_reload_mcp(self) -> None:
-        self.pet_window.apply_from_panel()
-        self.refresh_third_party_mcp(force_reload=True)
-
-    def on_toggle_mcp(self) -> None:
-        self.pet_window.apply_from_panel()
-        item = self.mcp_server_combo.currentData()
-        if not isinstance(item, dict):
-            self.mcp_status_view.setPlainText("请先选择一个第三方 MCP。")
-            return
-        name = str(item.get("name") or "").strip()
-        current_enabled = bool(item.get("enabled", True))
-        backend_url = str(self.pet_window.config.get("chat", {}).get("backend_url", DEFAULT_BACKEND_URL)).rstrip("/")
-        try:
-            resp = requests.post(
-                f"{backend_url}/api/mcp/toggle",
-                json={"name": name, "enabled": not current_enabled},
-                timeout=60,
-            )
-            resp.raise_for_status()
-        except Exception as exc:
-            self.mcp_status_view.setPlainText(f"切换 MCP 状态失败：{exc}")
-            return
-        self.pet_window.config = load_config()
-        self.pet_window.sync_panel()
-        self.refresh_third_party_mcp(force_reload=True)
 
     def on_play_motion(self) -> None:
         data = self.motion_combo.currentData()
@@ -1464,8 +1237,6 @@ class ControlPanel(QWidget):
             self.chat_tts_provider_url_input,
             self.chat_rate_slider,
             self.expression_mode_check,
-            self.tooling_enabled_check,
-            self.third_party_enabled_check,
             self.system_prompt_input,
         ]
 
@@ -1473,7 +1244,7 @@ class ControlPanel(QWidget):
         _ = blockers
 
         self.model_path_input.setText(config.get("model_path", ""))
-        self.chat_model_input.setText(config.get("chat", {}).get("model", DEFAULT_HERMES_MODEL))
+        self.chat_model_input.setText(config.get("chat", {}).get("model", DEFAULT_BRAIN_MODEL))
         voice_text = str(config.get("chat", {}).get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
         self.chat_voice_input.setText(voice_text)
         provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
@@ -1490,10 +1261,6 @@ class ControlPanel(QWidget):
         self.chat_rate_value_label.setText(f"{rate_pct:+d}%")
         self.expression_mode_check.setChecked(bool(config.get("chat", {}).get("expression_mode", True)))
         self.expression_format_value_label.setText(str(config.get("chat", {}).get("expression_output_format", "ndjson_v1")))
-        self.tooling_enabled_check.setChecked(bool(config.get("chat", {}).get("tooling", {}).get("enabled", True)))
-        self.third_party_enabled_check.setChecked(
-            bool(config.get("chat", {}).get("tooling", {}).get("third_party", {}).get("enabled", True))
-        )
         self.system_prompt_input.setPlainText(config.get("chat", {}).get("system_prompt", ""))
         self.scale_spin.setValue(float(config["pet"]["scale"]))
         self.offset_x_spin.setValue(int(config["pet"]["offset_x"]))
@@ -2689,7 +2456,7 @@ def run_active_vision_light_interaction(
     return trace
 
 
-def _runtime_inline_frame_from_payload(frame_payload: dict, *, purpose: str = "main") -> dict:
+def _vision_inline_frame_from_payload(frame_payload: dict, *, purpose: str = "main") -> dict:
     mime_type = str(frame_payload.get("mime_type") or "").strip().lower()
     data_url = str(frame_payload.get("data_url") or "").strip()
     if mime_type not in {"image/jpeg", "image/png"} or not data_url.startswith("data:image/"):
@@ -2896,11 +2663,11 @@ def capture_active_vision_frame_payload(
             selected_candidate = _find_active_target(desktop_targets, target_candidates, target_id)
             trace["selected_candidate"] = dict(selected_candidate) if selected_candidate else {}
         detail_frames = _active_detail_frames_from_capture(frame_payload, selected_candidate, active_capture_cfg) if selected_candidate else []
-        runtime_frames = [_runtime_inline_frame_from_payload(frame_payload, purpose="main")]
-        runtime_frames.extend(_runtime_inline_frame_from_payload(item, purpose="detail_crop") for item in detail_frames)
-        runtime_frames = [item for item in runtime_frames if item]
-        if runtime_frames:
-            frame_payload["vision_frames"] = runtime_frames[:3]
+        vision_frames = [_vision_inline_frame_from_payload(frame_payload, purpose="main")]
+        vision_frames.extend(_vision_inline_frame_from_payload(item, purpose="detail_crop") for item in detail_frames)
+        vision_frames = [item for item in vision_frames if item]
+        if vision_frames:
+            frame_payload["vision_frames"] = vision_frames[:3]
         trace["detail_frames_count"] = len(detail_frames)
         trace["verify_result"] = {
             "status": "captured",
@@ -3098,20 +2865,16 @@ class DesktopPet(QMainWindow):
         super().__init__()
         self.config = load_config()
         self._config_mtime = self._config_mtime_token()
-        self._runtime_command_mtime = self._runtime_command_mtime_token()
-        self._last_runtime_command_nonce = ""
+        self._desktop_command_mtime = self._desktop_command_mtime_token()
+        self._last_desktop_command_nonce = ""
         self.drag_offset = QPoint()
         self.window_locked = bool(self.config["window"]["locked"])
         self.motion_items: list[dict] = []
         self.expression_names: list[str] = []
         self.lipsync_meta: dict = {"gain": 1.0, "mouth_open_ids": [], "mouth_form_ids": []}
-        self.runtime_model_path: Path | None = None
+        self.live2d_model_path: Path | None = None
         self.backend_process: subprocess.Popen | None = None
         self.backend_started_by_app = False
-        self.hermes_process: subprocess.Popen | None = None
-        self.hermes_started_by_app = False
-        self.runtime_processes: dict[str, subprocess.Popen] = {}
-        self.runtime_started_by_app: dict[str, bool] = {}
         self.asr_process: subprocess.Popen | None = None
         self.asr_started_by_app = False
         self._asr_warmup_monitor_lock = threading.Lock()
@@ -3173,7 +2936,6 @@ class DesktopPet(QMainWindow):
         self.apply_window_geometry_from_config()
 
         self.refresh_motion_list(prefer_reset=False)
-        self.ensure_active_runtime_sidecar()
         self.ensure_backend_service()
         self.ensure_asr_service()
         self.vision_controller.apply_config(self.config)
@@ -3184,7 +2946,7 @@ class DesktopPet(QMainWindow):
         self._config_poll_timer = QTimer(self)
         self._config_poll_timer.timeout.connect(self.on_config_poll)
         self._config_poll_timer.start(1000)
-        self._write_runtime_host_heartbeat()
+        self._write_desktop_host_heartbeat()
 
     def _feature_permission_policy(self, granted: bool):
         policy_enum = getattr(QWebEnginePage, "PermissionPolicy", None)
@@ -3239,7 +3001,7 @@ class DesktopPet(QMainWindow):
             else self.config.get("model_path", "")
         )
         model_path = resolve_model_path(model_path_text or self.config.get("model_path", ""))
-        self.runtime_model_path, motion_groups, expr_defs = ensure_runtime_model(model_path)
+        self.live2d_model_path, motion_groups, expr_defs = ensure_live2d_model(model_path)
         self.lipsync_meta = {"gain": 1.0, "mouth_open_ids": [], "mouth_form_ids": []}
         if model_path.exists():
             try:
@@ -3269,20 +3031,20 @@ class DesktopPet(QMainWindow):
             return None
         return (stat.st_mtime_ns, stat.st_size)
 
-    def _runtime_command_mtime_token(self):
+    def _desktop_command_mtime_token(self):
         try:
-            stat = RUNTIME_COMMAND_PATH.stat()
+            stat = DESKTOP_COMMAND_PATH.stat()
         except Exception:
             return None
         return (stat.st_mtime_ns, stat.st_size)
 
-    def _write_runtime_host_heartbeat(self) -> None:
+    def _write_desktop_host_heartbeat(self) -> None:
         payload = {
             "pid": os.getpid(),
             "timestamp_ns": time.time_ns(),
         }
         try:
-            RUNTIME_HOST_HEARTBEAT_PATH.write_text(
+            DESKTOP_HOST_HEARTBEAT_PATH.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -3296,7 +3058,7 @@ class DesktopPet(QMainWindow):
         response_path_text = str(
             payload.get("response_path")
             or command.get("response_path")
-            or RUNTIME_COMMAND_RESPONSE_PATH
+            or DESKTOP_COMMAND_RESPONSE_PATH
         ).strip()
         path = Path(response_path_text)
         if not path.is_absolute():
@@ -3306,7 +3068,7 @@ class DesktopPet(QMainWindow):
         except Exception:
             return path
 
-    def _write_runtime_command_response(self, command: dict, status: str, result: dict[str, object] | None = None) -> None:
+    def _write_desktop_command_response(self, command: dict, status: str, result: dict[str, object] | None = None) -> None:
         nonce = str(command.get("nonce") or "").strip()
         if not nonce:
             return
@@ -3322,7 +3084,7 @@ class DesktopPet(QMainWindow):
             "timestamp_ns": time.time_ns(),
         }
         if status == "error" and not response["result"]:
-            response["result"] = {"error": "runtime command failed"}
+            response["result"] = {"error": "desktop command failed"}
         response_path = self._response_path_for_command(command)
         try:
             response_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3330,25 +3092,25 @@ class DesktopPet(QMainWindow):
             tmp_path.write_text(json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp_path.replace(response_path)
         except Exception as exc:
-            print(f"写入 runtime command 响应失败: {exc}")
+            print(f"写入 desktop command 响应失败: {exc}")
         finally:
-            self._write_runtime_host_heartbeat()
+            self._write_desktop_host_heartbeat()
 
     def on_config_poll(self) -> None:
-        self._write_runtime_host_heartbeat()
+        self._write_desktop_host_heartbeat()
         token = self._config_mtime_token()
         if token is not None and token != self._config_mtime:
             self._config_mtime = token
             self.reload_config_from_disk()
-        self.on_runtime_command_poll()
+        self.on_desktop_command_poll()
 
-    def on_runtime_command_poll(self) -> None:
-        token = self._runtime_command_mtime_token()
-        if token is None or token == self._runtime_command_mtime:
+    def on_desktop_command_poll(self) -> None:
+        token = self._desktop_command_mtime_token()
+        if token is None or token == self._desktop_command_mtime:
             return
-        self._runtime_command_mtime = token
+        self._desktop_command_mtime = token
         try:
-            command = json.loads(RUNTIME_COMMAND_PATH.read_text(encoding="utf-8"))
+            command = json.loads(DESKTOP_COMMAND_PATH.read_text(encoding="utf-8"))
         except Exception:
             return
         if not isinstance(command, dict):
@@ -3356,13 +3118,13 @@ class DesktopPet(QMainWindow):
         nonce = str(command.get("nonce") or "").strip()
         if not nonce:
             return
-        if nonce == self._last_runtime_command_nonce:
+        if nonce == self._last_desktop_command_nonce:
             return
-        self._last_runtime_command_nonce = nonce
-        self._write_runtime_host_heartbeat()
-        self.process_runtime_command(command)
+        self._last_desktop_command_nonce = nonce
+        self._write_desktop_host_heartbeat()
+        self.process_desktop_command(command)
 
-    def process_runtime_command(self, command: dict) -> None:
+    def process_desktop_command(self, command: dict) -> None:
         command_type = str(command.get("type") or "").strip()
         payload = command.get("payload", {})
         if not isinstance(payload, dict):
@@ -3377,7 +3139,7 @@ class DesktopPet(QMainWindow):
 
         if command_type == "load_model":
             self.apply_config_to_web()
-            self._write_runtime_command_response(command, "success", {"model_path": self.config.get("model_path", "")})
+            self._write_desktop_command_response(command, "success", {"model_path": self.config.get("model_path", "")})
             return
 
         if command_type == "play_motion":
@@ -3388,53 +3150,53 @@ class DesktopPet(QMainWindow):
                 index = 0
             if group:
                 self.play_motion(group, index, reload_model=bool(model_path))
-                self._write_runtime_command_response(
+                self._write_desktop_command_response(
                     command,
                     "success",
                     {"group": group, "index": index, "model_path": self.config.get("model_path", "")},
                 )
             else:
-                self._write_runtime_command_response(command, "error", {"error": "group is required"})
+                self._write_desktop_command_response(command, "error", {"error": "group is required"})
             return
 
         if command_type == "play_expression":
             name = str(payload.get("name") or "").strip()
             if name:
                 self.play_expression(name, reload_model=bool(model_path))
-                self._write_runtime_command_response(
+                self._write_desktop_command_response(
                     command,
                     "success",
                     {"name": name, "model_path": self.config.get("model_path", "")},
                 )
             else:
-                self._write_runtime_command_response(command, "error", {"error": "name is required"})
+                self._write_desktop_command_response(command, "error", {"error": "name is required"})
             return
 
         if command_type == "pick_directory":
-            start_dir = _resolve_runtime_directory_seed(str(payload.get("start_dir") or ""))
+            start_dir = _resolve_desktop_directory_seed(str(payload.get("start_dir") or ""))
             try:
                 self.raise_()
                 self.activateWindow()
                 selected = QFileDialog.getExistingDirectory(self, "选择目录", start_dir)
                 if selected:
-                    self._write_runtime_command_response(
+                    self._write_desktop_command_response(
                         command,
                         "success",
                         {"directory": selected, "start_dir": start_dir},
                     )
                 else:
-                    self._write_runtime_command_response(
+                    self._write_desktop_command_response(
                         command,
                         "cancelled",
                         {"directory": "", "start_dir": start_dir},
                     )
             except Exception as exc:
-                self._write_runtime_command_response(
+                self._write_desktop_command_response(
                     command,
                     "error",
                     {"error": str(exc), "start_dir": start_dir},
                 )
-            self._write_runtime_host_heartbeat()
+            self._write_desktop_host_heartbeat()
             return
 
         if command_type == "pick_image_file":
@@ -3451,33 +3213,33 @@ class DesktopPet(QMainWindow):
                     "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All Files (*)",
                 )
                 if selected:
-                    self._write_runtime_command_response(
+                    self._write_desktop_command_response(
                         command,
                         "success",
                         {"path": selected, "start_path": start_path},
                     )
                 else:
-                    self._write_runtime_command_response(
+                    self._write_desktop_command_response(
                         command,
                         "cancelled",
                         {"path": "", "start_path": start_path},
                     )
             except Exception as exc:
-                self._write_runtime_command_response(
+                self._write_desktop_command_response(
                     command,
                     "error",
                     {"error": str(exc), "start_path": start_path},
                 )
-            self._write_runtime_host_heartbeat()
+            self._write_desktop_host_heartbeat()
             return
 
         if command_type == "active_vision_capture":
             try:
                 frame = capture_active_vision_frame_payload(self, payload, self.config.get("vision", {}))
                 trace = frame.get("active_observation") if isinstance(frame.get("active_observation"), dict) else {}
-                self._write_runtime_command_response(command, "success", {"frame": frame, "trace": trace})
+                self._write_desktop_command_response(command, "success", {"frame": frame, "trace": trace})
             except Exception as exc:
-                self._write_runtime_command_response(
+                self._write_desktop_command_response(
                     command,
                     "error",
                     {
@@ -3490,18 +3252,17 @@ class DesktopPet(QMainWindow):
                         },
                     },
                 )
-            self._write_runtime_host_heartbeat()
+            self._write_desktop_host_heartbeat()
             return
 
-        self._write_runtime_command_response(command, "error", {"error": f"unsupported command: {command_type}"})
-        self._write_runtime_host_heartbeat()
+        self._write_desktop_command_response(command, "error", {"error": f"unsupported command: {command_type}"})
+        self._write_desktop_host_heartbeat()
 
     def reload_config_from_disk(self) -> None:
         self.config = load_config()
         self.window_locked = bool(self.config["window"]["locked"])
         self.apply_window_geometry_from_config()
         self.refresh_motion_list(prefer_reset=False)
-        self.ensure_active_runtime_sidecar()
         asr_cfg = self.config.get("chat", {}).get("asr", {}) if isinstance(self.config.get("chat", {}), dict) else {}
         if isinstance(asr_cfg, dict) and bool(asr_cfg.get("enabled", True)):
             self.ensure_asr_service()
@@ -3634,7 +3395,7 @@ class DesktopPet(QMainWindow):
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-        backend_log_path = _truncate_runtime_log(_runtime_log_path("backend"))
+        backend_log_path = _truncate_service_log(_service_log_path("backend"))
         try:
             env = os.environ.copy()
             env[LOCAL_API_TOKEN_ENV] = LOCAL_API_TOKEN
@@ -3656,103 +3417,18 @@ class DesktopPet(QMainWindow):
             if is_backend_live(backend_url):
                 return
             if self.backend_process and self.backend_process.poll() is not None:
-                detail = _tail_runtime_log(backend_log_path)
+                detail = _tail_service_log(backend_log_path)
                 if detail:
                     print(f"backend exited early with code {self.backend_process.returncode}:\n{detail}")
                 else:
                     print(f"backend exited early with code {self.backend_process.returncode}.")
                 return
             time.sleep(0.25)
-        detail = _tail_runtime_log(backend_log_path)
+        detail = _tail_service_log(backend_log_path)
         if detail:
             print(f"backend did not become ready in time; chat may be unavailable.\n{detail}")
         else:
             print("backend did not become ready in time; chat may be unavailable.")
-
-    def _hermes_health_url(self, hermes_cfg: dict) -> str:
-        return local_service_health_url(hermes_cfg)
-
-    def is_hermes_healthy(self, hermes_cfg: dict) -> bool:
-        return self.is_runtime_healthy(hermes_cfg)
-
-    def is_runtime_healthy(self, runtime_cfg: dict) -> bool:
-        if not isinstance(runtime_cfg, dict) or not bool(runtime_cfg.get("enabled", False)):
-            return False
-        try:
-            resp = requests.get(local_service_health_url(runtime_cfg), timeout=2)
-            return 200 <= resp.status_code < 300
-        except Exception:
-            return False
-
-    def ensure_hermes_sidecar(self) -> None:
-        self.ensure_active_runtime_sidecar()
-
-    def ensure_active_runtime_sidecar(self) -> None:
-        mirror_runtime_compat(self.config, root_dir=ROOT_DIR)
-        runtime_id, runtime_cfg = runtime_sidecar_config(self.config)
-        if not bool(runtime_cfg.get("enabled", False)):
-            self.stop_runtime_sidecar(runtime_id)
-            return
-        if self.is_runtime_healthy(runtime_cfg):
-            return
-        if not bool(runtime_cfg.get("auto_start", False)):
-            print(f"{_runtime_display_name(runtime_id)} is enabled but not reachable; auto_start is disabled.")
-            return
-        command = list(runtime_cfg.get("command") or [])
-        if not command:
-            if runtime_id == RUNTIME_HERMES:
-                print(_hermes_missing_command_message(runtime_cfg, root_dir=ROOT_DIR))
-            else:
-                print(_runtime_missing_command_message(runtime_id, runtime_cfg, root_dir=ROOT_DIR))
-            return
-        current = self.runtime_processes.get(runtime_id)
-        if current is not None and current.poll() is None:
-            return
-
-        cwd = str(runtime_cfg.get("cwd") or ROOT_DIR).strip() or str(ROOT_DIR)
-        if not Path(cwd).exists():
-            print(f"failed to start {_runtime_display_name(runtime_id)} sidecar: cwd does not exist: {cwd}")
-            return
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        runtime_log_path = _truncate_runtime_log(_runtime_log_path(runtime_id))
-        try:
-            with runtime_log_path.open("a", encoding="utf-8") as runtime_log:
-                proc = subprocess.Popen(
-                    command,
-                    cwd=cwd,
-                    stdout=runtime_log,
-                    stderr=subprocess.STDOUT,
-                    creationflags=creationflags,
-                )
-            self.runtime_processes[runtime_id] = proc
-            self.runtime_started_by_app[runtime_id] = True
-            if runtime_id == RUNTIME_HERMES:
-                self.hermes_process = proc
-                self.hermes_started_by_app = True
-        except Exception as exc:
-            print(f"failed to start {_runtime_display_name(runtime_id)} sidecar: {exc}")
-            return
-
-        deadline = time.monotonic() + float(runtime_cfg.get("startup_timeout_sec") or 20)
-        while time.monotonic() < deadline:
-            if self.is_runtime_healthy(runtime_cfg):
-                return
-            proc = self.runtime_processes.get(runtime_id)
-            if proc and proc.poll() is not None:
-                detail = _tail_runtime_log(runtime_log_path)
-                if detail:
-                    print(f"{_runtime_display_name(runtime_id)} exited early with code {proc.returncode}:\n{detail}")
-                else:
-                    print(f"{_runtime_display_name(runtime_id)} exited early with code {proc.returncode}.")
-                return
-            time.sleep(0.25)
-        detail = _tail_runtime_log(runtime_log_path)
-        if detail:
-            print(f"{_runtime_display_name(runtime_id)} did not become ready in time; chat may be unavailable.\n{detail}")
-        else:
-            print(f"{_runtime_display_name(runtime_id)} did not become ready in time; chat may be unavailable.")
 
     def ensure_asr_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
@@ -3786,7 +3462,7 @@ class DesktopPet(QMainWindow):
         if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
-        asr_log_path = _truncate_runtime_log(_runtime_log_path("asr"))
+        asr_log_path = _truncate_service_log(_service_log_path("asr"))
         try:
             with asr_log_path.open("a", encoding="utf-8") as asr_log:
                 self.asr_process = subprocess.Popen(
@@ -3805,14 +3481,14 @@ class DesktopPet(QMainWindow):
             if is_asr_healthy(asr_url):
                 return
             if self.asr_process and self.asr_process.poll() is not None:
-                detail = _tail_runtime_log(asr_log_path)
+                detail = _tail_service_log(asr_log_path)
                 if detail:
                     print(f"ASR 服务提前退出，退出码 {self.asr_process.returncode}:\n{detail}")
                 else:
                     print(f"ASR 服务提前退出，退出码 {self.asr_process.returncode}。")
                 return
             time.sleep(0.2)
-        detail = _tail_runtime_log(asr_log_path)
+        detail = _tail_service_log(asr_log_path)
         if detail:
             print(f"ASR 服务未在预期时间内就绪，语音输入可能不可用。\n{detail}")
         else:
@@ -3943,41 +3619,7 @@ class DesktopPet(QMainWindow):
             self.asr_process = None
             self.asr_started_by_app = False
 
-    def stop_hermes_sidecar(self) -> None:
-        self.stop_runtime_sidecar(RUNTIME_HERMES)
-
-    def stop_runtime_sidecar(self, runtime_id: str) -> None:
-        proc = self.runtime_processes.get(runtime_id)
-        if runtime_id == RUNTIME_HERMES and proc is None:
-            proc = self.hermes_process
-        started_by_app = bool(self.runtime_started_by_app.get(runtime_id))
-        if runtime_id == RUNTIME_HERMES:
-            started_by_app = started_by_app or self.hermes_started_by_app
-        if not proc or not started_by_app:
-            return
-        if proc.poll() is not None:
-            self.runtime_processes.pop(runtime_id, None)
-            self.runtime_started_by_app[runtime_id] = False
-            if runtime_id == RUNTIME_HERMES:
-                self.hermes_process = None
-                self.hermes_started_by_app = False
-            return
-        try:
-            self._stop_managed_process(proc, started_by_app=True)
-        finally:
-            self.runtime_processes.pop(runtime_id, None)
-            self.runtime_started_by_app[runtime_id] = False
-            if runtime_id == RUNTIME_HERMES:
-                self.hermes_process = None
-                self.hermes_started_by_app = False
-
-    def stop_all_runtime_sidecars(self) -> None:
-        for runtime_id in list(self.runtime_processes):
-            self.stop_runtime_sidecar(runtime_id)
-        if self.hermes_process is not None:
-            self.stop_runtime_sidecar(RUNTIME_HERMES)
-
-    def shutdown_runtime(self) -> None:
+    def shutdown_desktop(self) -> None:
         if self._shutdown_in_progress:
             return
         self._shutdown_in_progress = True
@@ -4040,7 +3682,6 @@ class DesktopPet(QMainWindow):
             pass
 
         self.stop_asr_service()
-        self.stop_all_runtime_sidecars()
         self.stop_backend_service()
 
     def eventFilter(self, watched, event):
@@ -4205,12 +3846,12 @@ class DesktopPet(QMainWindow):
 
         return super().eventFilter(watched, event)
 
-    def current_runtime_payload(self) -> dict:
+    def current_body_payload(self) -> dict:
         model_path = resolve_model_path(self.config.get("model_path", ""))
         if not model_path.exists() and DEFAULT_CONFIG["model_path"]:
             model_path = resolve_model_path(DEFAULT_CONFIG["model_path"])
-        runtime_path, _, _ = ensure_runtime_model(model_path)
-        self.runtime_model_path = runtime_path
+        live2d_path, _, _ = ensure_live2d_model(model_path)
+        self.live2d_model_path = live2d_path
         pet_cfg = dict(self.config.get("pet", {}))
         background_path = resolve_background_image_path(pet_cfg.get("background_image", ""))
         if pet_cfg.get("background_enabled") and background_path.exists() and background_path.is_file():
@@ -4219,7 +3860,7 @@ class DesktopPet(QMainWindow):
             pet_cfg["background_image_url"] = ""
 
         return {
-            "model_url": QUrl.fromLocalFile(str(runtime_path)).toString(),
+            "model_url": QUrl.fromLocalFile(str(live2d_path)).toString(),
             "pet": pet_cfg,
             "chat": {
                 **self.config.get("chat", {}),
@@ -4238,7 +3879,7 @@ class DesktopPet(QMainWindow):
         self.apply_config_to_web()
 
     def apply_config_to_web(self, after_script: str | None = None) -> None:
-        payload = json.dumps(self.current_runtime_payload(), ensure_ascii=False)
+        payload = json.dumps(self.current_body_payload(), ensure_ascii=False)
         if after_script:
             script = (
                 "window.PET_APP && window.PET_APP.applyConfig("
@@ -4308,10 +3949,9 @@ class DesktopPet(QMainWindow):
             "background_overlay_opacity": float(self.config.get("pet", {}).get("background_overlay_opacity", 0.42) or 0.42),
         }
         chat_cfg = self.config.get("chat", {})
-        tooling_cfg = chat_cfg.get("tooling", {}) if isinstance(chat_cfg, dict) else {}
         self.config["chat"] = {
             "backend_url": str(chat_cfg.get("backend_url", DEFAULT_BACKEND_URL)),
-            "model": panel.chat_model_input.text().strip() or DEFAULT_HERMES_MODEL,
+            "model": panel.chat_model_input.text().strip() or DEFAULT_BRAIN_MODEL,
             "session_id": str(chat_cfg.get("session_id", "default")),
             "voice": panel.chat_voice_input.text().strip() or "zh-CN-XiaoxiaoNeural",
             "rate_pct": max(-50, min(100, int(panel.chat_rate_slider.value()))),
@@ -4319,27 +3959,11 @@ class DesktopPet(QMainWindow):
             "tts_provider_url": panel.chat_tts_provider_url_input.text().strip(),
             "expression_mode": bool(panel.expression_mode_check.isChecked()),
             "expression_output_format": str(chat_cfg.get("expression_output_format", "ndjson_v1")),
-            "tooling": {
-                "enabled": bool(panel.tooling_enabled_check.isChecked()),
-                "mode": "mcp_local_phase2",
-                "file_allowlist": list(tooling_cfg.get("file_allowlist", [str(ROOT_DIR)])),
-                "network_allow_domains": list(tooling_cfg.get("network_allow_domains", [])),
-                "max_tool_calls_per_turn": int(tooling_cfg.get("max_tool_calls_per_turn", 6)),
-                "tool_timeout_sec": int(tooling_cfg.get("tool_timeout_sec", DEFAULT_TOOL_TIMEOUT_SEC)),
-                "third_party": {
-                    "enabled": bool(panel.third_party_enabled_check.isChecked()),
-                    "servers": list(tooling_cfg.get("third_party", {}).get("servers", [])),
-                },
-            },
-            "skills": {
-                "enabled": bool(chat_cfg.get("skills", {}).get("enabled", True)),
-                "default_active_ids": list(chat_cfg.get("skills", {}).get("default_active_ids", [])),
-            },
             "asr": json.loads(json.dumps(chat_cfg.get("asr", DEFAULT_ASR_CONFIG))),
             "system_prompt": panel.system_prompt_input.toPlainText().strip(),
         }
-        _normalize_hermes_chat_config(self.config)
-        _normalize_hermes_sidecar_config(self.config)
+        _keep_neo_config_shape(self.config)
+        _normalize_neo_chat_config(self.config)
 
         self.config["window"] = {
             "x": int(panel.win_x_spin.value()),
@@ -4363,8 +3987,8 @@ class DesktopPet(QMainWindow):
     def save_config(self) -> None:
         self.config["model_path"] = normalize_model_path(self.config.get("model_path", ""))
         self.config["vision"] = normalize_vision_config(self.config.get("vision", {}))
-        _normalize_hermes_sidecar_config(self.config)
-        _normalize_hermes_chat_config(self.config)
+        _keep_neo_config_shape(self.config)
+        _normalize_neo_chat_config(self.config)
         self.config["window"]["x"] = self.x()
         self.config["window"]["y"] = self.y()
         self.config["window"]["width"] = self.width()
@@ -4399,7 +4023,7 @@ class DesktopPet(QMainWindow):
                 self.settings_window.close()
         except Exception:
             pass
-        self.shutdown_runtime()
+        self.shutdown_desktop()
         super().closeEvent(event)
         app = QApplication.instance()
         if app is not None:

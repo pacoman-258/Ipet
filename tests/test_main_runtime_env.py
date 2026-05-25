@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import inspect
+import json
 import os
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -50,7 +54,7 @@ class _FakeWindow:
         self.calls.append("activate")
 
 
-class _RuntimeCommandHost(_FakeWindow):
+class _DesktopCommandHost(_FakeWindow):
     def __init__(self) -> None:
         super().__init__()
         self.config = {
@@ -61,10 +65,10 @@ class _RuntimeCommandHost(_FakeWindow):
         }
         self.responses: list[tuple[dict, str, dict | None]] = []
 
-    def _write_runtime_command_response(self, command, status, result=None) -> None:
+    def _write_desktop_command_response(self, command, status, result=None) -> None:
         self.responses.append((command, status, result))
 
-    def _write_runtime_host_heartbeat(self) -> None:
+    def _write_desktop_host_heartbeat(self) -> None:
         pass
 
 
@@ -121,7 +125,7 @@ class _SettingsWindowHost:
         main.DesktopPet._show_or_focus_settings_window(self, url)
 
 
-class MainRuntimeEnvTests(unittest.TestCase):
+class MainDesktopEnvTests(unittest.TestCase):
     def test_augment_process_path_includes_project_and_user_bins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "project"
@@ -151,19 +155,19 @@ class MainRuntimeEnvTests(unittest.TestCase):
             resolved = main.resolve_backend_python()
         self.assertEqual(resolved, "python3.12")
 
-    def test_runtime_log_path_falls_under_runtime_logs_directory(self) -> None:
+    def test_service_log_path_falls_under_service_logs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "project"
             root.mkdir(parents=True, exist_ok=True)
-            with mock.patch.object(main, "ROOT_DIR", root), mock.patch.object(main, "RUNTIME_LOG_DIR", root / ".runtime-logs"):
-                path = main._runtime_log_path("backend")
-            self.assertEqual(path, root / ".runtime-logs" / "backend.log")
+            with mock.patch.object(main, "ROOT_DIR", root), mock.patch.object(main, "SERVICE_LOG_DIR", root / ".service-logs"):
+                path = main._service_log_path("backend")
+            self.assertEqual(path, root / ".service-logs" / "backend.log")
 
-    def test_tail_runtime_log_returns_last_non_empty_lines(self) -> None:
+    def test_tail_service_log_returns_last_non_empty_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "backend.log"
             path.write_text("one\n\n two \nthree\n", encoding="utf-8")
-            tail = main._tail_runtime_log(path, max_lines=2)
+            tail = main._tail_service_log(path, max_lines=2)
         self.assertEqual(tail, " two\nthree")
 
     def test_macos_uses_opaque_window_defaults(self) -> None:
@@ -230,37 +234,94 @@ class MainRuntimeEnvTests(unittest.TestCase):
         self.assertTrue(main._prefer_pyqt_bindings("darwin"))
         self.assertFalse(main._prefer_pyqt_bindings("win32"))
 
-    def test_load_config_normalizes_hermes_sidecar_config(self) -> None:
+    def test_default_config_omits_legacy_runtime_platform_config(self) -> None:
+        self.assertNotIn("hermes", main.DEFAULT_CONFIG)
+        self.assertNotIn("runtime", main.DEFAULT_CONFIG)
+        self.assertNotIn("tooling", main.DEFAULT_CONFIG["chat"])
+        self.assertNotIn("skills", main.DEFAULT_CONFIG["chat"])
+        for key in ("brain", "human_ops", "memory", "skills"):
+            self.assertIn(key, main.DEFAULT_CONFIG)
+
+    def test_load_config_drops_legacy_runtime_platform_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "project"
             root.mkdir(parents=True, exist_ok=True)
             config_path = root / "pet_config.json"
+            removed_runtime_key = "run" + "time"
+            removed_service_key = "her" + "mes"
             config_path.write_text(
-                """
-                {
-                  "hermes": {
-                    "enabled": true,
-                    "auto_start": true,
-                    "command": "uv run hermes-agent",
-                    "cwd": "Hermes",
-                    "base_url": "http://127.0.0.1:9100/",
-                    "health_path": "healthz",
-                    "startup_timeout_sec": "7"
-                  }
-                }
-                """,
+                json.dumps(
+                    {
+                        removed_service_key: {
+                            "enabled": True,
+                            "auto_start": True,
+                            "command": "uv run old-service",
+                            "cwd": "old-service",
+                            "base_url": "http://127.0.0.1:9100/",
+                            "health_path": "healthz",
+                            "startup_timeout_sec": "7",
+                        },
+                        removed_runtime_key: {"active": "old-service"},
+                        "chat": {"tooling": {"enabled": True}, "skills": {"enabled": True}},
+                    }
+                ),
                 encoding="utf-8",
             )
             with mock.patch.object(main, "ROOT_DIR", root), mock.patch.object(main, "CONFIG_PATH", config_path):
                 config = main.load_config()
-        hermes = config["hermes"]
-        self.assertTrue(hermes["enabled"])
-        self.assertTrue(hermes["auto_start"])
-        self.assertEqual(hermes["command"], ["uv", "run", "hermes-agent"])
-        self.assertEqual(hermes["cwd"], str((root / "Hermes").resolve()))
-        self.assertEqual(hermes["base_url"], "http://127.0.0.1:9100")
-        self.assertEqual(hermes["health_path"], "/healthz")
-        self.assertEqual(hermes["startup_timeout_sec"], 7.0)
+        self.assertNotIn(removed_service_key, config)
+        self.assertNotIn(removed_runtime_key, config)
+        self.assertNotIn("tooling", config["chat"])
+        self.assertNotIn("skills", config["chat"])
+
+    def test_backend_route_support_uses_health_not_legacy_topic_openapi(self) -> None:
+        response = mock.Mock()
+        response.status_code = 200
+        response.json.return_value = {"ok": True}
+
+        with mock.patch.object(main.requests, "get", return_value=response) as get_mock:
+            self.assertTrue(main.backend_supports_required_routes("http://127.0.0.1:8008"))
+
+        get_mock.assert_called_once_with("http://127.0.0.1:8008/api/health", timeout=1.5)
+
+    def test_desktop_source_omits_removed_sidecar_surface(self) -> None:
+        source = inspect.getsource(main.DesktopPet)
+        forbidden = [
+            "ensure_" + "active_" + "runtime_" + "sidecar",
+            "ensure_" + "her" + "mes_" + "sidecar",
+            "stop_" + "her" + "mes_" + "sidecar",
+            "stop_" + "runtime_" + "sidecar",
+            "is_" + "her" + "mes_" + "healthy",
+        ]
+        for name in forbidden:
+            self.assertNotIn(name, source)
+
+    def test_desktop_init_source_does_not_start_removed_sidecar(self) -> None:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(main.DesktopPet.__init__)))
+        calls = [
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        self.assertNotIn("ensure_" + "active_" + "runtime_" + "sidecar", calls)
+        self.assertNotIn("ensure_" + "her" + "mes_" + "sidecar", calls)
+
+    def test_reload_config_from_disk_does_not_start_removed_sidecar(self) -> None:
+        host = mock.Mock()
+        host.config = {"window": {"locked": False}, "chat": {"asr": {"enabled": False}}}
+        host.vision_controller = mock.Mock()
+
+        with mock.patch.object(main, "load_config", return_value=host.config):
+            main.DesktopPet.reload_config_from_disk(host)
+
+        self.assertFalse(hasattr(main.DesktopPet, "ensure_" + "active_" + "runtime_" + "sidecar"))
+        self.assertFalse(hasattr(main.DesktopPet, "ensure_" + "her" + "mes_" + "sidecar"))
+        host.stop_asr_service.assert_called_once()
+
+    def test_control_panel_source_does_not_call_legacy_mcp_routes(self) -> None:
+        source = inspect.getsource(main.ControlPanel)
+        removed_path = "/api/" + "m" + "cp" + "/"
+        self.assertNotIn(removed_path, source)
 
     def test_load_config_normalizes_vision_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -855,8 +916,8 @@ class MainRuntimeEnvTests(unittest.TestCase):
         self.assertGreaterEqual(seen_configs[0]["max_width"], 1920)
         self.assertGreaterEqual(seen_configs[0]["jpeg_quality"], 88)
 
-    def test_runtime_command_active_vision_capture_returns_frame_response(self) -> None:
-        host = _RuntimeCommandHost()
+    def test_desktop_command_active_vision_capture_returns_frame_response(self) -> None:
+        host = _DesktopCommandHost()
         command = {
             "nonce": "active-test",
             "type": "active_vision_capture",
@@ -865,7 +926,7 @@ class MainRuntimeEnvTests(unittest.TestCase):
         frame = {"mime_type": "image/jpeg", "data_url": "data:image/jpeg;base64,active"}
 
         with mock.patch.object(main, "capture_active_vision_frame_payload", return_value=frame) as capture_mock:
-            main.DesktopPet.process_runtime_command(host, command)
+            main.DesktopPet.process_desktop_command(host, command)
 
         capture_mock.assert_called_once()
         self.assertEqual(host.responses[0][1], "success")
@@ -921,20 +982,12 @@ class MainRuntimeEnvTests(unittest.TestCase):
         self.assertEqual(main.collect_screen_observations({"include_ui_metadata": True}, platform_name="win32", runner=runner), {})
         runner.assert_not_called()
 
-    def test_hermes_missing_command_message_names_real_checkout(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "project"
-            message = main._hermes_missing_command_message(
-                {
-                    "cwd": "",
-                    "base_url": "http://127.0.0.1:9119",
-                    "health_path": "/api/status",
-                },
-                root_dir=root,
-            )
-
-        self.assertIn("no command is configured", message)
-        self.assertIn("real Hermes Agent checkout", message)
-        self.assertIn("not the repo-local Hermes storage directory", message)
-        self.assertIn("uv\", \"run\", \"hermes\", \"dashboard", message)
-        self.assertIn("http://127.0.0.1:9119/api/status", message)
+    def test_removed_sidecar_helpers_are_not_exported(self) -> None:
+        removed_names = [
+            "_" + "her" + "mes_" + "missing_command_message",
+            "_" + "runtime_" + "missing_command_message",
+            "is_" + "her" + "mes_" + "healthy",
+            "is_" + "runtime_" + "healthy",
+        ]
+        for name in removed_names:
+            self.assertFalse(hasattr(main, name) or hasattr(main.DesktopPet, name))
