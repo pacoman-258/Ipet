@@ -80,6 +80,59 @@ def _qt_runtime_env_defaults(platform_name: str | None = None) -> dict[str, str]
     return defaults
 
 
+_MACOS_NATIVE_STDERR_NOISE = (
+    "TSMSendMessageToUIServer: CFMessagePortSendRequest FAILED",
+    "error messaging the mach port for IMKCFRunLoopWakeUpReliable",
+)
+_MACOS_NATIVE_STDERR_FILTER_INSTALLED = False
+
+
+def _is_macos_native_stderr_noise(line: str, platform_name: str | None = None) -> bool:
+    if not _is_macos(platform_name):
+        return False
+    text = str(line or "")
+    return any(token in text for token in _MACOS_NATIVE_STDERR_NOISE)
+
+
+def _install_macos_native_stderr_filter(platform_name: str | None = None) -> bool:
+    global _MACOS_NATIVE_STDERR_FILTER_INSTALLED
+    if _MACOS_NATIVE_STDERR_FILTER_INSTALLED or not _is_macos(platform_name):
+        return False
+    if os.environ.get("IPET_DISABLE_NATIVE_STDERR_FILTER") == "1":
+        return False
+    try:
+        original_stderr_fd = os.dup(2)
+        read_fd, write_fd = os.pipe()
+        os.dup2(write_fd, 2)
+        os.close(write_fd)
+    except Exception:
+        return False
+
+    def pump() -> None:
+        pending = b""
+        try:
+            while True:
+                chunk = os.read(read_fd, 4096)
+                if not chunk:
+                    break
+                pending += chunk
+                while b"\n" in pending:
+                    raw_line, pending = pending.split(b"\n", 1)
+                    line = raw_line.decode("utf-8", errors="replace")
+                    if not _is_macos_native_stderr_noise(line, platform_name):
+                        os.write(original_stderr_fd, raw_line + b"\n")
+            if pending:
+                line = pending.decode("utf-8", errors="replace")
+                if not _is_macos_native_stderr_noise(line, platform_name):
+                    os.write(original_stderr_fd, pending)
+        except Exception:
+            pass
+
+    threading.Thread(target=pump, name="ipet-native-stderr-filter", daemon=True).start()
+    _MACOS_NATIVE_STDERR_FILTER_INSTALLED = True
+    return True
+
+
 def _apply_qt_runtime_env(env: dict[str, str] | None = None, platform_name: str | None = None) -> dict[str, str]:
     target = env if env is not None else os.environ
     defaults = _qt_runtime_env_defaults(platform_name)
@@ -4031,6 +4084,7 @@ class DesktopPet(QMainWindow):
 
 
 if __name__ == "__main__":
+    _install_macos_native_stderr_filter()
     if _should_force_software_opengl():
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)

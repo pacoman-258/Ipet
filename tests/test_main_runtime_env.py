@@ -188,6 +188,29 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertIn("--enable-webgl", env["QTWEBENGINE_CHROMIUM_FLAGS"])
         self.assertIn("--ignore-gpu-blocklist", env["QTWEBENGINE_CHROMIUM_FLAGS"])
 
+    def test_macos_native_stderr_filter_only_matches_known_input_method_noise(self) -> None:
+        self.assertTrue(
+            main._is_macos_native_stderr_noise(
+                "2026-05-26 18:48:24.192 python3[72161:5490386] "
+                "TSMSendMessageToUIServer: CFMessagePortSendRequest FAILED(-1) to send to port com.apple.tsm.uiserver",
+                platform_name="darwin",
+            )
+        )
+        self.assertTrue(
+            main._is_macos_native_stderr_noise(
+                "2026-05-26 18:48:48.740 python3[72161:5490386] "
+                "error messaging the mach port for IMKCFRunLoopWakeUpReliable",
+                platform_name="darwin",
+            )
+        )
+        self.assertFalse(main._is_macos_native_stderr_noise("real traceback line", platform_name="darwin"))
+        self.assertFalse(
+            main._is_macos_native_stderr_noise(
+                "TSMSendMessageToUIServer: CFMessagePortSendRequest FAILED(-1)",
+                platform_name="linux",
+            )
+        )
+
     def test_webgl_remains_enabled_for_live2d(self) -> None:
         self.assertTrue(main._should_enable_webgl("darwin"))
         self.assertTrue(main._should_enable_webgl("win32"))
