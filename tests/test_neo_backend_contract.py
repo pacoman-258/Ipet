@@ -10,6 +10,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from brain import BrainDecision
 from brain.llm import BrainLLMError
 
 
@@ -156,11 +157,47 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(meta["model"], "neo-model")
         done = [data for name, data in events if name == "done"][-1]
         self.assertEqual(done["text"], "来自真实 Brain 的回复")
+        self.assertEqual(done["decision"]["kind"], "say")
+        self.assertFalse(done["decision"]["requires_review"])
         run_mock.assert_awaited_once()
         args, kwargs = run_mock.await_args
         self.assertEqual(args[0]["model_name"], "neo-model")
         self.assertEqual(args[0]["api_key"], "secret")
         self.assertEqual(kwargs["user_text"], "你好")
+
+    def test_chat_stream_emits_say_decision_without_json_shell(self) -> None:
+        backend_app.CONFIG_PATH.write_text(
+            json.dumps(
+                {
+                    "brain": {
+                        "provider": "openai_compatible",
+                        "model_endpoint": "https://llm.example",
+                        "model_name": "neo-model",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completion = SimpleNamespace(
+            text="只聊天正常。",
+            raw_text='{"kind":"say","text":"只聊天正常。"}',
+            decision=BrainDecision.say("只聊天正常。"),
+            provider="openai_compatible",
+            model="neo-model",
+        )
+
+        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(return_value=completion)):
+            with self.client.stream("POST", "/api/chat/stream", json={"text": "只聊天", "session_id": "neo-say"}) as resp:
+                self.assertEqual(resp.status_code, 200)
+                body = resp.read().decode("utf-8")
+
+        events = _sse_events(body)
+        token_text = "".join(data.get("text", "") for name, data in events if name == "token")
+        self.assertEqual(token_text, "只聊天正常。")
+        self.assertNotIn('"kind"', token_text)
+        done = [data for name, data in events if name == "done"][-1]
+        self.assertEqual(done["decision"]["kind"], "say")
+        self.assertEqual(done["decision"]["payload"]["text"], "只聊天正常。")
 
     def test_chat_stream_redacts_brain_errors_before_sse_and_history(self) -> None:
         backend_app.CONFIG_PATH.write_text(

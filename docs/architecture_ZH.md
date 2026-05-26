@@ -58,15 +58,18 @@ Brain 负责单轮 LLM 决策。它接收紧凑的 turn packet：
 - 可用技能
 - 当前审批或执行状态
 
-Brain 每次只返回一个下一步：
+Brain 每次只返回一个结构化下一步：
 
 - `say`
+- `observe`
 - `act`
 - `remember`
 - `learn_skill`
 - `stop`
 
 Brain 不直接改文件、改设置、写记忆、操作 UI 或管理进程。它只提出意图，由其他模块做边界清晰的执行。
+
+LLM 输出会被归类成 `BrainDecision`。提示词要求 provider 返回类似 `{"kind":"say","text":"..."}` 的紧凑 JSON；如果 provider 返回普通文本，也会被当作 `say`，保证只聊天路径仍能正常使用。当前真正执行的路径只有 `say`；`observe`、`act`、`remember`、`learn_skill` 和 `stop` 先作为后续审批与执行循环的预留类型。
 
 Brain 通过窄 API 边界调用用户选择的大模型服务。当前支持 OpenAI 兼容 chat completions、Ollama chat、Anthropic 兼容 messages 三种格式。Provider 端点、模型名、温度和可选 API Key 都在 Web 设置页配置，并只保存在本地配置里。
 

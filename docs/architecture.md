@@ -58,15 +58,18 @@ Brain owns the LLM decision for a single turn. Its input is a compact packet:
 - available skills
 - current approval or execution status
 
-Brain returns exactly one next step:
+Brain returns exactly one structured next step:
 
 - `say`
+- `observe`
 - `act`
 - `remember`
 - `learn_skill`
 - `stop`
 
 Brain does not directly mutate files, settings, memory, UI, or processes. It asks other modules to do bounded work.
+
+LLM output is classified into `BrainDecision`. Providers are asked to return a compact JSON object such as `{"kind":"say","text":"..."}`. Plain text is accepted as `say` so chat remains usable. The current executable path is only `say`; `observe`, `act`, `remember`, `learn_skill`, and `stop` are reserved for the approval and execution loops.
 
 Brain calls a user-selected LLM provider through a narrow API boundary. The supported wire formats are OpenAI-compatible chat completions, Ollama chat, and Anthropic-compatible messages. Provider endpoint, model name, temperature, and optional API key are configured in the web settings page and saved only in local configuration.
 

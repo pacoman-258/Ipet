@@ -11,6 +11,7 @@ class DecisionKind(str, Enum):
     PROPOSE_ACT = "propose_act"
     PROPOSE_REMEMBER = "propose_remember"
     PROPOSE_LEARN_SKILL = "propose_learn_skill"
+    STOP = "stop"
 
 
 _REVIEW_REQUIRED = {
@@ -84,3 +85,8 @@ class BrainDecision:
             f"Propose skill: {skill_name}",
             {"name": skill_name, "steps": clean_steps},
         )
+
+    @classmethod
+    def stop(cls, summary: str = "") -> "BrainDecision":
+        summary_text = str(summary or "Stop turn").strip() or "Stop turn"
+        return cls(DecisionKind.STOP, summary_text, {"summary": summary_text})

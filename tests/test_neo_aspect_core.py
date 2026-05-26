@@ -30,6 +30,7 @@ class NeoAspectDecisionTests(unittest.TestCase):
         self.assertEqual(DecisionKind.PROPOSE_ACT.value, "propose_act")
         self.assertEqual(DecisionKind.PROPOSE_REMEMBER.value, "propose_remember")
         self.assertEqual(DecisionKind.PROPOSE_LEARN_SKILL.value, "propose_learn_skill")
+        self.assertEqual(DecisionKind.STOP.value, "stop")
 
 
 class NeoAspectHumanOpsTests(unittest.TestCase):

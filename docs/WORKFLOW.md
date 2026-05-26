@@ -99,12 +99,15 @@ Body may immediately say or render small status updates such as listening, think
 Brain receives a compact turn packet from Body plus allowed Memory & Skills context. Brain must return one next step:
 
 - `say`: answer or ask a clarifying question.
+- `observe`: request a screen or local context observation.
 - `act`: request a local action.
 - `remember`: request a durable memory write.
 - `learn_skill`: request a new or updated skill.
 - `stop`: end the turn with a summary.
 
 Brain does not directly write files, click UI, mutate settings, persist memory, or install anything. It describes intent; Body, Human Ops, and Memory & Skills enforce the actual boundary.
+
+The active runtime classifies LLM output into a `BrainDecision`. The prompt asks providers to return one JSON object such as `{"kind":"say","text":"..."}`. Plain text is still accepted and treated as `say`, so normal chat remains usable even when a provider ignores the schema. In the current implementation only `say` is executed; `observe`, `act`, `remember`, `learn_skill`, and `stop` are parsed as reserved decision kinds for later review and execution flows.
 
 The active Brain provider is configured in the web settings page. The current API formats are:
 

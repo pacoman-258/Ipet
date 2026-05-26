@@ -5,6 +5,7 @@ from .llm import (
     BrainMessage,
     BrainProviderConfig,
     complete_with_provider,
+    parse_brain_reply,
     run_brain_turn,
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     "BrainProviderConfig",
     "DecisionKind",
     "complete_with_provider",
+    "parse_brain_reply",
     "run_brain_turn",
 ]

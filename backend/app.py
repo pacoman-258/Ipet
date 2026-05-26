@@ -13,6 +13,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
+from brain.decisions import BrainDecision
 from brain.llm import BrainLLMError, run_brain_turn
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
@@ -220,6 +221,13 @@ def _sanitize_brain_error(error: Exception, brain_config: dict[str, Any]) -> str
     return text[:240] + "..." if len(text) > 240 else text
 
 
+def _decision_from_completion(completion: Any) -> BrainDecision:
+    decision = getattr(completion, "decision", None)
+    if isinstance(decision, BrainDecision):
+        return decision
+    return BrainDecision.say(str(getattr(completion, "text", "") or ""))
+
+
 def _gone() -> None:
     raise HTTPException(status_code=410, detail=REMOVED_DETAIL)
 
@@ -323,15 +331,17 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
     provider_hint = str(brain_config.get("provider") or "openai_compatible")
     initial_provider = provider_hint if endpoint_configured else "local_placeholder"
 
-    async def resolve_reply() -> tuple[str, str, str]:
+    async def resolve_reply() -> tuple[str, str, str, BrainDecision]:
         if not endpoint_configured:
+            reply = (
+                "Neo Brain placeholder: 我已经收到你的消息。当前还没有配置 Brain 模型端点；"
+                "请在设置页选择 provider 并填写模型端点。"
+            )
             return (
-                (
-                    "Neo Brain placeholder: 我已经收到你的消息。当前还没有配置 Brain 模型端点；"
-                    "请在设置页选择 provider 并填写模型端点。"
-                ),
+                reply,
                 initial_provider,
                 model,
+                BrainDecision.say(reply),
             )
         try:
             completion = await run_brain_turn(
@@ -339,13 +349,16 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
                 user_text=text,
                 request_system_prompt=str(request_payload.get("system_prompt") or ""),
             )
-            return completion.text, completion.provider, completion.model
+            decision = _decision_from_completion(completion)
+            return str(completion.text or decision.summary), completion.provider, completion.model, decision
         except BrainLLMError as exc:
             detail = _sanitize_brain_error(exc, brain_config)
-            return f"Brain 调用失败：{detail}", provider_hint, model
+            reply = f"Brain 调用失败：{detail}"
+            return reply, provider_hint, model, BrainDecision.say(reply)
         except Exception as exc:
             detail = _sanitize_brain_error(exc, brain_config)
-            return f"Brain 调用失败：{detail}", provider_hint, model
+            reply = f"Brain 调用失败：{detail}"
+            return reply, provider_hint, model, BrainDecision.say(reply)
 
     async def event_stream():
         yield _sse(
@@ -359,13 +372,23 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
             },
         )
         yield _sse("phase", {"name": "neo_brain", "status": "running", "text": f"Brain provider: {initial_provider}"})
-        reply, provider, used_model = await resolve_reply()
+        reply, provider, used_model, decision = await resolve_reply()
         await asyncio.sleep(0)
         yield _sse("token", {"text": reply})
         yield _sse("segment", {"text": reply, "expression": "normal"})
         yield _sse("display_segment", {"text": reply})
         TOPIC_STORE.append_exchange(session_id, user_text=text, assistant_text=reply)
-        yield _sse("done", {"turn_id": turn_id, "session_id": session_id, "text": reply})
+        yield _sse(
+            "done",
+            {
+                "turn_id": turn_id,
+                "session_id": session_id,
+                "text": reply,
+                "provider": provider,
+                "model": used_model,
+                "decision": decision.to_dict(),
+            },
+        )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
