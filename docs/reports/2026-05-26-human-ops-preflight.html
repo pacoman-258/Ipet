@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Neo Aspect - Human Ops Preflight</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --panel: #ffffff;
+      --ink: #172235;
+      --muted: #66758b;
+      --line: #dbe5f0;
+      --accent: #5c8dff;
+      --soft: #e9f0ff;
+      --warn: #fff4df;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, var(--bg), #edf2f8);
+      color: var(--ink);
+    }
+    main {
+      width: min(940px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 58px;
+    }
+    header {
+      margin-bottom: 22px;
+    }
+    .status {
+      display: inline-flex;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: #244fbc;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    h1 {
+      margin: 12px 0 8px;
+      font-size: 28px;
+      line-height: 1.25;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    section {
+      margin-top: 16px;
+      padding: 22px 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 14px 32px rgba(23, 34, 53, 0.06);
+    }
+    section.warning {
+      background: linear-gradient(180deg, #fffaf0, var(--warn));
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin: 8px 0;
+      line-height: 1.65;
+    }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--soft);
+      color: #244fbc;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="status">动工前体检</div>
+      <h1>Human Ops 开工前检查</h1>
+      <div class="meta">日期：2026-05-26 · 分支：Neo_Aspect · 本轮只读检查，业务代码未修改</div>
+    </header>
+
+    <section>
+      <h2>当前已有基础</h2>
+      <ul>
+        <li><code>human_ops/approvals.py</code> 已有最小 ReviewableProposal，支持 act proposal 和 approval 标记。</li>
+        <li><code>human_ops/previews.py</code> 已有点击红点预览模型，和用户先前要求一致。</li>
+        <li><code>brain/decisions.py</code> 已区分 <code>say</code>、<code>observe</code>、<code>propose_act</code>、<code>propose_remember</code>、<code>propose_learn_skill</code>、<code>stop</code>。</li>
+        <li>设置页已有 Human Ops 配置：观察屏幕、Accessibility、act/remember/learn_skill review、剪贴板写入 review、点击红点预览。</li>
+        <li>文档已经把 Human Ops 定义为审批、拒绝、执行记录和风险解释层。</li>
+      </ul>
+    </section>
+
+    <section class="warning">
+      <h2>开工前必须钉住</h2>
+      <ul>
+        <li>先定义 Neo Human Ops 的 API/SSE 契约。当前 <code>index.html</code> 仍有旧 approval UI，但 Neo 后端已将 <code>/api/chat/approval</code> 作为移除接口返回。</li>
+        <li>先决定第一期 action 范围。建议只做 <code>click</code>、<code>type_text</code>、<code>hotkey</code>、<code>open_app</code>、<code>wait</code>，把文件/终端/网络执行排到后面。</li>
+        <li>先决定审批对象格式：id、decision、risk、summary、preview、payload、created_at、status、human_note、constraints、result。</li>
+        <li>先决定执行边界归属：Human Ops 只审批和记录，Body 执行已批准动作；Brain 只提出下一步。</li>
+        <li>先决定点击预览坐标体系：桌面全局坐标、窗口局部坐标、截图坐标不能混用；红点必须能对应实际点击点。</li>
+        <li>先决定持久化策略：pending proposal、approved/rejected 记录、execution ledger 应存在哪里，以及是否进入 Git 忽略的本地数据目录。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>推荐第一期切片</h2>
+      <ul>
+        <li>Phase 1：只做 proposal/review 闭环，不真实点击。Brain 产生 <code>propose_act</code> 后，聊天里显示审批卡片和红点预览；批准/拒绝后返回 Brain 可读结果。</li>
+        <li>Phase 2：接入 Body 执行 <code>click</code>，只允许批准后的单次点击；执行后 observe 反馈。</li>
+        <li>Phase 3：加入 <code>type_text</code>、<code>hotkey</code>、<code>open_app</code>、<code>wait</code>，每种 action 都有独立 preview 和审计记录。</li>
+        <li>Phase 4：remember / learn_skill 的 review 队列与 Memory & Skills 落地。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>建议补充的测试入口</h2>
+      <ul>
+        <li><code>tests/test_human_ops_api.py</code>：proposal 创建、批准、拒绝、约束、状态转换。</li>
+        <li><code>tests/test_human_ops_execution.py</code>：未批准不得执行，批准后只执行 payload 中的一次动作。</li>
+        <li><code>tests/test_chat_modes_ui.py</code>：审批卡片、红点预览、拒绝输入框恢复。</li>
+        <li><code>tests/test_neo_backend_contract.py</code>：Brain 非 say 决策不会被当作普通文本直接执行。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>本轮验证</h2>
+      <ul>
+        <li><code>python -m unittest tests.test_neo_aspect_core tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_neo_aspect_settings_page -v</code>：47 项通过。</li>
+        <li>工作区仍有本轮无关改动：<code>.gitignore</code>、<code>.pet_desktop_host.heartbeat.json</code>、<code>.service-logs/</code>、<code>docs/ARCHITECTURE_RUNTIME_SPLIT.md</code>、<code>docs/superpowers/plans/2026-05-24-runtime-split-hardening.md</code>。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
