@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet Neo Brain LLM API Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #5f6b7a;
+      --line: #d8e0ea;
+      --accent: #0f766e;
+      --warn: #8a4b25;
+      --code: #17202a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+    }
+
+    .page {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 38px 22px 54px;
+    }
+
+    header {
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      color: var(--warn);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    h1 {
+      margin: 8px 0 12px;
+      font-size: clamp(32px, 5vw, 52px);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    main {
+      display: grid;
+      gap: 20px;
+      padding-top: 24px;
+    }
+
+    section {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    ul {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    li + li { margin-top: 6px; }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef3f6;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 12px 0 0;
+      padding: 14px;
+      border-radius: 8px;
+      background: var(--code);
+      color: #eef5f7;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: #eaf7f4;
+      color: var(--accent);
+      font-weight: 750;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div class="eyebrow">2026-05-26 · Neo_Aspect</div>
+      <h1>Neo Brain LLM API 接入报告</h1>
+      <p class="lead">本轮把 Brain 从本地占位回复推进到可配置的大模型 API：支持 OpenAI 兼容、Ollama、Anthropic 兼容三种格式，并在 Web 设置页中由用户选择和填写。</p>
+    </header>
+
+    <main>
+      <section>
+        <h2>状态</h2>
+        <p><span class="status">DONE</span></p>
+        <p>Brain 已具备最小可用的 provider 边界、配置读取、聊天 SSE 接入和密钥脱敏。未配置 endpoint 时仍返回清晰的本地占位提示，不会假装已经联网。</p>
+      </section>
+
+      <section>
+        <h2>子代理分工</h2>
+        <ul>
+          <li><code>main</code>：按 TDD 路线实现 provider 边界、后端接入、设置页改造、文档和报告。</li>
+          <li><code>Rawls</code>：只读审查 Brain provider 后端契约、SSE 输出和密钥泄漏风险。</li>
+          <li><code>Peirce</code>：只读审查设置页三类 provider 配置、endpoint 保存路径和 UI 契约。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>已改内容</h2>
+        <div class="grid">
+          <div>
+            <p><strong>Brain 与后端</strong></p>
+            <ul>
+              <li><code>brain/llm.py</code></li>
+              <li><code>brain/__init__.py</code></li>
+              <li><code>backend/app.py</code></li>
+              <li><code>tests/test_brain_llm_providers.py</code></li>
+              <li><code>tests/test_neo_backend_contract.py</code></li>
+            </ul>
+          </div>
+          <div>
+            <p><strong>设置页、前端与文档</strong></p>
+            <ul>
+              <li><code>settings.html</code> / <code>settings.js</code></li>
+              <li><code>app/settings_schema.py</code></li>
+              <li><code>index.html</code></li>
+              <li><code>docs/WORKFLOW.md</code></li>
+              <li><code>docs/architecture.md</code> / <code>docs/architecture_ZH.md</code></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>达成效果</h2>
+        <ul>
+          <li>新增 <code>brain/llm.py</code>，统一 provider config、消息构造、请求发送、响应解析和错误包装。</li>
+          <li>OpenAI 兼容 provider 使用 <code>/v1/chat/completions</code>，Ollama 使用 <code>/api/chat</code>，Anthropic 兼容 provider 使用 <code>/v1/messages</code>，并统一接收输出上限配置。</li>
+          <li><code>/api/chat/stream</code> 在用户配置 endpoint 后会调用 Brain runner，并在 SSE meta 中回传 provider 和 model。</li>
+          <li>聊天流会先发出 <code>meta</code> 和 running phase，再等待模型返回；provider 错误进入前端和历史记录前会做密钥与 endpoint 脱敏。</li>
+          <li>Web 设置页新增 Brain provider 下拉选择，保留原有视觉风格，并避免把 LLM endpoint 写入本地 <code>backend_url</code>。</li>
+          <li><code>/api/settings/config</code> 继续返回脱敏配置，Brain API key 不会出现在前端读取结果里。</li>
+          <li>README 之外的核心架构与工作流文档已同步说明新的 Brain API 边界。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>验证</h2>
+        <pre><code>python -m py_compile backend/app.py brain/llm.py app/settings_schema.py
+OK
+
+node --check settings.js
+OK
+
+python -m unittest tests.test_brain_llm_providers tests.test_neo_backend_contract tests.test_neo_aspect_settings_page tests.test_neo_aspect_core tests.test_chat_modes_ui -v
+44 tests OK
+
+git diff --check
+OK</code></pre>
+        <p>尝试用 Browser/Playwright 做设置页视觉回归时，本地 Node 环境缺少 <code>playwright</code> 模块；本轮没有安装新依赖，因此视觉验证保留为后续项。</p>
+      </section>
+
+      <section>
+        <h2>待办</h2>
+        <ul>
+          <li>为 Brain 增加“每次决定下一步”的结构化决策输出，而不仅是回复文本。</li>
+          <li>把 Human Ops 的 <code>observe</code>、<code>act review</code>、红点点击预览与 Brain 决策闭环连接起来。</li>
+          <li>增加 provider 可用性检查按钮，例如测试 endpoint、model、key 是否能完成一次轻量请求。</li>
+          <li>补设置页真实浏览器视觉截图回归，确认三类 provider 表单在当前风格下没有布局漂移。</li>
+          <li>后续决定是否支持流式 token 转发；当前实现先用一次性 completion 保持契约清晰。</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>推荐下一步</h2>
+        <p>下一轮建议做 Brain Action Decision：让模型返回 <code>say</code>、<code>observe</code>、<code>act_request</code>、<code>remember_request</code>、<code>learn_skill_request</code> 这类明确动作草案，并把需要人类批准的动作送入 review 队列。</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

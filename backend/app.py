@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from uuid import uuid4
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+
+from brain.llm import BrainLLMError, run_brain_turn
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
 from .models import TTSRequest
@@ -83,8 +86,10 @@ NEO_DEFAULTS: dict[str, Any] = {
         "locked": False,
     },
     "brain": {
+        "provider": "openai_compatible",
         "model_endpoint": "",
         "model_name": "gpt-5.4",
+        "max_output_tokens": 1024,
         "persona": "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。",
         "self_state": "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
         "response_style": "lively",
@@ -203,6 +208,18 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _sanitize_brain_error(error: Exception, brain_config: dict[str, Any]) -> str:
+    text = str(error or "").strip() or "unknown provider error"
+    secret = str(brain_config.get("api_key") or "")
+    endpoint = str(brain_config.get("model_endpoint") or "")
+    for sensitive in (secret, endpoint):
+        if sensitive:
+            text = text.replace(sensitive, "[redacted]")
+    text = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)((?:api[_-]?key|token|key)=)[^\s&]+", r"\1[redacted]", text)
+    return text[:240] + "..." if len(text) > 240 else text
+
+
 def _gone() -> None:
     raise HTTPException(status_code=410, detail=REMOVED_DETAIL)
 
@@ -299,11 +316,36 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
     text = str(request_payload.get("text") or request_payload.get("message") or "").strip()
     session_id = normalize_topic_id(str(request_payload.get("session_id") or "default"))
     turn_id = uuid4().hex
-    model = str(request_payload.get("model") or _normalize_private_config().get("brain", {}).get("model_name") or "gpt-5.4")
-    reply = (
-        "Neo Brain placeholder: 我已经收到你的消息。当前破坏性重构阶段只保留新的 "
-        "Body / Brain / Human Ops / Memory & Skills 契约；后续会接入真正的 Brain 决策层。"
-    )
+    private_config = _normalize_private_config()
+    brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
+    model = str(request_payload.get("model") or brain_config.get("model_name") or "gpt-5.4")
+    endpoint_configured = bool(str(brain_config.get("model_endpoint") or "").strip())
+    provider_hint = str(brain_config.get("provider") or "openai_compatible")
+    initial_provider = provider_hint if endpoint_configured else "local_placeholder"
+
+    async def resolve_reply() -> tuple[str, str, str]:
+        if not endpoint_configured:
+            return (
+                (
+                    "Neo Brain placeholder: 我已经收到你的消息。当前还没有配置 Brain 模型端点；"
+                    "请在设置页选择 provider 并填写模型端点。"
+                ),
+                initial_provider,
+                model,
+            )
+        try:
+            completion = await run_brain_turn(
+                brain_config,
+                user_text=text,
+                request_system_prompt=str(request_payload.get("system_prompt") or ""),
+            )
+            return completion.text, completion.provider, completion.model
+        except BrainLLMError as exc:
+            detail = _sanitize_brain_error(exc, brain_config)
+            return f"Brain 调用失败：{detail}", provider_hint, model
+        except Exception as exc:
+            detail = _sanitize_brain_error(exc, brain_config)
+            return f"Brain 调用失败：{detail}", provider_hint, model
 
     async def event_stream():
         yield _sse(
@@ -312,10 +354,12 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
                 "turn_id": turn_id,
                 "session_id": session_id,
                 "backend": "neo_aspect",
+                "provider": initial_provider,
                 "model": model,
             },
         )
-        yield _sse("phase", {"name": "neo_brain", "status": "running", "text": "Neo Brain placeholder"})
+        yield _sse("phase", {"name": "neo_brain", "status": "running", "text": f"Brain provider: {initial_provider}"})
+        reply, provider, used_model = await resolve_reply()
         await asyncio.sleep(0)
         yield _sse("token", {"text": reply})
         yield _sse("segment", {"text": reply, "expression": "normal"})

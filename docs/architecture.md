@@ -68,6 +68,8 @@ Brain returns exactly one next step:
 
 Brain does not directly mutate files, settings, memory, UI, or processes. It asks other modules to do bounded work.
 
+Brain calls a user-selected LLM provider through a narrow API boundary. The supported wire formats are OpenAI-compatible chat completions, Ollama chat, and Anthropic-compatible messages. Provider endpoint, model name, temperature, and optional API key are configured in the web settings page and saved only in local configuration.
+
 ## 5. Human Ops
 
 Human Ops is the safety and approval layer. It owns:

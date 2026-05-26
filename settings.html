@@ -158,6 +158,14 @@
 
           <div class="form-grid two-col">
             <label class="field">
+              <span>API 格式</span>
+              <select id="brain-provider">
+                <option value="openai_compatible">OpenAI 兼容</option>
+                <option value="ollama">Ollama</option>
+                <option value="anthropic_compatible">Anthropic 兼容</option>
+              </select>
+            </label>
+            <label class="field">
               <span>模型端点</span>
               <input id="brain-model-endpoint" type="text" placeholder="http://127.0.0.1:11434" />
             </label>

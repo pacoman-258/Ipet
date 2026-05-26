@@ -31,7 +31,7 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('function setMemoryMode(mode) {\n        currentMemoryMode = normalizeMemoryMode(mode);\n        applyMemoryModeUI();\n        renderTopicHistoryList();\n        updateShellButtons();\n      }', source)
         memory_sync_snippet = 'if (payload.memory_mode) {\n                currentMemoryMode = normalizeMemoryMode(payload.memory_mode);\n                applyMemoryModeUI();\n              }'
         self.assertEqual(source.count(memory_sync_snippet), 2)
-        self.assertIn('model: state.chat.model || "hermes-agent"', source)
+        self.assertIn('model: state.chat.model || "gpt-5.4"', source)
         self.assertNotIn("router_enabled: !!state.chat.router_enabled", source)
         self.assertNotIn('router_model: state.chat.router_model || ""', source)
 

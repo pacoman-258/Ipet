@@ -44,6 +44,19 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn("click-preview-dot", self.js)
         self.assertIn("act 需要批准", self.html)
 
+    def test_brain_provider_selector_supports_three_api_formats(self) -> None:
+        self.assertIn('id="brain-provider"', self.html)
+        for provider in ("openai_compatible", "ollama", "anthropic_compatible"):
+            with self.subTest(provider=provider):
+                self.assertIn(f'value="{provider}"', self.html)
+                self.assertIn(provider, self.js)
+        self.assertIn("brainProvider", self.js)
+        self.assertIn("provider:", self.js)
+        self.assertIn("model_endpoint: stringValue(els.brainModelEndpoint)", self.js)
+        self.assertNotIn("next.chat.backend_url = stringValue(els.brainModelEndpoint", self.js)
+        read_form = self.js.split("  function readForm() {", 1)[1].split("  async function loadSettings()", 1)[0]
+        self.assertNotIn("backend_url", read_form)
+
     def test_settings_js_still_uses_existing_config_endpoint(self) -> None:
         self.assertIn("/api/settings/config", self.js)
         self.assertIn("PUT", self.js)

@@ -106,6 +106,14 @@ Brain receives a compact turn packet from Body plus allowed Memory & Skills cont
 
 Brain does not directly write files, click UI, mutate settings, persist memory, or install anything. It describes intent; Body, Human Ops, and Memory & Skills enforce the actual boundary.
 
+The active Brain provider is configured in the web settings page. The current API formats are:
+
+- OpenAI-compatible chat completions
+- Ollama chat
+- Anthropic-compatible messages
+
+The provider endpoint, model name, temperature, and optional API key live under the local Brain settings. The API key is stored locally and redacted from settings responses.
+
 ## Human Ops Approval
 
 Human Ops reviews any operation that may affect files, processes, configuration, network access, external services, user data, or durable memory.

@@ -31,6 +31,7 @@
     windowWidth: $("window-width"),
     windowHeight: $("window-height"),
     windowLocked: $("window-locked"),
+    brainProvider: $("brain-provider"),
     brainModelEndpoint: $("brain-model-endpoint"),
     brainModelName: $("brain-model-name"),
     brainApiKey: $("brain-api-key"),
@@ -129,8 +130,10 @@
   function neoDefaults() {
     return {
       brain: {
+        provider: "openai_compatible",
         model_endpoint: "",
         model_name: "gpt-5.4",
+        max_output_tokens: 1024,
         persona: "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。",
         self_state: "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
         response_style: "lively",
@@ -255,7 +258,7 @@
     const neo = mergedNeo(config || {});
     const cards = [
       ["Body", config?.model_path || "未选择形象"],
-      ["Brain", neo.brain.model_name || "未设置模型"],
+      ["Brain", `${providerLabel(neo.brain.provider)} · ${neo.brain.model_name || "未设置模型"}`],
       ["Human Ops", neo.human_ops.require_act_review ? "动作需批准" : "动作审批关闭"],
       ["Memory", neo.memory.long_term_enabled ? "长期记忆开启" : "长期记忆关闭"],
       ["Skills", neo.skills.review_required ? "保存前审阅" : "审阅关闭"],
@@ -313,6 +316,17 @@
       .replaceAll("'", "&#39;");
   }
 
+  function providerLabel(value) {
+    const provider = String(value || "openai_compatible");
+    if (provider === "ollama") {
+      return "Ollama";
+    }
+    if (provider === "anthropic_compatible") {
+      return "Anthropic";
+    }
+    return "OpenAI";
+  }
+
   function updateClickPreview() {
     const x = intValue(els.clickPreviewX, 160);
     const y = intValue(els.clickPreviewY, 54);
@@ -360,7 +374,8 @@
     setValue(els.windowHeight, Number(win.height || 640));
     setChecked(els.windowLocked, win.locked);
 
-    setValue(els.brainModelEndpoint, neo.brain.model_endpoint || chat.backend_url || "");
+    setValue(els.brainProvider, neo.brain.provider || "openai_compatible");
+    setValue(els.brainModelEndpoint, neo.brain.model_endpoint || "");
     setValue(els.brainModelName, neo.brain.model_name || chat.model || "gpt-5.4");
     setValue(els.brainApiKey, "");
     setChecked(els.brainApiKeyClear, false);
@@ -407,7 +422,6 @@
     next.chat.tts_provider = stringValue(els.chatTtsProvider, "edge_tts");
     next.chat.rate_pct = intValue(els.chatRatePct, 0);
     next.chat.model = stringValue(els.brainModelName, "gpt-5.4");
-    next.chat.backend_url = stringValue(els.brainModelEndpoint, next.chat.backend_url || "");
     next.chat.system_prompt = stringValue(els.brainPersona);
     next.chat.asr = {
       ...(next.chat.asr || {}),
@@ -439,6 +453,7 @@
 
     next.brain = {
       ...(next.brain || {}),
+      provider: stringValue(els.brainProvider, "openai_compatible"),
       model_endpoint: stringValue(els.brainModelEndpoint),
       model_name: stringValue(els.brainModelName, "gpt-5.4"),
       persona: stringValue(els.brainPersona),

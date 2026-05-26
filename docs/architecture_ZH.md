@@ -68,6 +68,8 @@ Brain 每次只返回一个下一步：
 
 Brain 不直接改文件、改设置、写记忆、操作 UI 或管理进程。它只提出意图，由其他模块做边界清晰的执行。
 
+Brain 通过窄 API 边界调用用户选择的大模型服务。当前支持 OpenAI 兼容 chat completions、Ollama chat、Anthropic 兼容 messages 三种格式。Provider 端点、模型名、温度和可选 API Key 都在 Web 设置页配置，并只保存在本地配置里。
+
 ## 5. Human Ops
 
 Human Ops 是安全与审批层。它负责：

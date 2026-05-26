@@ -20,6 +20,7 @@ def neo_aspect_settings_sections() -> list[dict[str, object]]:
             "title": "Brain",
             "items": [
                 "model endpoint",
+                "provider format",
                 "model name",
                 "API key storage",
                 "persona profile",

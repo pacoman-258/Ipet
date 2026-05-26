@@ -10,6 +10,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from brain.llm import BrainLLMError
 
 
 def _sse_events(body: str) -> list[tuple[str, dict]]:
@@ -81,6 +82,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertNotIn("mcp", config)
         self.assertNotIn("api_key", config["brain"])
         self.assertEqual(config["brain"]["api_key_preview"], "")
+        self.assertEqual(config["brain"]["provider"], "openai_compatible")
 
     def test_settings_put_persists_public_neo_shape_without_api_key_echo(self) -> None:
         resp = self.client.put(
@@ -122,6 +124,74 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertNotIn("error", event_names)
         token_text = "".join(data.get("text", "") for name, data in events if name == "token")
         self.assertIn("Neo Brain", token_text)
+
+    def test_chat_stream_uses_configured_brain_runner(self) -> None:
+        backend_app.CONFIG_PATH.write_text(
+            json.dumps(
+                {
+                    "brain": {
+                        "provider": "openai_compatible",
+                        "model_endpoint": "https://llm.example",
+                        "model_name": "neo-model",
+                        "api_key": "secret",
+                        "persona": "你是 Ipet。",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completion = SimpleNamespace(text="来自真实 Brain 的回复", provider="openai_compatible", model="neo-model")
+
+        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(return_value=completion)) as run_mock:
+            with self.client.stream("POST", "/api/chat/stream", json={"text": "你好", "session_id": "neo-brain"}) as resp:
+                self.assertEqual(resp.status_code, 200)
+                body = resp.read().decode("utf-8")
+
+        events = _sse_events(body)
+        self.assertEqual([name for name, _ in events[:2]], ["meta", "phase"])
+        token_text = "".join(data.get("text", "") for name, data in events if name == "token")
+        self.assertEqual(token_text, "来自真实 Brain 的回复")
+        meta = [data for name, data in events if name == "meta"][-1]
+        self.assertEqual(meta["provider"], "openai_compatible")
+        self.assertEqual(meta["model"], "neo-model")
+        done = [data for name, data in events if name == "done"][-1]
+        self.assertEqual(done["text"], "来自真实 Brain 的回复")
+        run_mock.assert_awaited_once()
+        args, kwargs = run_mock.await_args
+        self.assertEqual(args[0]["model_name"], "neo-model")
+        self.assertEqual(args[0]["api_key"], "secret")
+        self.assertEqual(kwargs["user_text"], "你好")
+
+    def test_chat_stream_redacts_brain_errors_before_sse_and_history(self) -> None:
+        backend_app.CONFIG_PATH.write_text(
+            json.dumps(
+                {
+                    "brain": {
+                        "provider": "anthropic_compatible",
+                        "model_endpoint": "https://secret-token@example.com/v1",
+                        "model_name": "claude-test",
+                        "api_key": "secret-token",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        error = BrainLLMError("401 bearer secret-token at https://secret-token@example.com/v1")
+
+        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(side_effect=error)):
+            with self.client.stream("POST", "/api/chat/stream", json={"text": "你好", "session_id": "neo-error"}) as resp:
+                self.assertEqual(resp.status_code, 200)
+                body = resp.read().decode("utf-8")
+
+        self.assertNotIn("secret-token", body)
+        self.assertNotIn("https://secret-token@example.com/v1", body)
+        events = _sse_events(body)
+        token_text = "".join(data.get("text", "") for name, data in events if name == "token")
+        self.assertIn("Brain 调用失败", token_text)
+        topic = backend_app.TOPIC_STORE.get_topic_detail("neo-error")
+        self.assertIsNotNone(topic)
+        assistant_text = topic["messages"][-1]["content"]
+        self.assertNotIn("secret-token", assistant_text)
 
     def test_skills_list_is_empty_compatibility_shell(self) -> None:
         resp = self.client.get("/api/skills")

@@ -1710,7 +1710,7 @@
         background_overlay_opacity: 0.42,
         chat: {
           backend_url: "http://127.0.0.1:8008",
-          model: "hermes-agent",
+          model: "gpt-5.4",
           session_id: "default",
           voice: "zh-CN-XiaoxiaoNeural",
           rate_pct: 0,
@@ -4363,7 +4363,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               session_id: state.chat.session_id || "default",
-              model: state.chat.model || "hermes-agent",
+              model: state.chat.model || "gpt-5.4",
               system_prompt: state.chat.system_prompt || "",
               expression_mode: !!state.chat.expression_mode,
               expression_output_format: state.chat.expression_output_format || "ndjson_v1",
