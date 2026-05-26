@@ -246,7 +246,7 @@ async def _get_json(client: Any, url: str, *, headers: dict[str, str]) -> dict[s
 
 async def _with_client(config: BrainProviderConfig, callback):
     timeout = httpx.Timeout(connect=8.0, read=config.timeout_sec, write=20.0, pool=8.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         return await callback(client)
 
 

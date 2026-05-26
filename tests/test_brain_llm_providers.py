@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from brain.llm import (
     BrainMessage,
@@ -33,6 +34,19 @@ class _RecordingClient:
     async def get(self, url: str, **kwargs):
         self.requests.append({"method": "GET", "url": url, **kwargs})
         return _FakeResponse(self.payload)
+
+
+class _FakeAsyncClient:
+    init_kwargs: dict = {}
+
+    def __init__(self, **kwargs) -> None:
+        type(self).init_kwargs = kwargs
+
+    async def __aenter__(self):
+        return _RecordingClient({"models": [{"name": "llama3.1"}]})
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
 
 
 class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -148,6 +162,15 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         request = client.requests[0]
         self.assertEqual(request["url"], "https://anthropic.example/v1/models")
         self.assertEqual(request["headers"]["x-api-key"], "secret")
+
+    async def test_brain_http_client_ignores_environment_proxy_by_default(self) -> None:
+        config = BrainProviderConfig(provider="ollama", endpoint="http://127.0.0.1:11434")
+
+        with mock.patch("brain.llm.httpx.AsyncClient", _FakeAsyncClient):
+            models = await list_provider_models(config)
+
+        self.assertEqual([model.id for model in models], ["llama3.1"])
+        self.assertFalse(_FakeAsyncClient.init_kwargs["trust_env"])
 
 
 if __name__ == "__main__":
