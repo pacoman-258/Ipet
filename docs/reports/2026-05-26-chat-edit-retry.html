@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Neo Aspect - Chat Edit Retry Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --ink: #172235;
+      --muted: #65748a;
+      --line: #dbe4ef;
+      --accent: #5c8dff;
+      --accent-soft: #e9f0ff;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, var(--bg), #eef3f8);
+      color: var(--ink);
+    }
+    main {
+      width: min(920px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 56px;
+    }
+    header {
+      margin-bottom: 22px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.25;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-top: 16px;
+      box-shadow: 0 14px 32px rgba(23, 34, 53, 0.06);
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin: 8px 0;
+      line-height: 1.65;
+    }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: #244fbc;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #244fbc;
+      font-weight: 700;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="status">本轮任务完成</div>
+      <h1>聊天消息编辑与重试</h1>
+      <div class="meta">日期：2026-05-26 · 分支：Neo_Aspect</div>
+    </header>
+
+    <section>
+      <h2>修改内容</h2>
+      <ul>
+        <li>在聊天用户气泡上加入“编辑并重试”按钮；点击后会把原消息放回输入框，并把发送按钮切换为“重试”。</li>
+        <li>重试发送时，前端会从被编辑的用户消息处截断当前可见分支，再插入编辑后的新消息。</li>
+        <li>历史消息恢复时保留 <code>assistant_turn</code>，让前端知道该从哪一轮截断持久化历史。</li>
+        <li>后端 <code>TopicStore</code> 新增从指定 assistant turn 起截断话题历史的能力，并重写 <code>full.jsonl</code> 与 <code>summary.json</code> 尾部。</li>
+        <li><code>/api/chat/stream</code> 支持 <code>retry_from_assistant_turn</code>，重试时先截断旧分支，再追加新的问答。</li>
+        <li>补充前端静态契约、TopicStore 历史截断、聊天流重试持久化三组回归测试。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>达成效果</h2>
+      <ul>
+        <li>用户可以像 Codex 一样编辑已发送消息并重新发送。</li>
+        <li>旧回答和旧分支会从界面上消失，避免同一个话题里出现两条互相冲突的后续路径。</li>
+        <li>持久化话题会同步替换旧分支，刷新历史后不会把被编辑掉的内容又带回来。</li>
+        <li>本地浏览器检查覆盖了输入、点击编辑、改写、重试发送和界面截断流程。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>验证记录</h2>
+      <ul>
+        <li><code>python -m unittest tests.test_chat_modes_ui tests.test_chat_topics tests.test_neo_backend_contract -v</code>：40 项通过。</li>
+        <li><code>python -m py_compile backend/app.py backend/chat_topics.py</code>：通过。</li>
+        <li>浏览器预览：点击“编辑并重试”后输入框恢复原文，重试发送后旧用户消息及其后续系统错误被截断。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>待办事项</h2>
+      <ul>
+        <li>后续可把编辑重试状态做成更明确的小提示，例如输入框上方显示“正在重试第 N 轮”。</li>
+        <li>等 Brain 使用完整历史上下文时，可增加一条端到端测试确认旧分支不会进入模型上下文。</li>
+        <li>如果未来恢复长期摘要压缩，需要决定截断旧分支后是否保留截断点之前的 summary block，而不是统一回退为 raw block。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>推荐下一步</h2>
+      <ul>
+        <li>继续做聊天体验的“小闭环”：停止生成、重新生成最后一次回复、复制消息。</li>
+        <li>或者进入 Memory Review 队列，把“任务完成后主动总结并建议保存”的 review 流程落到 UI。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

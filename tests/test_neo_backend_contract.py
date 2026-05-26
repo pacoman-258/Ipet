@@ -241,6 +241,43 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(done["decision"]["kind"], "say")
         self.assertEqual(done["decision"]["payload"]["text"], "只聊天正常。")
 
+    def test_chat_stream_retry_truncates_persisted_branch_before_append(self) -> None:
+        backend_app.TOPIC_STORE.create_topic(topic_id="neo-retry")
+        backend_app.TOPIC_STORE.append_exchange("neo-retry", user_text="原问题一", assistant_text="原回答一")
+        backend_app.TOPIC_STORE.append_exchange("neo-retry", user_text="原问题二", assistant_text="原回答二")
+        backend_app.CONFIG_PATH.write_text(
+            json.dumps(
+                {
+                    "brain": {
+                        "provider": "openai_compatible",
+                        "model_endpoint": "https://llm.example",
+                        "model_name": "neo-model",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completion = SimpleNamespace(text="重试回答二", provider="openai_compatible", model="neo-model")
+
+        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(return_value=completion)):
+            with self.client.stream(
+                "POST",
+                "/api/chat/stream",
+                json={"text": "改写后的问题二", "session_id": "neo-retry", "retry_from_assistant_turn": 2},
+            ) as resp:
+                self.assertEqual(resp.status_code, 200)
+                body = resp.read().decode("utf-8")
+
+        events = _sse_events(body)
+        done = [data for name, data in events if name == "done"][-1]
+        self.assertEqual(done["retry_from_assistant_turn"], 2)
+        detail = backend_app.TOPIC_STORE.get_topic_detail("neo-retry") or {}
+        self.assertEqual(
+            [item["content"] for item in detail["messages"]],
+            ["原问题一", "原回答一", "改写后的问题二", "重试回答二"],
+        )
+        self.assertEqual(detail["messages"][-1]["assistant_turn"], 2)
+
     def test_chat_stream_redacts_brain_errors_before_sse_and_history(self) -> None:
         backend_app.CONFIG_PATH.write_text(
             json.dumps(

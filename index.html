@@ -1023,6 +1023,11 @@
       color: #763a5b;
     }
 
+    .msg.user.is-edit-source {
+      outline: 2px solid rgba(255, 255, 255, 0.84);
+      outline-offset: 2px;
+    }
+
     .msg.pet {
       align-self: flex-start;
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 248, 0.96));
@@ -1083,6 +1088,41 @@
       letter-spacing: 0.02em;
       background: rgba(255, 255, 255, 0.8);
       color: #86586a;
+    }
+
+    .msg-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .msg-edit-button {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.42);
+      color: inherit;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.16s ease, background 0.16s ease, transform 0.16s ease;
+    }
+
+    .msg.user:hover .msg-edit-button,
+    .msg.user.is-edit-source .msg-edit-button,
+    .msg-edit-button:focus-visible {
+      opacity: 1;
+    }
+
+    .msg-edit-button:hover {
+      background: rgba(255, 255, 255, 0.72);
+      transform: translateY(-1px);
     }
 
     .msg-body {
@@ -1309,6 +1349,11 @@
       background: linear-gradient(180deg, rgba(255, 247, 250, 0.96), rgba(255, 240, 246, 0.94));
     }
 
+    #chat-input-wrap.is-retry-editing {
+      border-top-color: rgba(92, 141, 255, 0.45);
+      box-shadow: inset 0 1px 0 rgba(92, 141, 255, 0.12);
+    }
+
     #chat-asr-status {
       grid-column: 1 / -1;
       font-size: 12px;
@@ -1520,6 +1565,11 @@
       gap: 10px;
       background: linear-gradient(180deg, #f5f8fc, #eef3f8);
       border-top: 1px solid rgba(215, 225, 236, 0.95);
+    }
+
+    #chat-input-wrap.is-retry-editing {
+      border-top-color: rgba(92, 141, 255, 0.5);
+      box-shadow: inset 0 1px 0 rgba(92, 141, 255, 0.12);
     }
 
     @media (max-width: 380px) {
@@ -1774,6 +1824,7 @@
       const chatSkillsListEl = document.getElementById("chat-skills-list");
       const chatMessagesEl = document.getElementById("chat-messages");
       const chatInputEl = document.getElementById("chat-input");
+      const chatInputWrapEl = document.getElementById("chat-input-wrap");
       const chatAsrStatusEl = document.getElementById("chat-asr-status");
       const chatSendEl = document.getElementById("chat-send");
       const chatStopEl = document.getElementById("chat-stop");
@@ -1833,6 +1884,8 @@
       let currentTopicMeta = null;
       let currentChatMode = "react";
       let currentMemoryMode = "persistent";
+      let pendingRetryEdit = null;
+      let chatMessageSequence = 0;
       let asrAudioContext = null;
       let asrMediaStream = null;
       let asrInputSource = null;
@@ -2770,7 +2823,12 @@
         if (!chatMessagesEl) {
           return;
         }
+        clearPendingRetryEdit();
         chatMessagesEl.innerHTML = "";
+        currentThoughtGroup = null;
+        currentAssistantWorklog = null;
+        approvalBubbleRefs.clear();
+        approvalThoughtSessionRefs.clear();
         for (const item of Array.isArray(messages) ? messages : []) {
           if (!item || typeof item !== "object") {
             continue;
@@ -2782,6 +2840,7 @@
           if (role === "user") {
             appendMessage("user", String(item.content || ""), {
               speakerName: "你",
+              assistantTurn: Number(item.assistant_turn || 0) || null,
             });
           } else {
             appendAssistantHistoryBlock(item);
@@ -3548,11 +3607,93 @@
         return turn;
       }
 
+      function findUserMessageById(messageId) {
+        const targetId = String(messageId || "").trim();
+        if (!targetId) {
+          return null;
+        }
+        return Array.from(chatMessagesEl.querySelectorAll(".msg.user")).find((item) => item.dataset.chatMessageId === targetId) || null;
+      }
+
+      function clearPendingRetryEdit(restoreButton = true) {
+        if (pendingRetryEdit?.messageId) {
+          const previousEl = findUserMessageById(pendingRetryEdit.messageId);
+          if (previousEl) {
+            previousEl.classList.remove("is-edit-source");
+          }
+        }
+        pendingRetryEdit = null;
+        chatInputWrapEl.classList.remove("is-retry-editing");
+        if (restoreButton) {
+          chatSendEl.textContent = "发送";
+          chatSendEl.title = "";
+        }
+      }
+
+      function beginUserMessageEditRetry(messageId) {
+        if (chatState !== "idle" && chatState !== "awaiting_followup_input") {
+          return;
+        }
+        const messageEl = findUserMessageById(messageId);
+        if (!messageEl) {
+          return;
+        }
+        const bodyEl = messageEl.querySelector(".msg-body");
+        const originalText = String(bodyEl?.textContent || messageEl.dataset.chatMessageText || "");
+        clearPendingRetryEdit(false);
+        messageEl.classList.add("is-edit-source");
+        pendingRetryEdit = {
+          messageId: String(messageId || ""),
+          originalText,
+          assistantTurn: Number(messageEl.dataset.assistantTurn || 0) || null,
+        };
+        chatInputEl.value = originalText;
+        chatInputWrapEl.classList.add("is-retry-editing");
+        chatSendEl.textContent = "重试";
+        chatSendEl.title = "重新发送这条消息";
+        chatInputEl.focus();
+        const end = chatInputEl.value.length;
+        chatInputEl.setSelectionRange(end, end);
+      }
+
+      function truncateChatAfterMessage(messageId) {
+        const messageEl = findUserMessageById(messageId);
+        if (!messageEl) {
+          return { assistantTurn: null };
+        }
+        const assistantTurn = Number(messageEl.dataset.assistantTurn || 0) || null;
+        let node = messageEl.nextElementSibling;
+        while (node) {
+          const next = node.nextElementSibling;
+          node.remove();
+          node = next;
+        }
+        messageEl.remove();
+        currentThoughtGroup = null;
+        currentAssistantWorklog = null;
+        approvalBubbleRefs.clear();
+        approvalThoughtSessionRefs.clear();
+        activeApprovalId = "";
+        pendingApprovalInputTurnId = "";
+        return { assistantTurn };
+      }
+
       function appendMessage(role, text, options = {}) {
         const phase = String(options.phase || "").trim().toLowerCase();
         const el = document.createElement("article");
         const roleClass = role === "user" ? "user" : role === "error" ? "error" : "pet";
         el.className = `msg ${roleClass}${phase ? ` phase-${phase}` : ""}${options.pending ? " pending" : ""}`;
+        const contentText = String(text || "");
+        const messageId = String(options.messageId || `chat-message-${++chatMessageSequence}`);
+        const assistantTurn = Number(options.assistantTurn || 0) || null;
+        if (role === "user") {
+          el.dataset.chatMessageId = messageId;
+          el.dataset.chatMessageRole = "user";
+          el.dataset.chatMessageText = contentText;
+          if (assistantTurn) {
+            el.dataset.assistantTurn = String(assistantTurn);
+          }
+        }
 
         const headEl = document.createElement("div");
         headEl.className = "msg-head";
@@ -3568,10 +3709,27 @@
           phaseEl.textContent = phaseLabel(phase);
           headEl.appendChild(phaseEl);
         }
+        if (role === "user") {
+          const actionsEl = document.createElement("div");
+          actionsEl.className = "msg-actions";
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "msg-edit-button";
+          editButton.title = "编辑并重试";
+          editButton.setAttribute("aria-label", "编辑并重试这条消息");
+          editButton.textContent = "✎";
+          editButton.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            beginUserMessageEditRetry(messageId);
+          });
+          actionsEl.appendChild(editButton);
+          headEl.appendChild(actionsEl);
+        }
 
         const bodyEl = document.createElement("div");
         bodyEl.className = "msg-body";
-        bodyEl.textContent = String(text || "");
+        bodyEl.textContent = contentText;
 
         el.appendChild(headEl);
         el.appendChild(bodyEl);
@@ -4345,7 +4503,14 @@
             return;
           }
         }
-        appendMessage("user", userText, { speakerName: "你" });
+        const retryEdit = pendingRetryEdit;
+        let retryFromAssistantTurn = null;
+        if (retryEdit?.messageId) {
+          const truncated = truncateChatAfterMessage(retryEdit.messageId);
+          retryFromAssistantTurn = Number(truncated?.assistantTurn || retryEdit.assistantTurn || 0) || null;
+          clearPendingRetryEdit();
+        }
+        appendMessage("user", userText, { speakerName: "你", assistantTurn: retryFromAssistantTurn });
         stopSpeaking(false);
         setChatState("streaming");
         streamFinished = false;
@@ -4378,6 +4543,7 @@
               chat_mode: currentChatMode,
               memory_mode: currentMemoryMode,
               skill_ids: currentChatMode === "chat" ? [] : activeChatSkillIds(),
+              retry_from_assistant_turn: retryFromAssistantTurn,
               text: userText,
             }),
           });
@@ -4401,6 +4567,19 @@
         if (!ttsPlaying && ttsQueue.length === 0) {
           setChatState("idle");
         }
+      }
+
+      async function submitChatInput() {
+        if (!canSubmitChatInput() || asrStarting || asrRecording || asrAwaitingFinal) {
+          return;
+        }
+        const text = chatInputEl.value;
+        if (!String(text || "").trim()) {
+          chatInputEl.focus();
+          return;
+        }
+        chatInputEl.value = "";
+        await streamChat(text);
       }
 
       function applyModelTransform() {
@@ -4753,26 +4932,21 @@
         chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
         updateShellButtons();
         chatSendEl.addEventListener("click", async () => {
-          if (!canSubmitChatInput() || asrStarting || asrRecording || asrAwaitingFinal) {
-            return;
-          }
-          const text = chatInputEl.value;
-          chatInputEl.value = "";
-          await streamChat(text);
+          await submitChatInput();
         });
         chatInputEl.addEventListener("keydown", async (event) => {
           if (matchesPushToTalkKey(event) && shouldHandlePushToTalk(event)) {
             event.preventDefault();
             return;
           }
+          if (event.key === "Escape" && pendingRetryEdit) {
+            event.preventDefault();
+            clearPendingRetryEdit();
+            return;
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            if (!canSubmitChatInput() || asrStarting || asrRecording || asrAwaitingFinal) {
-              return;
-            }
-            const text = chatInputEl.value;
-            chatInputEl.value = "";
-            await streamChat(text);
+            await submitChatInput();
           }
         });
         chatStopEl.addEventListener("click", () => {

@@ -167,6 +167,32 @@ class TopicStoreTests(unittest.TestCase):
         self.assertTrue(self.store.delete_topic("demo-topic"))
         self.assertNotIn("demo-topic", self.store._snapshot_cache)
 
+    def test_truncate_from_assistant_turn_rewrites_history_and_summary_tail(self) -> None:
+        self.store.create_topic(topic_id="demo-topic")
+        for index in range(1, 4):
+            self.store.append_exchange(
+                "demo-topic",
+                user_text=f"user-{index}",
+                assistant_text=f"assistant-{index}",
+            )
+        snapshot_before = self.store.get_runtime_snapshot("demo-topic")
+        self.assertIsNotNone(snapshot_before)
+        self.assertIn("demo-topic", self.store._snapshot_cache)
+
+        result = self.store.truncate_from_assistant_turn("demo-topic", 2)
+
+        self.assertIsNotNone(result)
+        self.assertNotIn("demo-topic", self.store._snapshot_cache)
+        detail = self.store.get_topic_detail("demo-topic") or {}
+        self.assertEqual([item["content"] for item in detail["messages"]], ["user-1", "assistant-1"])
+        self.assertEqual(detail["meta"]["assistant_turn_count"], 1)
+        self.assertEqual(detail["meta"]["preview"], "assistant-1")
+        blocks = detail["summary"]["blocks"]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["start_assistant_turn"], 1)
+        self.assertEqual(blocks[0]["end_assistant_turn"], 1)
+        self.assertEqual([item["content"] for item in blocks[0]["messages"]], ["user-1", "assistant-1"])
+
     def test_load_meta_backfills_long_term_memory_marker_defaults(self) -> None:
         meta = self.store.create_topic(topic_id="demo-topic")
         meta.pop("last_long_term_memory_saved_marker", None)

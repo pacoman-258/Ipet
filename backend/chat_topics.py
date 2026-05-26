@@ -275,6 +275,45 @@ class TopicStore:
             self._invalidate_snapshot_cache(normalized_id)
             return updated
 
+    def truncate_from_assistant_turn(self, topic_id: str, assistant_turn: int) -> dict[str, Any] | None:
+        normalized_id = normalize_topic_id(topic_id)
+        start_turn = max(1, int(assistant_turn or 0))
+        now_text = _now_text()
+        with self._lock:
+            meta = self.load_meta(normalized_id)
+            if meta is None:
+                return None
+            remaining_messages = [
+                deepcopy(item)
+                for item in self.load_full_messages(normalized_id)
+                if int(item.get("assistant_turn") or 0) < start_turn
+            ]
+            max_turn = max((int(item.get("assistant_turn") or 0) for item in remaining_messages), default=0)
+            blocks = [self._raw_block_from_messages(remaining_messages, now_text)] if remaining_messages else []
+            summary_document = {
+                "topic_id": normalized_id,
+                "updated_at": now_text,
+                "blocks": blocks,
+            }
+            updated_meta = deepcopy(meta)
+            updated_meta["assistant_turn_count"] = max_turn
+            updated_meta["mini_summary_count"] = 0
+            updated_meta["major_summary_count"] = 0
+            updated_meta["updated_at"] = now_text
+            updated_meta["preview"] = self._build_preview(blocks)
+            pending = self._pending_raw_turn_range(blocks)
+            updated_meta["pending_summary_start_assistant_turn"] = pending[0] if pending else None
+            updated_meta["pending_summary_end_assistant_turn"] = pending[1] if pending else None
+
+            self._write_jsonl(self.full_path(normalized_id), remaining_messages)
+            self._write_json(self.meta_path(normalized_id), updated_meta)
+            self._write_json(self.summary_path(normalized_id), summary_document)
+            self._invalidate_snapshot_cache(normalized_id)
+            return {
+                "meta": updated_meta,
+                "summary": summary_document,
+            }
+
     def build_model_messages(self, topic_id: str) -> list[dict[str, str]]:
         summary_document = self.load_summary_document(topic_id)
         return self._build_model_messages_from_summary_document(summary_document)
@@ -627,6 +666,11 @@ class TopicStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def _write_jsonl(self, path: Path, payloads: list[dict[str, Any]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = "".join(json.dumps(payload, ensure_ascii=False) + "\n" for payload in payloads)
+        path.write_text(content, encoding="utf-8")
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

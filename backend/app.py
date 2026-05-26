@@ -371,6 +371,10 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
     request_payload = payload if isinstance(payload, dict) else {}
     text = str(request_payload.get("text") or request_payload.get("message") or "").strip()
     session_id = normalize_topic_id(str(request_payload.get("session_id") or "default"))
+    try:
+        retry_from_assistant_turn = int(request_payload.get("retry_from_assistant_turn") or 0)
+    except (TypeError, ValueError):
+        retry_from_assistant_turn = 0
     turn_id = uuid4().hex
     private_config = _normalize_private_config()
     brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
@@ -420,6 +424,8 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
             },
         )
         yield _sse("phase", {"name": "neo_brain", "status": "running", "text": f"Brain provider: {initial_provider}"})
+        if retry_from_assistant_turn > 0:
+            TOPIC_STORE.truncate_from_assistant_turn(session_id, retry_from_assistant_turn)
         reply, provider, used_model, decision = await resolve_reply()
         await asyncio.sleep(0)
         yield _sse("token", {"text": reply})
@@ -435,6 +441,7 @@ async def chat_stream(payload: dict[str, Any] | None = Body(default=None)) -> St
                 "provider": provider,
                 "model": used_model,
                 "decision": decision.to_dict(),
+                "retry_from_assistant_turn": retry_from_assistant_turn or None,
             },
         )
 

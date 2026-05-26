@@ -153,8 +153,23 @@ class ChatModesUiTests(unittest.TestCase):
 
     def test_index_user_messages_still_use_bubbles(self) -> None:
         source = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn('appendMessage("user", userText, { speakerName: "你" });', source)
+        self.assertIn('appendMessage("user", userText, { speakerName: "你", assistantTurn: retryFromAssistantTurn });', source)
         self.assertIn('appendMessage("user", String(item.content || "")', source)
+
+    def test_index_supports_edit_retry_from_user_message(self) -> None:
+        source = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertIn('let pendingRetryEdit = null;', source)
+        self.assertIn('let chatMessageSequence = 0;', source)
+        self.assertIn('className = "msg-edit-button"', source)
+        self.assertIn('title = "编辑并重试"', source)
+        self.assertIn('function beginUserMessageEditRetry', source)
+        self.assertIn('function truncateChatAfterMessage', source)
+        self.assertIn('function clearPendingRetryEdit', source)
+        self.assertIn('retry_from_assistant_turn: retryFromAssistantTurn,', source)
+        self.assertIn('el.dataset.assistantTurn = String(assistantTurn);', source)
+        self.assertIn('appendMessage("user", String(item.content || "")', source)
+        self.assertIn('assistantTurn: Number(item.assistant_turn || 0) || null,', source)
 
     def test_index_history_assistant_messages_render_without_pet_bubbles(self) -> None:
         source = INDEX_HTML.read_text(encoding="utf-8")
