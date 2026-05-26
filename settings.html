@@ -169,6 +169,14 @@
               <span>模型端点</span>
               <input id="brain-model-endpoint" type="text" placeholder="http://127.0.0.1:11434" />
             </label>
+            <div class="field wide model-fetch-panel">
+              <span>模型发现</span>
+              <div class="button-row wrap model-fetch-actions">
+                <button id="brain-fetch-models-btn" class="ghost-button" type="button">拉取模型</button>
+                <span id="brain-model-status" class="inline-status">填写端点后可拉取模型列表</span>
+              </div>
+              <div id="brain-model-list" class="model-option-list" aria-live="polite"></div>
+            </div>
             <label class="field">
               <span>模型名称</span>
               <input id="brain-model-name" type="text" placeholder="gpt-5.4" />

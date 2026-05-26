@@ -219,7 +219,6 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertNotIn('id="runtime-router-model-presets"', html)
         self.assertNotIn('id="fetch-remote-models-btn"', html)
         self.assertNotIn('id="fetch-router-models-btn"', html)
-        self.assertNotIn("拉取模型</button>", html)
         self.assertNotIn('max="12"', html)
         self.assertNotIn('chatTopicHistoryEnabled', js)
         self.assertNotIn('chatTopicHistorySummaryInterval', js)

@@ -6,6 +6,7 @@ from brain.llm import (
     BrainMessage,
     BrainProviderConfig,
     complete_with_provider,
+    list_provider_models,
 )
 
 
@@ -27,6 +28,10 @@ class _RecordingClient:
 
     async def post(self, url: str, **kwargs):
         self.requests.append({"url": url, **kwargs})
+        return _FakeResponse(self.payload)
+
+    async def get(self, url: str, **kwargs):
+        self.requests.append({"method": "GET", "url": url, **kwargs})
         return _FakeResponse(self.payload)
 
 
@@ -109,6 +114,40 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["system"], "persona")
         self.assertEqual(request["json"]["messages"], [{"role": "user", "content": "hi"}])
         self.assertEqual(request["json"]["temperature"], 0.1)
+
+    async def test_openai_compatible_lists_models(self) -> None:
+        client = _RecordingClient({"data": [{"id": "gpt-a"}, {"id": "gpt-b"}]})
+        config = BrainProviderConfig(provider="openai_compatible", endpoint="https://llm.example/v1", api_key="secret")
+
+        models = await list_provider_models(config, client=client)
+
+        self.assertEqual([model.id for model in models], ["gpt-a", "gpt-b"])
+        request = client.requests[0]
+        self.assertEqual(request["method"], "GET")
+        self.assertEqual(request["url"], "https://llm.example/v1/models")
+        self.assertEqual(request["headers"]["Authorization"], "Bearer secret")
+
+    async def test_ollama_lists_models_from_tags(self) -> None:
+        client = _RecordingClient({"models": [{"name": "llama3.1:latest"}, {"model": "qwen2.5"}]})
+        config = BrainProviderConfig(provider="ollama", endpoint="http://127.0.0.1:11434/api")
+
+        models = await list_provider_models(config, client=client)
+
+        self.assertEqual([model.id for model in models], ["llama3.1:latest", "qwen2.5"])
+        request = client.requests[0]
+        self.assertEqual(request["url"], "http://127.0.0.1:11434/api/tags")
+        self.assertNotIn("Authorization", request["headers"])
+
+    async def test_anthropic_compatible_lists_models(self) -> None:
+        client = _RecordingClient({"data": [{"id": "claude-a"}]})
+        config = BrainProviderConfig(provider="anthropic_compatible", endpoint="https://anthropic.example", api_key="secret")
+
+        models = await list_provider_models(config, client=client)
+
+        self.assertEqual([model.id for model in models], ["claude-a"])
+        request = client.requests[0]
+        self.assertEqual(request["url"], "https://anthropic.example/v1/models")
+        self.assertEqual(request["headers"]["x-api-key"], "secret")
 
 
 if __name__ == "__main__":

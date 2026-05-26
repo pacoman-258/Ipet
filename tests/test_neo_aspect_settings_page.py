@@ -57,6 +57,15 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         read_form = self.js.split("  function readForm() {", 1)[1].split("  async function loadSettings()", 1)[0]
         self.assertNotIn("backend_url", read_form)
 
+    def test_brain_model_fetch_button_and_one_click_fill_exist(self) -> None:
+        self.assertIn('id="brain-fetch-models-btn"', self.html)
+        self.assertIn('id="brain-model-list"', self.html)
+        self.assertIn('id="brain-model-status"', self.html)
+        self.assertIn("brainFetchModelsBtn", self.js)
+        self.assertIn("/api/brain/models", self.js)
+        self.assertIn("renderBrainModelOptions", self.js)
+        self.assertIn("els.brainModelName.value = model.id", self.js)
+
     def test_settings_js_still_uses_existing_config_endpoint(self) -> None:
         self.assertIn("/api/settings/config", self.js)
         self.assertIn("PUT", self.js)

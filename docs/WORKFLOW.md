@@ -117,6 +117,8 @@ The active Brain provider is configured in the web settings page. The current AP
 
 The provider endpoint, model name, temperature, and optional API key live under the local Brain settings. The API key is stored locally and redacted from settings responses.
 
+The settings page can ask the backend to discover available models from the currently entered provider and endpoint. This uses `/api/brain/models`, supports draft values that have not been saved yet, and never echoes API keys back to the browser.
+
 ## Human Ops Approval
 
 Human Ops reviews any operation that may affect files, processes, configuration, network access, external services, user data, or durable memory.

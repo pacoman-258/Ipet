@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from brain.decisions import BrainDecision
-from brain.llm import BrainLLMError, run_brain_turn
+from brain.llm import BrainLLMError, list_provider_models, normalize_provider, run_brain_turn
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
 from .models import TTSRequest
@@ -228,6 +228,18 @@ def _decision_from_completion(completion: Any) -> BrainDecision:
     return BrainDecision.say(str(getattr(completion, "text", "") or ""))
 
 
+def _brain_model_to_dict(model: Any) -> dict[str, str]:
+    if hasattr(model, "to_dict"):
+        data = model.to_dict()
+        if isinstance(data, dict):
+            model_id = str(data.get("id") or "").strip()
+            label = str(data.get("label") or model_id).strip()
+            return {"id": model_id, "label": label or model_id}
+    model_id = str(getattr(model, "id", "") or "").strip()
+    label = str(getattr(model, "label", "") or model_id).strip()
+    return {"id": model_id, "label": label or model_id}
+
+
 def _gone() -> None:
     raise HTTPException(status_code=410, detail=REMOVED_DETAIL)
 
@@ -316,6 +328,42 @@ async def put_settings_config(payload: dict[str, Any] = Body(default_factory=dic
     sanitized = _normalize_private_config(next_config)
     _save_config(sanitized)
     return _settings_payload(sanitized)
+
+
+@app.post("/api/brain/models")
+async def get_brain_models(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    current = _normalize_private_config()
+    saved_brain = current.get("brain", {}) if isinstance(current.get("brain"), dict) else {}
+    provider = normalize_provider(body.get("provider", saved_brain.get("provider")))
+    endpoint = str(body.get("model_endpoint") or body.get("endpoint") or saved_brain.get("model_endpoint") or "").strip()
+    submitted_key = str(body.get("api_key") or "").strip()
+    saved_provider = normalize_provider(saved_brain.get("provider"))
+    saved_key = str(saved_brain.get("api_key") or "").strip()
+    api_key = submitted_key or (saved_key if provider == saved_provider else "")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Brain model endpoint is required.")
+
+    request_config = {
+        **saved_brain,
+        "provider": provider,
+        "model_endpoint": endpoint,
+        "api_key": api_key,
+    }
+    try:
+        models = await list_provider_models(request_config)
+    except BrainLLMError as exc:
+        detail = _sanitize_brain_error(exc, request_config)
+        raise HTTPException(status_code=502, detail=f"Brain model list failed: {detail}") from exc
+    except Exception as exc:
+        detail = _sanitize_brain_error(exc, request_config)
+        raise HTTPException(status_code=502, detail=f"Brain model list failed: {detail}") from exc
+
+    return {
+        "ok": True,
+        "provider": provider,
+        "models": [item for item in (_brain_model_to_dict(model) for model in models) if item["id"]],
+    }
 
 
 @app.post("/api/chat/stream")

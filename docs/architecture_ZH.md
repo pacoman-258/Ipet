@@ -73,6 +73,8 @@ LLM 输出会被归类成 `BrainDecision`。提示词要求 provider 返回类�
 
 Brain 通过窄 API 边界调用用户选择的大模型服务。当前支持 OpenAI 兼容 chat completions、Ollama chat、Anthropic 兼容 messages 三种格式。Provider 端点、模型名、温度和可选 API Key 都在 Web 设置页配置，并只保存在本地配置里。
 
+设置页可以通过 `/api/brain/models` 使用表单里当前尚未保存的 provider、endpoint 和可选 key 拉取模型列表。返回的模型 ID 可以一键填入模型名称字段，密钥不会回显到浏览器。
+
 ## 5. Human Ops
 
 Human Ops 是安全与审批层。它负责：

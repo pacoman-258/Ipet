@@ -33,6 +33,9 @@
     windowLocked: $("window-locked"),
     brainProvider: $("brain-provider"),
     brainModelEndpoint: $("brain-model-endpoint"),
+    brainFetchModelsBtn: $("brain-fetch-models-btn"),
+    brainModelStatus: $("brain-model-status"),
+    brainModelList: $("brain-model-list"),
     brainModelName: $("brain-model-name"),
     brainApiKey: $("brain-api-key"),
     brainApiKeyClear: $("brain-api-key-clear"),
@@ -327,6 +330,82 @@
     return "OpenAI";
   }
 
+  function setBrainModelStatus(message) {
+    if (els.brainModelStatus) {
+      els.brainModelStatus.textContent = String(message || "");
+    }
+  }
+
+  function renderBrainModelOptions(models) {
+    if (!els.brainModelList) {
+      return;
+    }
+    els.brainModelList.innerHTML = "";
+    const items = Array.isArray(models) ? models : [];
+    if (!items.length) {
+      setBrainModelStatus("没有发现可填入的模型");
+      return;
+    }
+    items.forEach((item) => {
+      const model = {
+        id: String(item?.id || item?.name || item || "").trim(),
+        label: String(item?.label || item?.id || item?.name || item || "").trim(),
+      };
+      if (!model.id) {
+        return;
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "model-option-button";
+      button.textContent = model.label || model.id;
+      button.title = `填入 ${model.id}`;
+      button.addEventListener("click", () => {
+        els.brainModelName.value = model.id;
+        setBrainModelStatus(`已填入 ${model.id}`);
+        renderSummary(readForm());
+      });
+      els.brainModelList.appendChild(button);
+    });
+    setBrainModelStatus(`发现 ${els.brainModelList.children.length} 个模型，点击即可填入`);
+  }
+
+  async function fetchBrainModels() {
+    const endpoint = stringValue(els.brainModelEndpoint);
+    if (!endpoint) {
+      setBrainModelStatus("请先填写模型端点");
+      return;
+    }
+    if (settingsPayload?.static_preview) {
+      setBrainModelStatus("静态预览无法连接后端拉取模型");
+      return;
+    }
+    if (els.brainFetchModelsBtn) {
+      els.brainFetchModelsBtn.disabled = true;
+    }
+    setBrainModelStatus("正在拉取模型...");
+    try {
+      const payload = {
+        provider: stringValue(els.brainProvider, "openai_compatible"),
+        model_endpoint: endpoint,
+      };
+      if (els.brainApiKey?.value) {
+        payload.api_key = els.brainApiKey.value;
+      }
+      const result = await fetchJson("/api/brain/models", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      renderBrainModelOptions(result.models || []);
+      showToast("模型列表已更新");
+    } catch (error) {
+      setBrainModelStatus(`拉取失败：${error.message || String(error)}`);
+    } finally {
+      if (els.brainFetchModelsBtn) {
+        els.brainFetchModelsBtn.disabled = false;
+      }
+    }
+  }
+
   function updateClickPreview() {
     const x = intValue(els.clickPreviewX, 160);
     const y = intValue(els.clickPreviewY, 54);
@@ -568,6 +647,7 @@
     els.reloadConfigBtn?.addEventListener("click", () => wrap(loadSettings));
     els.saveConfigBtn?.addEventListener("click", () => wrap(saveSettings));
     els.resetFormBtn?.addEventListener("click", resetForm);
+    els.brainFetchModelsBtn?.addEventListener("click", () => wrap(fetchBrainModels));
     [els.clickPreviewX, els.clickPreviewY, els.clickPreviewLabel, els.clickPreviewSize].forEach((input) => {
       input?.addEventListener("input", updateClickPreview);
     });

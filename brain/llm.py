@@ -82,6 +82,15 @@ class BrainCompletion:
     raw_text: str = ""
 
 
+@dataclass(frozen=True)
+class BrainModel:
+    id: str
+    label: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {"id": self.id, "label": self.label or self.id}
+
+
 def normalize_provider(value: Any) -> str:
     provider = str(value or "").strip().lower()
     return provider if provider in SUPPORTED_PROVIDERS else PROVIDER_OPENAI
@@ -226,10 +235,85 @@ async def _post_json(client: Any, url: str, *, headers: dict[str, str], payload:
     return data
 
 
+async def _get_json(client: Any, url: str, *, headers: dict[str, str]) -> dict[str, Any]:
+    response = await client.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise BrainLLMError("Brain provider returned a non-object JSON payload.")
+    return data
+
+
 async def _with_client(config: BrainProviderConfig, callback):
     timeout = httpx.Timeout(connect=8.0, read=config.timeout_sec, write=20.0, pool=8.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         return await callback(client)
+
+
+def _model_from_value(value: Any) -> BrainModel | None:
+    if isinstance(value, str):
+        model_id = value.strip()
+        return BrainModel(model_id) if model_id else None
+    if not isinstance(value, dict):
+        return None
+    model_id = str(value.get("id") or value.get("name") or value.get("model") or "").strip()
+    if not model_id:
+        return None
+    label = str(value.get("label") or value.get("display_name") or value.get("name") or model_id).strip()
+    return BrainModel(id=model_id, label=label or model_id)
+
+
+def _dedupe_models(values: list[Any]) -> list[BrainModel]:
+    seen: set[str] = set()
+    models: list[BrainModel] = []
+    for value in values:
+        model = _model_from_value(value)
+        if model is None or model.id in seen:
+            continue
+        seen.add(model.id)
+        models.append(model)
+    return models
+
+
+def _models_from_openai_payload(payload: dict[str, Any]) -> list[BrainModel]:
+    values = payload.get("data") if isinstance(payload.get("data"), list) else payload.get("models")
+    return _dedupe_models(values if isinstance(values, list) else [])
+
+
+def _models_from_ollama_payload(payload: dict[str, Any]) -> list[BrainModel]:
+    values = payload.get("models")
+    return _dedupe_models(values if isinstance(values, list) else [])
+
+
+async def list_provider_models(
+    config: BrainProviderConfig | dict[str, Any],
+    *,
+    client: Any | None = None,
+) -> list[BrainModel]:
+    provider_config = config if isinstance(config, BrainProviderConfig) else BrainProviderConfig.from_dict(config)
+
+    async def run(active_client):
+        if provider_config.provider == PROVIDER_OLLAMA:
+            data = await _get_json(
+                active_client,
+                _provider_url(provider_config.endpoint, "/api/tags"),
+                headers=_json_headers(provider_config),
+            )
+            return _models_from_ollama_payload(data)
+        if provider_config.provider == PROVIDER_ANTHROPIC:
+            headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+            if provider_config.api_key:
+                headers["x-api-key"] = provider_config.api_key
+            data = await _get_json(active_client, _provider_url(provider_config.endpoint, "/v1/models"), headers=headers)
+            return _models_from_openai_payload(data)
+        data = await _get_json(
+            active_client,
+            _provider_url(provider_config.endpoint, "/v1/models"),
+            headers=_json_headers(provider_config),
+        )
+        return _models_from_openai_payload(data)
+
+    return await run(client) if client is not None else await _with_client(provider_config, run)
 
 
 async def _complete_openai(config: BrainProviderConfig, messages: list[BrainMessage], *, client: Any | None) -> BrainCompletion:

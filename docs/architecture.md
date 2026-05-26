@@ -73,6 +73,8 @@ LLM output is classified into `BrainDecision`. Providers are asked to return a c
 
 Brain calls a user-selected LLM provider through a narrow API boundary. The supported wire formats are OpenAI-compatible chat completions, Ollama chat, and Anthropic-compatible messages. Provider endpoint, model name, temperature, and optional API key are configured in the web settings page and saved only in local configuration.
 
+The settings page can pull a provider model list through `/api/brain/models` using the draft provider, endpoint, and optional key currently visible in the form. Returned model IDs can be filled into the model field with one click, and secrets are not echoed.
+
 ## 5. Human Ops
 
 Human Ops is the safety and approval layer. It owns:

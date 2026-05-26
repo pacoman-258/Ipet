@@ -21,6 +21,7 @@ def neo_aspect_settings_sections() -> list[dict[str, object]]:
             "items": [
                 "model endpoint",
                 "provider format",
+                "model discovery",
                 "model name",
                 "API key storage",
                 "persona profile",

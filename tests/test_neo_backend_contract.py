@@ -97,6 +97,48 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertNotIn("api_key", config["brain"])
         self.assertEqual(config["brain"]["api_key_preview"], "se***ue")
 
+    def test_brain_models_route_uses_unsaved_settings_without_key_echo(self) -> None:
+        backend_app.CONFIG_PATH.write_text(
+            json.dumps(
+                {
+                    "brain": {
+                        "provider": "openai_compatible",
+                        "model_endpoint": "https://saved.example",
+                        "api_key": "saved-secret",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        models = [SimpleNamespace(id="neo-a", label="neo-a"), SimpleNamespace(id="neo-b", label="Neo B")]
+
+        with mock.patch.object(backend_app, "list_provider_models", new=mock.AsyncMock(return_value=models)) as list_mock:
+            resp = self.client.post(
+                "/api/brain/models",
+                json={
+                    "provider": "openai_compatible",
+                    "model_endpoint": "https://draft.example",
+                    "api_key": "",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["provider"], "openai_compatible")
+        self.assertEqual(payload["models"], [{"id": "neo-a", "label": "neo-a"}, {"id": "neo-b", "label": "Neo B"}])
+        self.assertNotIn("saved-secret", json.dumps(payload))
+        args, _kwargs = list_mock.await_args
+        self.assertEqual(args[0]["provider"], "openai_compatible")
+        self.assertEqual(args[0]["model_endpoint"], "https://draft.example")
+        self.assertEqual(args[0]["api_key"], "saved-secret")
+
+    def test_brain_models_route_requires_endpoint(self) -> None:
+        resp = self.client.post("/api/brain/models", json={"provider": "openai_compatible", "model_endpoint": ""})
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("endpoint", resp.json()["detail"].lower())
+
     def test_settings_config_recovers_from_malformed_sections(self) -> None:
         backend_app.CONFIG_PATH.write_text(
             json.dumps({"brain": "legacy-string", "human_ops": ["bad"], "chat": {"asr": "bad"}}),
