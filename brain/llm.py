@@ -17,14 +17,25 @@ STRUCTURED_REPLY_INSTRUCTIONS = """
 你每次只能返回一个下一步决定。请优先返回一个 JSON 对象，不要使用 Markdown 代码块：
 {"kind":"say","text":"给用户看的回复"}
 
-当前可执行的 kind 只有 "say"。以下 kind 已预留给后续版本，但本版本不会直接执行：
-- "observe": {"kind":"observe","target":"screen"}
-- "act": {"kind":"act","action_type":"click","arguments":{"x":0,"y":0}}
+当前可执行的 kind：
+- "say": {"kind":"say","text":"给用户看的回复"}
+- "observe": {"kind":"observe","target":"screen","question":"用自然语言写给 observe 模型看的观察问题"}
+- "propose_act": {"kind":"propose_act","action_type":"click","arguments":{"x":0,"y":0,"label":"目标"}}
+
+以下 kind 已预留给后续版本：
 - "remember": {"kind":"remember","category":"preference","text":"要保存的记忆"}
 - "learn_skill": {"kind":"learn_skill","name":"技能名","steps":["步骤一"]}
 - "stop": {"kind":"stop","summary":"本轮结束摘要"}
 
-只聊天或回答问题时使用 "say"。不要把额外解释放在 JSON 外面。
+只聊天或回答问题时使用 "say"。
+需要看屏幕、定位界面、读取窗口、寻找 Dock/App/按钮/输入框时，使用 "observe"。
+observe 的 question 是你用自然语言问 observe 模型的问题；不要为 observe 设计复杂 JSON。
+如果你需要坐标，就在 question 中自然地要求它给出绝对屏幕坐标，例如“如果能看到目标，请告诉我可点击中心点坐标 x 和 y”。
+如果只是查看、读取、判断状态，就用自然语言问内容、文字或状态，不要要求坐标。
+当你收到 observe 的自然语言结果后，基于结果决定下一步；若结果中已有可信坐标且用户要点击，再使用 "propose_act"。
+如果用户要求点击且你已经知道可信的绝对屏幕坐标，使用 "propose_act"。
+不要用 say 口头请求批准；需要人类批准的点击必须返回 "propose_act"。
+不要把额外解释放在 JSON 外面。
 """.strip()
 
 
@@ -186,7 +197,18 @@ def parse_brain_reply(raw_text: str) -> BrainDecision:
         visible_text = str(data.get("text") or data.get("content") or data.get("summary") or "").strip()
         return BrainDecision.say(visible_text or text)
     if kind == "observe":
-        return BrainDecision.observe(str(data.get("target") or "screen"))
+        payload = _as_dict(data.get("payload"))
+        observe_prompt = str(
+            data.get("question")
+            or payload.get("question")
+            or data.get("observe_prompt")
+            or payload.get("observe_prompt")
+            or ""
+        ).strip()
+        return BrainDecision.observe(
+            str(data.get("target") or payload.get("target") or "screen"),
+            observe_prompt=observe_prompt,
+        )
     if kind in {"act", "propose_act"}:
         payload = _as_dict(data.get("payload"))
         arguments = _as_dict(data.get("arguments") or payload.get("arguments"))

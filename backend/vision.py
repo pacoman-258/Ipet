@@ -34,7 +34,6 @@ DEFAULT_VISION_CONFIG: dict[str, Any] = {
         "api_key_env": "",
         "image_detail": "low",
         "max_observations": 4,
-        "fallback_to_runtime": True,
     },
     "routing": dict(DEFAULT_VISION_ROUTING_CONFIG),
     "active_observation": {
@@ -203,7 +202,6 @@ def normalize_vision_config(config: Any) -> dict[str, Any]:
             min_value=1,
             max_value=MAX_OBSERVATIONS,
         ),
-        "fallback_to_runtime": bool(analyzer.get("fallback_to_runtime", analyzer_defaults["fallback_to_runtime"])),
     }
     if normalized["analyzer"]["image_detail"] not in VISION_ANALYZER_IMAGE_DETAILS:
         normalized["analyzer"]["image_detail"] = analyzer_defaults["image_detail"]

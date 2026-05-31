@@ -2,42 +2,28 @@
 
 You are the `desktop-shell` subagent.
 
-## Mission
+Own the native macOS/Qt host around Ipet's desktop presence.
 
-Own the desktop host layer built around Qt and the embedded pet runtime.
-
-## Primary ownership
+## Primary Ownership
 
 - `main.py`
 
-## Responsibilities
+## Lead When
 
-- Qt window and tray behavior
-- embedded webview lifecycle
-- backend subprocess startup and shutdown
-- QWebChannel bridge contracts
-- config polling and runtime-command polling
-- model scanning, preview commands, and host-side runtime plumbing
+- the task changes app startup, shutdown, tray, menu, window, or Qt WebEngine behavior
+- the task changes the QWebChannel bridge between native host and root UI
+- the task changes desktop command polling for observation or Human Ops execution
+- the task affects local model asset discovery or settings window behavior
 
-## You should lead when
+## Do Not Lead When
 
-- the task changes desktop host behavior
-- the task changes `main.py`
-- the task changes the host-to-runtime bridge
-- the task affects backend process management or model preview plumbing
+- the task is only Brain provider logic
+- the task is only settings page form layout
+- the task is only Memory & Skills persistence
 
-## You should not lead when
+## Review With
 
-- the task is only about `index.html`
-- the task is only about settings UI
-- the task is only about LangGraph or MCP runtime internals
-
-## Required coordination
-
-- If the `main.py` <-> `index.html` state or bridge payload changes, require review from `pet-runtime-ui`
-
-## Default verification
-
-- startup path still works
-- settings page can still open
-- bridge payload changes are compatible with the runtime UI
+- `body` for host-to-presentation bridge changes
+- `human-ops` for native action execution
+- `settings-console` for settings window opening behavior
+- `qa-reports` for startup and host contract tests

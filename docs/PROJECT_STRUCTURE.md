@@ -22,7 +22,7 @@ Ipet/
 |-- skills/                  # built-in skills, learned skills, skill manifests and scripts
 |-- app/                     # composition layer connecting Body, Brain, Human Ops, Memory & Skills
 |-- frontend/                # future home for pet UI and settings UI
-|-- backend/                 # transition-period Python API surface
+|-- backend/                 # transition-period Python API surface, kept thin around Neo modules
 |-- docs/                    # architecture, workflow, ownership, reports, role playbooks
 |-- tests/                   # unit and regression tests
 |-- scripts/                 # diagnostics, smoke checks, and developer tools
@@ -66,14 +66,14 @@ Until then:
 ## Root Conventions
 
 - Keep root files purposeful: README files, config examples, lockfiles, metadata, and runnable entrypoints.
-- Do not add one-off generated text, hotspot reports, local scratch files, logs, caches, or personal runtime state at the root.
+- Do not add one-off generated text, hotspot reports, local scratch files, logs, caches, or personal app state at the root.
 - Use `scripts/debug/` for manual diagnostics and smoke scripts.
 - Use `docs/reports/` for long-form reports and post-task HTML summaries.
 - Use target module directories for new code when the implementation owner confirms the migration path.
 
 ## Hygiene Rules
 
-- `pet_config.json`, `.pet_runtime_*`, `.venv/`, `.uv-cache/`, runtime logs, generated audio, local conversation state, and local caches stay ignored.
+- `pet_config.json`, `.pet_desktop_command*.json`, `.pet_desktop_host.heartbeat.json`, `.venv/`, `.uv-cache/`, local logs, generated audio, local conversation state, and local caches stay ignored.
 - Generated file-playground output belongs under ignored scratch locations, not in Git.
 - `model/` contains tracked demo/reference pet assets. Private, large, generated, or downloaded model resources should remain local and ignored before commit.
 - Do not commit API keys, local absolute paths, screenshot payloads, generated audio, downloaded toolchains, or temporary analyzer outputs.

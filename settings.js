@@ -49,6 +49,15 @@
     opsRequireMemoryReview: $("ops-require-memory-review"),
     opsRequireSkillReview: $("ops-require-skill-review"),
     opsClipboardReview: $("ops-clipboard-review"),
+    opsObserveModelEnabled: $("ops-observe-model-enabled"),
+    opsObserveModelProvider: $("ops-observe-model-provider"),
+    opsObserveModelEndpoint: $("ops-observe-model-endpoint"),
+    opsObserveFetchModelsBtn: $("ops-observe-fetch-models-btn"),
+    opsObserveModelStatus: $("ops-observe-model-status"),
+    opsObserveModelList: $("ops-observe-model-list"),
+    opsObserveModelName: $("ops-observe-model-name"),
+    opsObserveApiKey: $("ops-observe-api-key"),
+    opsObserveApiKeyClear: $("ops-observe-api-key-clear"),
     clickPreviewX: $("click-preview-x"),
     clickPreviewY: $("click-preview-y"),
     clickPreviewLabel: $("click-preview-label"),
@@ -150,6 +159,13 @@
         require_skill_review: true,
         clipboard_write_review: true,
         click_preview: { x: 160, y: 54, label: "目标位置", size: 16 },
+        observe_model: {
+          enabled: false,
+          provider: "openai_compatible",
+          model_endpoint: "",
+          model_name: "",
+          max_output_tokens: 512,
+        },
       },
       memory: {
         conversation_saving: true,
@@ -180,6 +196,10 @@
         click_preview: {
           ...defaults.human_ops.click_preview,
           ...((config.human_ops || {}).click_preview || {}),
+        },
+        observe_model: {
+          ...defaults.human_ops.observe_model,
+          ...((config.human_ops || {}).observe_model || {}),
         },
       },
       memory: { ...defaults.memory, ...(config.memory || {}) },
@@ -262,7 +282,14 @@
     const cards = [
       ["Body", config?.model_path || "未选择形象"],
       ["Brain", `${providerLabel(neo.brain.provider)} · ${neo.brain.model_name || "未设置模型"}`],
-      ["Human Ops", neo.human_ops.require_act_review ? "动作需批准" : "动作审批关闭"],
+      [
+        "Human Ops",
+        neo.human_ops.observe_model.enabled
+          ? `observe · ${neo.human_ops.observe_model.model_name || "独立模型"}`
+          : neo.human_ops.require_act_review
+            ? "动作需批准"
+            : "动作审批关闭",
+      ],
       ["Memory", neo.memory.long_term_enabled ? "长期记忆开启" : "长期记忆关闭"],
       ["Skills", neo.skills.review_required ? "保存前审阅" : "审阅关闭"],
       ["Diagnostics", lastLoadedAt || "等待加载"],
@@ -406,6 +433,83 @@
     }
   }
 
+  function setObserveModelStatus(message) {
+    if (els.opsObserveModelStatus) {
+      els.opsObserveModelStatus.textContent = String(message || "");
+    }
+  }
+
+  function renderObserveModelOptions(models) {
+    if (!els.opsObserveModelList) {
+      return;
+    }
+    els.opsObserveModelList.innerHTML = "";
+    const items = Array.isArray(models) ? models : [];
+    if (!items.length) {
+      setObserveModelStatus("没有发现可填入的 observe 模型");
+      return;
+    }
+    items.forEach((item) => {
+      const model = {
+        id: String(item?.id || item?.name || item || "").trim(),
+        label: String(item?.label || item?.id || item?.name || item || "").trim(),
+      };
+      if (!model.id) {
+        return;
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "model-option-button";
+      button.textContent = model.label || model.id;
+      button.title = `填入 ${model.id}`;
+      button.addEventListener("click", () => {
+        els.opsObserveModelName.value = model.id;
+        setObserveModelStatus(`已填入 ${model.id}`);
+        renderSummary(readForm());
+      });
+      els.opsObserveModelList.appendChild(button);
+    });
+    setObserveModelStatus(`发现 ${els.opsObserveModelList.children.length} 个模型，点击即可填入`);
+  }
+
+  async function fetchObserveModels() {
+    const endpoint = stringValue(els.opsObserveModelEndpoint);
+    if (!endpoint) {
+      setObserveModelStatus("请先填写 observe 模型端点");
+      return;
+    }
+    if (settingsPayload?.static_preview) {
+      setObserveModelStatus("静态预览无法连接后端拉取模型");
+      return;
+    }
+    if (els.opsObserveFetchModelsBtn) {
+      els.opsObserveFetchModelsBtn.disabled = true;
+    }
+    setObserveModelStatus("正在拉取 observe 模型...");
+    try {
+      const payload = {
+        scope: "observe",
+        provider: stringValue(els.opsObserveModelProvider, "openai_compatible"),
+        model_endpoint: endpoint,
+      };
+      if (els.opsObserveApiKey?.value) {
+        payload.api_key = els.opsObserveApiKey.value;
+      }
+      const result = await fetchJson("/api/brain/models", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      renderObserveModelOptions(result.models || []);
+      showToast("observe 模型列表已更新");
+    } catch (error) {
+      setObserveModelStatus(`拉取失败：${error.message || String(error)}`);
+    } finally {
+      if (els.opsObserveFetchModelsBtn) {
+        els.opsObserveFetchModelsBtn.disabled = false;
+      }
+    }
+  }
+
   function updateClickPreview() {
     const x = intValue(els.clickPreviewX, 160);
     const y = intValue(els.clickPreviewY, 54);
@@ -469,6 +573,12 @@
     setChecked(els.opsRequireMemoryReview, neo.human_ops.require_memory_review);
     setChecked(els.opsRequireSkillReview, neo.human_ops.require_skill_review);
     setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
+    setChecked(els.opsObserveModelEnabled, neo.human_ops.observe_model.enabled);
+    setValue(els.opsObserveModelProvider, neo.human_ops.observe_model.provider || "openai_compatible");
+    setValue(els.opsObserveModelEndpoint, neo.human_ops.observe_model.model_endpoint || "");
+    setValue(els.opsObserveModelName, neo.human_ops.observe_model.model_name || "");
+    setValue(els.opsObserveApiKey, "");
+    setChecked(els.opsObserveApiKeyClear, false);
     setValue(els.clickPreviewX, Number(neo.human_ops.click_preview.x || 160));
     setValue(els.clickPreviewY, Number(neo.human_ops.click_preview.y || 54));
     setValue(els.clickPreviewLabel, neo.human_ops.click_preview.label || "目标位置");
@@ -553,6 +663,14 @@
       require_memory_review: !!els.opsRequireMemoryReview?.checked,
       require_skill_review: !!els.opsRequireSkillReview?.checked,
       clipboard_write_review: !!els.opsClipboardReview?.checked,
+      observe_model: {
+        ...((next.human_ops || {}).observe_model || {}),
+        enabled: !!els.opsObserveModelEnabled?.checked,
+        provider: stringValue(els.opsObserveModelProvider, "openai_compatible"),
+        model_endpoint: stringValue(els.opsObserveModelEndpoint),
+        model_name: stringValue(els.opsObserveModelName),
+        max_output_tokens: 512,
+      },
       click_preview: {
         x: intValue(els.clickPreviewX, 160),
         y: intValue(els.clickPreviewY, 54),
@@ -560,6 +678,10 @@
         size: intValue(els.clickPreviewSize, 16),
       },
     };
+    if (els.opsObserveApiKey?.value) {
+      next.human_ops.observe_model.api_key = els.opsObserveApiKey.value;
+    }
+    next.human_ops.observe_model.api_key_clear = !!els.opsObserveApiKeyClear?.checked;
 
     next.memory = {
       ...(next.memory || {}),
@@ -648,6 +770,7 @@
     els.saveConfigBtn?.addEventListener("click", () => wrap(saveSettings));
     els.resetFormBtn?.addEventListener("click", resetForm);
     els.brainFetchModelsBtn?.addEventListener("click", () => wrap(fetchBrainModels));
+    els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
     [els.clickPreviewX, els.clickPreviewY, els.clickPreviewLabel, els.clickPreviewSize].forEach((input) => {
       input?.addEventListener("input", updateClickPreview);
     });

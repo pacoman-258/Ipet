@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ipet Neo Aspect - Brain Driven Observe OpenAI</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.65; color: #1f2937; }
+    h1 { font-size: 26px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 28px; border-bottom: 1px solid #dbe4f0; padding-bottom: 6px; }
+    code { background: #f3f6fb; padding: 2px 5px; border-radius: 5px; }
+    ul { padding-left: 22px; }
+    .note { background: #f7fbff; border: 1px solid #cfe0ff; padding: 14px 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Driven Observe OpenAI</h1>
+  <p class="note">日期：2026-05-28。目标：修复 observe 只截图但不能完成视觉分析的问题，并先把 OpenAI-compatible observe 模型链路做扎实。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>brain</strong>：扩展 observe 决策，让 Brain 生成给 observe 模型的辅助提示词。</li>
+    <li><strong>human-ops</strong>：把需要点击的观察结果转成红点点击审核申请。</li>
+    <li><strong>body</strong>：保留截图职责，并把屏幕分辨率补入 observe 任务。</li>
+    <li><strong>qa-reports</strong>：补充回归测试与本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/decisions.py</code></li>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>backend/vision_analyzer.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_vision_analyzer.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain 的 <code>observe</code> 决策现在可以携带 <code>observe_task</code>，包含任务类型、Brain 生成的 <code>observe_prompt</code> 和是否需要点击坐标。</li>
+    <li>Human Ops 截图后会把实际屏幕分辨率写入 <code>observe_task</code>，再交给 OpenAI-compatible VLM。</li>
+    <li>点击任务要求 observe 模型返回绝对屏幕坐标；返回 <code>click_target</code> 后才会生成红点点击申请。</li>
+    <li>非点击任务不会诱导 observe 模型返回点击坐标，而是要求读取可见内容、文字或状态。</li>
+    <li>如果点击任务没有配置 observe 模型，界面会明确说明需要配置 Human Ops observe 模型，而不是只说截图没有内容。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>python -m py_compile brain/decisions.py brain/llm.py backend/app.py backend/vision_analyzer.py</code>: passed.</li>
+    <li>Targeted regression covering Brain structured replies, provider contracts, OpenAI VLM observe, Human Ops click review, chat UI, active vision, and desktop runtime: 123 tests passed.</li>
+    <li>Full regression: 209 tests passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Anthropic-compatible observe 图片格式暂未推进；本轮先收敛 OpenAI-compatible。</li>
+    <li>真实桌面端需要重启 Ipet 才能加载新的 Brain/observe 后端逻辑。</li>
+    <li>后续可在设置页增加一次 observe 模型连通性测试，直接验证图片输入和 JSON 坐标输出。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>先用 OpenAI-compatible VLM 在真实桌面场景验证“点击 Dock 设置”链路：Brain 返回 observe_task，observe 模型返回坐标，Ipet 显示红点申请；确认稳定后再做 Anthropic-compatible 图片消息适配。</p>
+</body>
+</html>

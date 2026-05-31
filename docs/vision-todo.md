@@ -4,7 +4,7 @@
 
 ## Current Baseline
 
-Ipet vision v1 can capture the screen, keep the latest frame in memory, attach bounded observations, and inject grounded evidence into the active runtime. It prevents unsupported visual claims by forcing the runtime to say "我无法从当前截图确认" when no fresh evidence exists.
+Ipet vision v1 can capture the screen, keep the latest frame in memory, attach bounded observations, and provide grounded evidence to Brain. It prevents unsupported visual claims by requiring Brain to acknowledge uncertainty when no fresh evidence exists.
 
 The current gap is understanding and initiative. v1 can hold evidence, but it does not yet continuously analyze images, maintain a world state, detect meaningful changes, or decide when to speak first.
 
@@ -12,7 +12,7 @@ The current gap is understanding and initiative. v1 can hold evidence, but it do
 
 - Build perception before moderation. Heavy privacy/safety gating is postponed until the system can reliably see, summarize, and produce evidence.
 - Keep every visual claim evidence-backed with `claim`, `evidence`, `region`, `confidence`, and `source`.
-- Do not send raw screenshots to AstrBot. Ipet owns capture, analysis, state, and evidence governance; AstrBot receives temporary text evidence.
+- Do not send raw screenshots by default. Ipet owns capture, analysis, state, and evidence governance; optional analyzer providers must be configured explicitly by the user.
 - Prefer local analyzers first: macOS UI metadata, OCR, accessibility tree, and optional local model adapters.
 - Proactive speech must start as candidates, not direct output. Dispatch comes only after candidate quality and cooldown behavior are testable.
 
@@ -23,7 +23,7 @@ Goal: turn captured frames into structured observations automatically.
 Implementation note:
 
 - `backend/vision_analyzer.py` now defines the v2 analyzer boundary, merge helpers, bounded analyzer metadata, and a mockable local command runner.
-- Implemented analyzer providers now include `macos_vision_ocr`, `openai_compatible_vlm`, `local_vlm`, and active-runtime fallback. OCR decodes `data:image/jpeg/png;base64` frames to a temporary local file and invokes a local `/usr/bin/swift` helper using Apple's Vision OCR framework. VLM providers send the image to a user-configured multimodal endpoint using the locally saved VLM API Key, and provider-empty/unavailable cases can fall back to the current active runtime such as AstrBot.
+- Implemented analyzer providers now include `macos_vision_ocr`, `openai_compatible_vlm`, and `local_vlm`. OCR decodes `data:image/jpeg/png;base64` frames to a temporary local file and invokes a local `/usr/bin/swift` helper using Apple's Vision OCR framework. VLM providers send the image only to a user-configured multimodal endpoint using the locally saved VLM API Key.
 - The settings page lets the user enter VLM Base URL and VLM API Key directly, fetch the endpoint's model list through `/api/vision/models`, and one-click fill the selected model name into the analyzer config.
 - `/api/vision/frame` invokes the analyzer only after local token validation and only when `vision.analyzer.enabled=true`; analyzer failure adds `unknowns`/`last_error` without fabricating observations.
 - Caller-supplied observations remain first-class and are merged with analyzer observations using bounded claim/source de-duplication.
@@ -53,7 +53,7 @@ Definition of done:
 - A frame with caller-supplied observations merges them with analyzer observations without duplication or unbounded prompt growth.
 - OCR/text observations carry source, confidence, and region.
 - Analyzer failures are surfaced as `unknowns` or `last_error`, not as fabricated observations.
-- No external network call is made by default; VLM or AstrBot fallback requires `vision.analyzer.enabled=true`.
+- No external network call is made by default; VLM analysis requires `vision.analyzer.enabled=true` and a user-configured endpoint.
 
 ## Phase 2: Screen State And Diff
 
@@ -126,7 +126,7 @@ Scope:
   - `GET /api/proactive/pending`
   - `POST /api/proactive/dispatch`
   - `POST /api/proactive/clear`
-- Add frontend/runtime bridge support for displaying or sending proactive messages.
+- Add frontend bridge support for displaying or sending proactive messages.
 - Mark proactive messages with `source=vision_proactive`, `event_id`, and `frame_id`.
 - Do not pretend proactive output came from the user.
 
@@ -139,7 +139,7 @@ Expected files:
 Definition of done:
 
 - A vision event can become a visible pending proactive message.
-- Dispatch sends the message through the active runtime with evidence context.
+- Dispatch sends the message through Brain with evidence context.
 - Clearing pending messages does not affect chat history.
 
 ## Phase 5: Activity-Specific Vision Modes

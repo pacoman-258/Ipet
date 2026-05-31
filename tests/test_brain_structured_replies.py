@@ -48,10 +48,20 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertEqual(decision.payload["text"], "当然可以。")
 
     def test_reserved_observe_reply_is_parsed_but_not_reviewable(self) -> None:
-        decision = parse_brain_reply('{"kind":"observe","target":"screen"}')
+        decision = parse_brain_reply(
+            """
+            {
+              "kind":"observe",
+              "target":"Dock 设置",
+              "question":"我需要找到 Dock 栏里的设置应用的位置，请观看屏幕图像并用自然语言告诉我可点击中心坐标。"
+            }
+            """
+        )
 
         self.assertEqual(decision.kind, DecisionKind.OBSERVE)
-        self.assertEqual(decision.payload["target"], "screen")
+        self.assertEqual(decision.payload["target"], "Dock 设置")
+        self.assertIn("可点击中心坐标", decision.payload["observe_prompt"])
+        self.assertNotIn("observe_task", decision.payload)
         self.assertFalse(decision.requires_review)
 
     def test_reserved_act_reply_maps_to_reviewable_proposal(self) -> None:
@@ -69,7 +79,11 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn('"kind"', system_text)
         self.assertIn("say", system_text)
         self.assertIn("observe", system_text)
-        self.assertIn("act", system_text)
+        self.assertIn("question", system_text)
+        self.assertIn("自然语言", system_text)
+        self.assertIn("propose_act", system_text)
+        self.assertIn("不要用 say 口头请求批准", system_text)
+        self.assertNotIn("当前可执行的 kind 只有 \"say\"", system_text)
 
 
 class BrainStructuredTurnTests(unittest.IsolatedAsyncioTestCase):

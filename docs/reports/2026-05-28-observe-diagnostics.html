@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ipet Neo Aspect - Observe Diagnostics</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.65; color: #1f2937; }
+    h1 { font-size: 26px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 28px; border-bottom: 1px solid #dbe4f0; padding-bottom: 6px; }
+    code { background: #f3f6fb; padding: 2px 5px; border-radius: 5px; }
+    ul { padding-left: 22px; }
+    .note { background: #f7fbff; border: 1px solid #cfe0ff; padding: 14px 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Observe Diagnostics</h1>
+  <p class="note">日期：2026-05-28。目标：定位 observe 失败点到底是截图失败还是 observe 模型链路失败，并让 UI 后续直接显示诊断结论。</p>
+
+  <h2>Finding</h2>
+  <ul>
+    <li>本地配置检查结果：<code>observe_screen=true</code>，但 <code>human_ops.observe_model.enabled=false</code>。</li>
+    <li>截图结果中已经出现 <code>macos_screencapture</code>，说明当前失败点不是截不了图。</li>
+    <li>当前失败点是 observe 模型未启用/未配置，因此截图没有被视觉模型分析。</li>
+  </ul>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>human-ops</strong>：补充 observe 模型启用状态的用户可见诊断。</li>
+    <li><strong>qa-reports</strong>：新增回归测试并记录本轮结论。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/reports/2026-05-28-observe-diagnostics.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>非点击 observe 任务在 observe 模型未启用时，会显示“截图成功，但 Human Ops observe 模型未启用”。</li>
+    <li>点击 observe 任务继续显示需要配置 observe 模型来返回坐标。</li>
+    <li>如果 observe 模型被调用但返回空结果，会显示“observe 模型没有返回可见内容”。</li>
+    <li>模型错误的 <code>analysis.last_error</code> 会进入观察失败原因，避免被吞成泛泛的“没有明确内容”。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>python -m py_compile backend/app.py</code>: passed.</li>
+    <li>Targeted regression: 42 tests passed.</li>
+    <li>Full regression: 211 tests passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>需要在设置页启用并填写 Human Ops observe 模型：OpenAI-compatible provider、endpoint、model name、API key。</li>
+    <li>需要重启 Ipet 以加载最新后端代码和新的诊断文本。</li>
+    <li>后续可增加一个“发送测试截图到 observe 模型”的设置页按钮，用来直接验证模型是否支持图片输入和 JSON 输出。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>先在设置页配置并保存 Human Ops observe 模型，然后重启 Ipet，再发送“你能看到的屏幕内容有哪些，按截图如实回答”。如果模型配置正确，回复应包含可见窗口/文字/状态；如果模型返回空或报错，聊天会显示具体模型诊断。</p>
+</body>
+</html>

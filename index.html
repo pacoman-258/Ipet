@@ -1171,7 +1171,7 @@
       background: #f59e0b;
     }
 
-    .worklog-status-row.source-runtime::before {
+    .worklog-status-row.source-brain::before {
       background: #2563eb;
     }
 
@@ -1338,6 +1338,29 @@
     .approval-status {
       font-size: 12px;
       color: #765260;
+    }
+
+    .human-ops-click-preview-dot {
+      position: fixed;
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      background: #ff3355;
+      border: 2px solid rgba(255, 255, 255, 0.95);
+      box-shadow:
+        0 0 0 6px rgba(255, 51, 85, 0.18),
+        0 12px 28px rgba(182, 31, 65, 0.3);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 90;
+    }
+
+    .human-ops-click-preview-dot::after {
+      content: "";
+      position: absolute;
+      inset: -9px;
+      border-radius: inherit;
+      border: 1px solid rgba(255, 51, 85, 0.48);
     }
 
     #chat-input-wrap {
@@ -1775,10 +1798,6 @@
           lip_sync_gain: 1,
           mouth_parameter_ids: [],
           mouth_form_parameter_ids: [],
-          tooling: {
-            enabled: true,
-            mode: "mcp_local_phase2",
-          },
           skills: {
             enabled: true,
             default_active_ids: [],
@@ -1864,6 +1883,7 @@
       let panelStartH = 0;
       let activeApprovalId = "";
       let pendingApprovalInputTurnId = "";
+      let humanOpsClickPreviewEl = null;
       let currentThoughtGroup = null;
       let currentAssistantWorklog = null;
       let assistantWorklogCounter = 0;
@@ -2799,7 +2819,7 @@
           created_at: String(raw.created_at || "").trim(),
           persisted: raw.persisted !== false,
           assistant_turn_count: Number(raw.assistant_turn_count || 0) || 0,
-          runtime: String(raw.runtime || raw.source || "").trim(),
+          source: String(raw.source || "").trim(),
           supports_history_detail: raw.supports_history_detail !== false,
           supports_delete: raw.supports_delete !== false,
           history_unavailable: !!raw.history_unavailable,
@@ -2829,6 +2849,7 @@
         currentAssistantWorklog = null;
         approvalBubbleRefs.clear();
         approvalThoughtSessionRefs.clear();
+        hideHumanOpsClickPreview();
         for (const item of Array.isArray(messages) ? messages : []) {
           if (!item || typeof item !== "object") {
             continue;
@@ -3385,6 +3406,42 @@
           ref.el.remove();
         }
         approvalBubbleRefs.delete(key);
+        hideHumanOpsClickPreview();
+      }
+
+      function hideHumanOpsClickPreview() {
+        if (humanOpsClickPreviewEl && humanOpsClickPreviewEl.parentNode) {
+          humanOpsClickPreviewEl.remove();
+        }
+        humanOpsClickPreviewEl = null;
+        if (qtBridge && typeof qtBridge.hideClickPreview === "function") {
+          qtBridge.hideClickPreview();
+        }
+      }
+
+      function showHumanOpsClickPreview(preview) {
+        hideHumanOpsClickPreview();
+        if (!preview || preview.marker !== "red_dot") {
+          return;
+        }
+        const x = Number(preview.x);
+        const y = Number(preview.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return;
+        }
+        const viewportX = x - (Number(window.screenX) || 0);
+        const viewportY = y - (Number(window.screenY) || 0);
+        const dot = document.createElement("span");
+        dot.id = "human-ops-click-preview-dot";
+        dot.className = "human-ops-click-preview-dot";
+        dot.style.left = `${Math.max(0, Math.min(window.innerWidth, viewportX))}px`;
+        dot.style.top = `${Math.max(0, Math.min(window.innerHeight, viewportY))}px`;
+        dot.title = String(preview.label || "目标位置");
+        document.body.appendChild(dot);
+        humanOpsClickPreviewEl = dot;
+        if (qtBridge && typeof qtBridge.showClickPreview === "function") {
+          qtBridge.showClickPreview(JSON.stringify(preview));
+        }
       }
 
       function createThoughtSessionId() {
@@ -3515,8 +3572,11 @@
         if (value === "ipet_inferred") {
           return "Ipet 推断";
         }
-        if (value === "runtime") {
-          return "运行时";
+        if (value === "brain") {
+          return "Brain";
+        }
+        if (value === "human_ops") {
+          return "Human Ops";
         }
         return value || "状态";
       }
@@ -3561,7 +3621,7 @@
         if (!text) {
           return turn;
         }
-        const source = String(payload?.source || "runtime").trim();
+        const source = String(payload?.source || "brain").trim();
         const statusId = String(payload?.status_id || payload?.phase || "").trim();
         const reusable = statusId && payload?.transient !== false ? turn.statusRefs.get(statusId) : null;
         const rowEl = reusable || document.createElement("div");
@@ -3673,6 +3733,7 @@
         currentAssistantWorklog = null;
         approvalBubbleRefs.clear();
         approvalThoughtSessionRefs.clear();
+        hideHumanOpsClickPreview();
         activeApprovalId = "";
         pendingApprovalInputTurnId = "";
         return { assistantTurn };
@@ -4190,7 +4251,7 @@
           {
             phase: "action",
             text: String(payload.text || ""),
-            source: "runtime",
+            source: "human_ops",
             transient: false,
             status_id: `approval:${String(payload.turn_id || Date.now()).trim()}`,
             render: "worklog",
@@ -4211,6 +4272,13 @@
           metaEl.className = "approval-status";
           metaEl.textContent = metaText;
           approvalCardEl.appendChild(metaEl);
+        }
+        if (payload.preview?.marker === "red_dot") {
+          showHumanOpsClickPreview(payload.preview);
+          const previewEl = document.createElement("div");
+          previewEl.className = "approval-status";
+          previewEl.textContent = `点击预览：${payload.preview.label || "目标位置"} (${payload.preview.x}, ${payload.preview.y})`;
+          approvalCardEl.appendChild(previewEl);
         }
 
         const actionWrap = document.createElement("div");
@@ -4237,6 +4305,7 @@
           approveBtn.disabled = true;
           rejectBtn.disabled = true;
           statusEl.textContent = text;
+          hideHumanOpsClickPreview();
         };
 
         approveBtn.addEventListener("click", async () => {
@@ -4260,7 +4329,7 @@
             {
               phase: "action",
               text: "这一步我先暂停啦。你直接补充想法，我会沿着当前任务继续处理。",
-              source: "runtime",
+              source: "human_ops",
               transient: false,
               status_id: `approval_rejected:${String(payload.turn_id || "").trim()}`,
               render: "worklog",
@@ -4438,10 +4507,10 @@
         const turnKey = String(turnId || "").trim();
         const thoughtSessionId = String(approvalThoughtSessionRefs.get(turnKey) || activeThoughtSessionId || createThoughtSessionId()).trim();
         try {
-          const resp = await fetch(`${backend}/api/chat/approval`, {
+          const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/decision`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ turn_id: turnId, approved: !!approved, user_text: String(userText || "") }),
+            body: JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
           });
           removeApprovalBubble(turnId);
           const result = await consumeChatStream(resp, { thoughtSessionId });
@@ -4535,8 +4604,6 @@
               available_expressions: Array.isArray(state.chat.available_expressions)
                 ? state.chat.available_expressions
                 : [],
-              tools_enabled: !!(state.chat.tooling && state.chat.tooling.enabled),
-              tool_mode: (state.chat.tooling && state.chat.tooling.mode) || "mcp_local_phase2",
               react_enabled: state.chat.react_enabled !== false,
               react_visibility: state.chat.react_visibility || "inline",
               max_reasoning_steps: Number(state.chat.max_reasoning_steps || 10),

@@ -9,7 +9,6 @@ import subprocess
 import tempfile
 import textwrap
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 import httpx
 
@@ -84,7 +83,6 @@ def normalize_analyzer_config(config: Any) -> dict[str, Any]:
             min_value=1,
             max_value=MAX_OBSERVATIONS,
         ),
-        "fallback_to_runtime": bool(source.get("fallback_to_runtime", True)),
     }
     if normalized["image_detail"] not in ANALYZER_IMAGE_DETAILS:
         normalized["image_detail"] = DEFAULT_ANALYZER_CONFIG["image_detail"]
@@ -263,6 +261,7 @@ class VisionAnalyzer:
         api_key = _resolved_api_key(self.config.get("api_key"), self.config.get("api_key_env"))
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        active = payload.get("active_observation") if isinstance(payload.get("active_observation"), dict) else {}
         request_body = {
             "model": model,
             "messages": [
@@ -270,7 +269,15 @@ class VisionAnalyzer:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": build_vlm_user_prompt(max_observations=int(self.config["max_observations"]))},
+                        {
+                            "type": "text",
+                            "text": build_vlm_user_prompt(
+                                max_observations=int(self.config["max_observations"]),
+                                target_hint=active.get("target_hint"),
+                                observe_prompt=active.get("observe_prompt"),
+                                screen_resolution=active.get("screen_resolution"),
+                            ),
+                        },
                         {
                             "type": "image_url",
                             "image_url": {
@@ -287,7 +294,7 @@ class VisionAnalyzer:
         try:
             with self._http_client_factory(
                 timeout=float(self.config["timeout_sec"]),
-                trust_env=_trust_env_for_base_url(base_url),
+                trust_env=False,
             ) as client:
                 response = client.post(_chat_completions_endpoint(base_url), json=request_body, headers=headers)
                 response.raise_for_status()
@@ -298,9 +305,9 @@ class VisionAnalyzer:
 
         try:
             content = openai_message_content(data)
-            return normalize_vlm_analysis(parse_json_object(content), source=_vlm_source_name(self.config["provider"]))
+            return normalize_vlm_text_analysis(content, source=_vlm_source_name(self.config["provider"]))
         except Exception as exc:
-            message = f"VLM analyzer returned invalid JSON: {exc}"
+            message = f"VLM analyzer returned invalid response: {exc}"
             return {"observations": [], "unknowns": [message], "last_error": message}
 
     def _status(
@@ -389,48 +396,65 @@ def merge_analysis_into_payload(payload: dict[str, Any], config: Any, analysis: 
     analysis_summary = _clean_text(analysis.get("summary"), max_length=500)
     if not summary and analysis_summary:
         enriched["summary"] = analysis_summary
+    observe_answer = _clean_text(analysis.get("observe_answer") or analysis_summary, max_length=1200)
+    if observe_answer:
+        enriched["observe_answer"] = observe_answer
     enriched["analysis"] = status
     return VisionAnalysisResult(enriched, status)
 
 
-def build_vlm_user_prompt(*, max_observations: int) -> str:
+def build_vlm_user_prompt(
+    *,
+    max_observations: int,
+    target_hint: str = "",
+    observe_prompt: Any = "",
+    screen_resolution: Any = None,
+) -> str:
+    hint = _clean_text(target_hint, max_length=220)
+    question = _clean_text(observe_prompt or hint or "请描述当前截图中可见的主要内容。", max_length=700)
+    resolution = screen_resolution if isinstance(screen_resolution, dict) else {}
+    try:
+        width = int(resolution.get("width") or 0)
+        height = int(resolution.get("height") or 0)
+    except Exception:
+        width = 0
+        height = 0
+    resolution_text = f"{width}x{height}" if width > 0 and height > 0 else "unknown"
+    task_lines = [
+        f"Brain asks: {question}",
+        f"Screen coordinate space: {resolution_text}. If you mention coordinates, use this absolute screen coordinate space, not cropped image pixels.",
+    ]
+    if hint:
+        task_lines.append(f"Target hint: {hint}.")
     return (
-        "Analyze the current screenshot like a visual perception system, not OCR only. "
-        "Describe visible UI, windows, images, characters, objects, layout, and readable text when useful. "
-        "Return only JSON with keys: summary, observations, unknowns. "
-        f"observations must be an array of at most {max_observations} objects with claim, evidence, region, confidence. "
-        "Use evidence to name the visible cue supporting each claim. "
-        "Do not guess hidden content or private information that is not visibly present."
+        "你是 Ipet 的视觉观察助手。请只根据这张截图回答 Brain 的问题。"
+        "用自然语言回答，不要输出 JSON、Markdown 代码块或固定 schema。"
+        "如果问题要求找位置或点击目标，请用自然语言说明可见依据，并给出绝对屏幕坐标，例如 x=123, y=456。"
+        "如果看不到或不确定，就直接说明不确定以及原因。"
+        f"回答尽量简洁，最多列出 {max_observations} 个关键可见点。"
+        + " "
+        + " ".join(task_lines)
     )
 
 
-def normalize_vlm_analysis(parsed: dict[str, Any], *, source: str) -> dict[str, Any]:
-    summary = _clean_text(parsed.get("summary"), max_length=500)
-    raw_observations = parsed.get("observations") if isinstance(parsed.get("observations"), list) else []
-    observations: list[dict[str, Any]] = []
-    for item in raw_observations:
-        if not isinstance(item, dict):
-            continue
-        observation = dict(item)
-        observation["source"] = source
-        if not _clean_text(observation.get("evidence"), max_length=360):
-            observation["evidence"] = "VLM visual analysis of the current screenshot"
-        observations.append(observation)
-    if not observations and summary:
-        observations.append(
+def normalize_vlm_text_analysis(content: Any, *, source: str) -> dict[str, Any]:
+    answer = _clean_text(content, max_length=1200)
+    if not answer:
+        message = "VLM analyzer returned an empty natural-language response"
+        return {"observations": [], "unknowns": [message], "last_error": message}
+    return {
+        "summary": answer,
+        "observe_answer": answer,
+        "observations": [
             {
-                "claim": summary,
-                "evidence": "VLM visual analysis summary of the current screenshot",
+                "claim": answer,
+                "evidence": "VLM natural-language answer to the current screenshot question",
                 "region": "screen",
-                "confidence": 0.62,
+                "confidence": 0.72,
                 "source": source,
             }
-        )
-    unknowns = parsed.get("unknowns") if isinstance(parsed.get("unknowns"), list) else []
-    return {
-        "summary": summary or "VLM 已分析当前屏幕画面。",
-        "observations": observations,
-        "unknowns": unknowns,
+        ],
+        "unknowns": [],
         "last_error": "",
     }
 
@@ -463,28 +487,6 @@ def openai_message_content(data: Any) -> str:
     raise ValueError("missing message content")
 
 
-def parse_json_object(content: Any) -> dict[str, Any]:
-    text = str(content or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    try:
-        parsed = json.loads(text)
-    except Exception:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = json.loads(text[start : end + 1])
-    if not isinstance(parsed, dict):
-        raise ValueError("parsed JSON is not an object")
-    return parsed
-
-
 def _chat_completions_endpoint(base_url: str) -> str:
     base = str(base_url or "").strip().rstrip("/")
     if base.endswith("/chat/completions"):
@@ -502,11 +504,6 @@ def _resolved_api_key(api_key: Any, api_key_env: Any = "") -> str:
     if not env_name:
         return ""
     return str(os.environ.get(env_name) or "").strip()
-
-
-def _trust_env_for_base_url(base_url: str) -> bool:
-    host = (urlparse(str(base_url or "")).hostname or "").lower()
-    return host not in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
 def _vlm_source_name(provider: str) -> str:
@@ -584,6 +581,6 @@ _MACOS_VISION_OCR_SWIFT = textwrap.dedent(
 
 
 _VLM_SYSTEM_PROMPT = (
-    "You are Ipet's screenshot vision analyzer. Convert an image into concise, evidence-backed visual observations. "
-    "Return only a JSON object. Do not include markdown. Do not invent anything outside the visible image."
+    "You are Ipet's screenshot observation helper. Answer Brain's screenshot question in natural language only. "
+    "Do not invent anything outside the visible image."
 )

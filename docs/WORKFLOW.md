@@ -107,7 +107,9 @@ Brain receives a compact turn packet from Body plus allowed Memory & Skills cont
 
 Brain does not directly write files, click UI, mutate settings, persist memory, or install anything. It describes intent; Body, Human Ops, and Memory & Skills enforce the actual boundary.
 
-The active runtime classifies LLM output into a `BrainDecision`. The prompt asks providers to return one JSON object such as `{"kind":"say","text":"..."}`. Plain text is still accepted and treated as `say`, so normal chat remains usable even when a provider ignores the schema. In the current implementation only `say` is executed; `observe`, `act`, `remember`, `learn_skill`, and `stop` are parsed as reserved decision kinds for later review and execution flows.
+The Brain layer classifies LLM output into a `BrainDecision`. The prompt asks providers to return one JSON object such as `{"kind":"say","text":"..."}`. Plain text is still accepted and treated as `say`, so normal chat remains usable even when a provider ignores the schema. The current implementation executes `say` directly, allows `observe` without approval, and turns `propose_act` click decisions into Human Ops approval proposals with a red-dot preview. `propose_remember`, `propose_learn_skill`, and `stop` are parsed as reserved decision kinds for the next Memory & Skills workflow pass.
+
+For visual work, Brain asks Observe in natural language. An `observe` decision carries a plain `question` / `observe_prompt`, such as "tell me what is visible on the screen" or "if the target is visible, tell me the clickable center x and y". Body still owns the screenshot and appends the actual screen resolution before calling the observe model. The OpenAI-compatible observe model path receives the Brain question plus the screenshot and answers in natural language, not JSON. That answer is then sent back to Brain for the next decision. If the user wanted a click and the natural-language observation contains trustworthy coordinates, Brain returns `propose_act`, and Human Ops shows the red-dot approval request.
 
 The active Brain provider is configured in the web settings page. The current API formats are:
 
@@ -145,7 +147,7 @@ After approval, Body executes the bounded action and records the result. Executi
 
 - use the minimum command or API call needed
 - avoid broad filesystem traversal
-- keep generated runtime state out of Git
+- keep generated local app state out of Git
 - preserve unrelated user or coworker changes
 - surface failures as facts for the next Brain step
 
@@ -198,10 +200,12 @@ Every file-changing task round must also produce an HTML report under `docs/repo
 Local-only state may include:
 
 - `pet_config.json`
-- `.pet_runtime_*`
+- `.pet_desktop_command*.json`
+- `.pet_desktop_host.heartbeat.json`
 - `backend/audio_cache/`
 - `data/`
-- `.runtime-logs/`
+- `.app-logs/`
+- `.service-logs/`
 - `.uv-cache/`
 - `.venv/`
 - generated debug output under ignored locations

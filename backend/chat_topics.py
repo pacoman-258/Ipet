@@ -64,7 +64,7 @@ def _block_turn_span(block: dict[str, Any]) -> tuple[int, int]:
 
 
 @dataclass(frozen=True)
-class TopicRuntimeSnapshot:
+class TopicContextSnapshot:
     topic_id: str
     meta: dict[str, Any]
     model_messages: tuple[dict[str, str], ...]
@@ -75,7 +75,7 @@ class TopicStore:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = Path(root_dir)
         self._lock = threading.RLock()
-        self._snapshot_cache: dict[str, tuple[str, TopicRuntimeSnapshot]] = {}
+        self._context_snapshot_cache: dict[str, tuple[str, TopicContextSnapshot]] = {}
 
     def topic_dir(self, topic_id: str) -> Path:
         return self.root_dir / normalize_topic_id(topic_id)
@@ -127,7 +127,7 @@ class TopicStore:
                     "blocks": [],
                 },
             )
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
         return meta
 
     def ensure_topic(
@@ -249,7 +249,7 @@ class TopicStore:
             if not topic_dir.exists():
                 return False
             shutil.rmtree(topic_dir, ignore_errors=False)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
         return True
 
     def update_long_term_memory_marker(
@@ -272,7 +272,7 @@ class TopicStore:
                 updated["last_long_term_memory_dismissed_marker"] = str(dismissed_marker or "").strip() or None
             updated["updated_at"] = now_text
             self._write_json(self.meta_path(normalized_id), updated)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
             return updated
 
     def truncate_from_assistant_turn(self, topic_id: str, assistant_turn: int) -> dict[str, Any] | None:
@@ -308,7 +308,7 @@ class TopicStore:
             self._write_jsonl(self.full_path(normalized_id), remaining_messages)
             self._write_json(self.meta_path(normalized_id), updated_meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
             return {
                 "meta": updated_meta,
                 "summary": summary_document,
@@ -318,16 +318,16 @@ class TopicStore:
         summary_document = self.load_summary_document(topic_id)
         return self._build_model_messages_from_summary_document(summary_document)
 
-    def get_runtime_snapshot(self, topic_id: str) -> TopicRuntimeSnapshot | None:
+    def get_context_snapshot(self, topic_id: str) -> TopicContextSnapshot | None:
         normalized_id = normalize_topic_id(topic_id)
         meta = self.load_meta(normalized_id)
         if meta is None:
             return None
         version = str(meta.get("updated_at") or "")
-        cached = self._snapshot_cache.get(normalized_id)
+        cached = self._context_snapshot_cache.get(normalized_id)
         if cached is not None and cached[0] == version:
             snapshot = cached[1]
-            return TopicRuntimeSnapshot(
+            return TopicContextSnapshot(
                 topic_id=snapshot.topic_id,
                 meta=deepcopy(meta),
                 model_messages=tuple(deepcopy(list(snapshot.model_messages))),
@@ -336,14 +336,14 @@ class TopicStore:
         summary_document = self.load_summary_document(normalized_id)
         model_messages = tuple(self._build_model_messages_from_summary_document(summary_document))
         full_messages = tuple(self.load_full_messages(normalized_id))
-        snapshot = TopicRuntimeSnapshot(
+        snapshot = TopicContextSnapshot(
             topic_id=normalized_id,
             meta=deepcopy(meta),
             model_messages=model_messages,
             full_messages=full_messages,
         )
-        self._snapshot_cache[normalized_id] = (version, snapshot)
-        return TopicRuntimeSnapshot(
+        self._context_snapshot_cache[normalized_id] = (version, snapshot)
+        return TopicContextSnapshot(
             topic_id=normalized_id,
             meta=deepcopy(meta),
             model_messages=tuple(deepcopy(list(model_messages))),
@@ -443,7 +443,7 @@ class TopicStore:
 
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -528,7 +528,7 @@ class TopicStore:
             meta["pending_summary_end_assistant_turn"] = pending[1] if pending else None
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -595,7 +595,7 @@ class TopicStore:
 
             self._write_json(self.meta_path(normalized_id), meta)
             self._write_json(self.summary_path(normalized_id), summary_document)
-            self._invalidate_snapshot_cache(normalized_id)
+            self._invalidate_context_snapshot_cache(normalized_id)
             return {
                 "meta": meta,
                 "summary": summary_document,
@@ -676,5 +676,5 @@ class TopicStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    def _invalidate_snapshot_cache(self, topic_id: str) -> None:
-        self._snapshot_cache.pop(normalize_topic_id(topic_id), None)
+    def _invalidate_context_snapshot_cache(self, topic_id: str) -> None:
+        self._context_snapshot_cache.pop(normalize_topic_id(topic_id), None)

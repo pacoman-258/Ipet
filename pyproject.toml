@@ -1,7 +1,7 @@
 [project]
-name = "ai-assistant"
+name = "ipet-neo-aspect"
 version = "0.1.0"
-description = "Local-first desktop pet shell for pluggable agent runtimes"
+description = "Local-first desktop pet with Live2D body, LLM brain, Human Ops, memory, and skills"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,15 +9,12 @@ dependencies = [
     "funasr>=1.2.6",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
-    "langgraph>=1.0.5",
     "pyqt6>=6.10.2",
     "pyqt6-webengine>=6.10.0",
     "pyside6>=6.10.2",
-    "pyyaml>=6.0.3",
     "requests>=2.32.5",
     "torch>=2.6.0",
     "torchaudio>=2.6.0",
     "transformers>=4.55.0",
     "uvicorn>=0.34.0",
-    "websockets>=15.0.1",
 ]

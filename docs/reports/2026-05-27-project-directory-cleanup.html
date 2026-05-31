@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ipet Neo Aspect - Project Directory Cleanup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #263447;
+      --muted: #66768a;
+      --line: rgba(198, 211, 226, 0.9);
+      --panel: rgba(255, 255, 255, 0.88);
+      --accent: #5c8dff;
+      --danger: #e45b78;
+      --ok: #3da66f;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 14% 16%, rgba(255, 211, 227, 0.68), transparent 28%),
+        radial-gradient(circle at 84% 12%, rgba(198, 223, 255, 0.7), transparent 26%),
+        linear-gradient(180deg, #f7fafd, #edf2f7);
+    }
+
+    main {
+      width: min(960px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    header,
+    section {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 18px;
+      box-shadow: 0 18px 34px rgba(49, 76, 111, 0.08);
+    }
+
+    header {
+      padding: 28px;
+      margin-bottom: 18px;
+    }
+
+    section {
+      padding: 22px 24px;
+      margin-top: 14px;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: 28px;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+      line-height: 1.75;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(92, 141, 255, 0.12);
+      color: #335fcb;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      color: #5562a5;
+    }
+
+    .protect {
+      color: var(--ok);
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Project Directory Cleanup</h1>
+      <p>本轮按 <code>docs/PROJECT_STRUCTURE.md</code> 做第一阶段清理：先移除本地运行态、缓存、旧 runtime 文档残留和无引用调试脚本，让项目目录更贴近 Neo Aspect 的 Body / Brain / Human Ops / Memory & Skills 结构。</p>
+      <div class="meta">
+        <span class="pill">日期：2026-05-27</span>
+        <span class="pill">分支：Neo_Aspect</span>
+        <span class="pill">模式：subagent-driven audit</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>子窗口分工</h2>
+      <ul>
+        <li><code>qa-reports</code> 只读审计根目录和顶层目录，产出运行态、缓存、旧 Hermes/MCP 空壳和待确认文件清单。</li>
+        <li>第二个只读审计子窗口专查 <code>docs</code>、<code>tests</code>、<code>scripts</code>、<code>backend</code> 中的旧 Agent/MCP/Hermes/AstrBot 残留。</li>
+        <li>主窗口只做整合、审批、白名单删除和验证，避免把大规模目录扫描上下文塞进主窗口。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>清理内容</h2>
+      <ul>
+        <li>删除本地运行态：旧 <code>.pet_runtime_*</code>、桌面 host heartbeat、runtime/service 日志；运行中的桌面 host 可能会重新生成 heartbeat，但它已被忽略。</li>
+        <li>删除缓存和测试临时输出：<code>.uv-cache</code>、<code>.npm-cache</code>、<code>.npm-prefix</code>、第三方 MCP 本地 <code>.npm-prefix</code>、各级 <code>__pycache__</code>、<code>backend/audio_cache</code>、<code>tests/.tmp_*</code>。</li>
+        <li>删除空旧本地目录：<code>Hermes/</code>、<code>third_party_skills/</code>。</li>
+        <li>删除旧 runtime split 未跟踪文档：<code>docs/ARCHITECTURE_RUNTIME_SPLIT.md</code>、<code>docs/superpowers/plans/2026-05-24-runtime-split-hardening.md</code>。</li>
+        <li>删除无代码引用的旧 AstrBot 调试脚本：<code>scripts/debug/astrbot_vision_history_audit.py</code>。</li>
+        <li>更新 <code>.gitignore</code>，把 <code>.service-logs/</code> 和新的 <code>.pet_desktop_*</code> 本地状态纳入忽略。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>明确保留</h2>
+      <ul>
+        <li><span class="protect">未触碰</span> <code>model/</code>，包括 Live2D 模型内容和本地模型资源。</li>
+        <li><span class="protect">未触碰</span> <code>js/</code> 下的 Live2D 运行库：<code>live2dcubismcore.min.js</code>、<code>live2d.min.js</code>、<code>pixi.min.js</code>、<code>index.min.js</code>。</li>
+        <li><span class="protect">未触碰</span> <code>pet_config.json</code> 与 <code>data/</code> 下的本地聊天/记忆内容。</li>
+        <li><span class="protect">未触碰</span> 大块旧后端 Agent/MCP/Hermes 源码；它们仍有大量测试引用，需要单独的破坏性瘦身任务处理。</li>
+        <li><span class="protect">保留</span> 本轮与上一轮任务 HTML 报告。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>验证</h2>
+      <ul>
+        <li><code>git status --short</code> 不再显示已清掉的旧未跟踪 runtime split 文档、日志目录和服务目录。</li>
+        <li>确认 <code>model/</code> 与 <code>js/</code> Live2D 运行库仍存在。</li>
+        <li><code>python -m unittest tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_main_runtime_env -v</code>：83 tests OK。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>待办事项</h2>
+      <ul>
+        <li>第二阶段清理应单独处理旧 <code>backend/agent_graph.py</code>、<code>backend/runtime_*</code>、<code>backend/mcp*</code>、Hermes/AstrBot 相关测试与文档角色。</li>
+        <li>整理 <code>docs/subagents/</code> 中旧 backend-agent-runtime / backend-mcp-platform 命名，迁移到 Neo Aspect 的 Body / Brain / Human Ops / Memory & Skills 角色。</li>
+        <li>确认是否继续保留历史报告与旧计划文档中的 runtime 记录；它们不影响运行，但会影响目录语义纯度。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>推荐下一步</h2>
+      <p>开一个独立的“旧 Agent/MCP/Hermes 后端瘦身”任务：先删或迁移对应测试，再删除旧 runtime 源码，最后更新 <code>docs/WORKFLOW.md</code> 与 <code>docs/SUBAGENTS.md</code>。那一刀会更大，但现在项目根目录已经干净了一截。</p>
+    </section>
+  </main>
+</body>
+</html>

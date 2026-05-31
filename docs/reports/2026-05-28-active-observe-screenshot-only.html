@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet Active Observe Screenshot Only</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f9fc;
+      --paper: #ffffff;
+      --ink: #182033;
+      --muted: #63708a;
+      --line: #dbe3ef;
+      --blue: #3778f2;
+      --green: #287b58;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #fbfdff, var(--bg));
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+    main {
+      width: min(960px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 44px 0 60px;
+    }
+    header {
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 48px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .summary {
+      max-width: 800px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+    section {
+      margin-top: 20px;
+      padding: 22px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 16px 34px rgba(30, 45, 70, 0.08);
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+    p { margin: 0 0 12px; }
+    ul { margin: 0; padding-left: 20px; }
+    li + li { margin-top: 6px; }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #edf2f8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .command {
+      display: block;
+      overflow-x: auto;
+      margin: 10px 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #182033;
+      color: #f7fbff;
+      white-space: pre;
+    }
+    .ok { color: var(--green); font-weight: 750; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">2026-05-28 · Human Ops Observe</p>
+      <h1>Active Observe 回归到截图优先</h1>
+      <p class="summary">本轮回应“观察逻辑不是通过截图吗”的问题：active observe 不再额外依赖 macOS 前台应用元数据脚本，截图成功就是观察成功，元数据超时不会再污染用户可见结果。</p>
+    </header>
+
+    <section>
+      <h2>Goal</h2>
+      <ul>
+        <li>解释元数据原本用途：辅助识别前台 App、窗口标题和菜单栏，但它不是 Human Ops 观察的必要路径。</li>
+        <li>移除 active observe 中阻塞式 AppleScript 元数据读取，降低系统复杂度。</li>
+        <li>当截图已经成功但没有 OCR/VLM 观察结果时，给出准确表述：已截取屏幕，但还未提取明确内容。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Worker Split</h2>
+      <ul>
+        <li><code>Debugger</code>: 追踪截图中显示的 <code>osascript timed out</code> 来源，确认它来自辅助元数据读取，不是截屏失败。</li>
+        <li><code>Backend</code>: 过滤旧元数据超时噪声，并在有截图数据时返回截图成功的观察文本。</li>
+        <li><code>Body</code>: 从 active observe 截图路径移除前台 App 元数据读取。</li>
+        <li><code>QA</code>: 添加回归测试，确认元数据超时不会再作为观察失败展示。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Files Changed</h2>
+      <ul>
+        <li><code>main.py</code>: active observe 捕获截图后不再调用 <code>collect_screen_observations</code> 读取 macOS 前台应用元数据。</li>
+        <li><code>backend/app.py</code>: <code>_observation_text_from_result</code> 过滤元数据超时噪声；有截图时返回“已截取当前屏幕”。</li>
+        <li><code>tests/test_neo_backend_contract.py</code>: 新增回归测试覆盖 <code>osascript</code> 元数据超时不污染 observe 文案。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Achieved Effect</h2>
+      <ul>
+        <li>Human Ops active observe 的主路径更清晰：截图 -> 可选 VLM/OCR -> 观察文本或点击目标。</li>
+        <li>macOS 元数据脚本不再参与 active observe，因此它的超时不会阻断或盖过截图结果。</li>
+        <li>如果没有配置/没有成功提取视觉内容，Ipet 会诚实说明已经截屏但未提取明确内容。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <p><span class="ok">已执行并通过：</span></p>
+      <code class="command">python -m py_compile backend/app.py main.py</code>
+      <code class="command">python -m unittest tests.test_neo_backend_contract tests.test_main_runtime_env tests.test_active_vision tests.test_chat_modes_ui -v</code>
+      <code class="command">python -m unittest discover -s tests -p "test*.py" -v</code>
+      <p>全量回归结果：205 个测试通过。</p>
+    </section>
+
+    <section>
+      <h2>Remaining Work</h2>
+      <ul>
+        <li>可以保留 passive vision 的元数据能力作为未来诊断，但 active observe 不再依赖它。</li>
+        <li>Human Ops 下一步应补动作 ledger，把 observe、approval、click 结果串成可审查记录。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Recommended Next Step</h2>
+      <p>重启 Ipet 后再次测试 “点击 Dock 栏里的设置”，观察结果应不再出现 <code>osascript timed out</code>；如果 observe 模型支持截图输入，应继续生成小红点审批。</p>
+    </section>
+  </main>
+</body>
+</html>

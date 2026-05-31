@@ -955,6 +955,40 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertEqual(host.responses[0][1], "success")
         self.assertEqual(host.responses[0][2]["frame"], frame)
 
+    def test_execute_human_ops_click_invokes_macos_system_events(self) -> None:
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append((args, kwargs))
+            return main.subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        result = main.execute_human_ops_click(
+            {"x": "12", "y": "34", "label": "发送按钮"},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(result, {"clicked": True, "x": 12, "y": 34, "label": "发送按钮"})
+        self.assertEqual(calls[0][0][:2], ["osascript", "-e"])
+        self.assertIn("click at {12, 34}", calls[0][0][-1])
+        self.assertTrue(calls[0][1]["capture_output"])
+
+    def test_desktop_command_human_ops_click_returns_response(self) -> None:
+        host = _DesktopCommandHost()
+        command = {
+            "nonce": "click-test",
+            "type": "human_ops_click",
+            "payload": {"x": 12, "y": 34, "label": "发送按钮"},
+        }
+        click_result = {"clicked": True, "x": 12, "y": 34, "label": "发送按钮"}
+
+        with mock.patch.object(main, "execute_human_ops_click", return_value=click_result) as click_mock:
+            main.DesktopPet.process_desktop_command(host, command)
+
+        click_mock.assert_called_once_with(command["payload"])
+        self.assertEqual(host.responses[0][1], "success")
+        self.assertEqual(host.responses[0][2], click_result)
+
     def test_qt_capture_payload_uses_all_display_composer(self) -> None:
         screens = [object(), object()]
         composer = mock.Mock(return_value=("canvas", {"display_count": 2, "display_layout": [{"x": 0}, {"x": 100}]}))

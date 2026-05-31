@@ -71,4 +71,10 @@ Stable role prompts live in `docs/subagents/`.
 
 - Coordinator playbook: `docs/subagents/coordinator.md`
 - Team overview: `docs/subagents/README.md`
-- Existing role prompt files may lag behind the Neo names during migration; update them only when that is the task scope.
+- Body: `docs/subagents/body.md`
+- Brain: `docs/subagents/brain.md`
+- Human Ops: `docs/subagents/human-ops.md`
+- Memory & Skills: `docs/subagents/memory-skills.md`
+- Settings Console: `docs/subagents/settings-console.md`
+- Desktop Shell: `docs/subagents/desktop-shell.md`
+- QA Reports: `docs/subagents/qa-reports.md`

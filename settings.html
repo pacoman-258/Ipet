@@ -248,6 +248,42 @@
           </div>
 
           <div class="form-grid two-col">
+            <label class="toggle-line wide">
+              <input id="ops-observe-model-enabled" type="checkbox" />
+              <span>observe 使用独立模型</span>
+            </label>
+            <label class="field">
+              <span>observe API 格式</span>
+              <select id="ops-observe-model-provider">
+                <option value="openai_compatible">OpenAI 兼容</option>
+                <option value="ollama">Ollama</option>
+                <option value="anthropic_compatible">Anthropic 兼容</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>observe 模型端点</span>
+              <input id="ops-observe-model-endpoint" type="text" placeholder="http://127.0.0.1:11434" />
+            </label>
+            <div class="field wide model-fetch-panel">
+              <span>observe 模型发现</span>
+              <div class="button-row wrap model-fetch-actions">
+                <button id="ops-observe-fetch-models-btn" class="ghost-button" type="button">拉取 observe 模型</button>
+                <span id="ops-observe-model-status" class="inline-status">可单独配置更快的观察模型</span>
+              </div>
+              <div id="ops-observe-model-list" class="model-option-list" aria-live="polite"></div>
+            </div>
+            <label class="field">
+              <span>observe 模型名称</span>
+              <input id="ops-observe-model-name" type="text" placeholder="qwen2.5-vl:7b" />
+            </label>
+            <label class="field wide">
+              <span>observe API Key</span>
+              <input id="ops-observe-api-key" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥" />
+            </label>
+            <label class="toggle-line">
+              <input id="ops-observe-api-key-clear" type="checkbox" />
+              <span>保存时清空 observe 密钥</span>
+            </label>
             <label class="field">
               <span>红点 X</span>
               <input id="click-preview-x" type="number" />

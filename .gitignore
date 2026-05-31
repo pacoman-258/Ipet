@@ -10,23 +10,27 @@ wheels/
 .venv
 .uv-cache/
 
-# Local runtime state
-backend/agent_graph_state.pkl
+# Local app state
 backend/audio_cache/
-.runtime-logs/
+.app-logs/
+.service-logs/
 .cache/
 .npm-cache/
 .npm-prefix/
 tmp_*.log
 data/chat_topics/
+data/ipet_conversations/
+data/ipet_memory/
+data/ipet_task_runs/
+data/skills/imported/
 .DS_Store
 
 # Local config and personal workspace files
 pet_config.json
-.pet_runtime_command.json
-.pet_runtime_command.response.json
-.pet_runtime_command.response.*.json
-.pet_runtime_host.heartbeat.json
+.pet_desktop_command.json
+.pet_desktop_command.response.json
+.pet_desktop_command.response.*.json
+.pet_desktop_host.heartbeat.json
 Todo.txt
 .tmp_index_inline.js
 .tmp_test/
@@ -40,17 +44,5 @@ model/**/*.zip
 model/**/*.autogen.model3.json
 model/**/Thumbs.db
 
-# Third-party MCP local installs
-Hermes/mcp/
-third_party_mcp/jmmcp/
-third_party_mcp/*/node_modules/
-third_party_mcp/*/.npm-cache/
-third_party_mcp/*/.npm-prefix/
-third_party_mcp/*/.tool_cache.json
-third_party_mcp/*/downloads/
-third_party_mcp/*/.uv-cache/
-third_party_mcp/*/.uv-tools/
-
-# Imported third-party skills
-Hermes/skills/imported/
-third_party_skills/
+# Imported local skill recipes
+skills/imported/

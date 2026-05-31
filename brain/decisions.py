@@ -53,9 +53,17 @@ class BrainDecision:
         return cls(DecisionKind.SAY, text, {"text": str(text or "")})
 
     @classmethod
-    def observe(cls, target: str = "screen") -> "BrainDecision":
+    def observe(
+        cls,
+        target: str = "screen",
+        observe_prompt: str = "",
+    ) -> "BrainDecision":
         target_text = str(target or "screen").strip() or "screen"
-        return cls(DecisionKind.OBSERVE, f"Observe {target_text}", {"target": target_text})
+        payload: dict[str, Any] = {"target": target_text}
+        prompt_text = str(observe_prompt or "").strip()
+        if prompt_text:
+            payload["observe_prompt"] = prompt_text
+        return cls(DecisionKind.OBSERVE, f"Observe {target_text}", payload)
 
     @classmethod
     def propose_act(cls, action_type: str, arguments: dict[str, Any]) -> "BrainDecision":

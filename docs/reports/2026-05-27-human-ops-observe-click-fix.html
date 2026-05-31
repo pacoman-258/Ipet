@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet Human Ops Observe Click Fix</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --paper: #ffffff;
+      --ink: #172033;
+      --muted: #62718a;
+      --line: #d9e2ef;
+      --blue: #3d7df2;
+      --red: #e64d42;
+      --green: #27845d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f8fbff, var(--bg));
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+    main {
+      width: min(980px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 44px 0 60px;
+    }
+    header {
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 50px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .summary {
+      max-width: 820px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+    section {
+      margin-top: 20px;
+      padding: 22px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 16px 34px rgba(30, 45, 70, 0.08);
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+    p { margin: 0 0 12px; }
+    ul { margin: 0; padding-left: 20px; }
+    li + li { margin-top: 6px; }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #edf2f8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .mini {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    .mini strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+    .ok { color: var(--green); font-weight: 750; }
+    .warn { color: var(--red); font-weight: 750; }
+    .command {
+      display: block;
+      overflow-x: auto;
+      margin: 10px 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #172033;
+      color: #f7fbff;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">2026-05-27 · Human Ops</p>
+      <h1>Observe + Click 闭环修复报告</h1>
+      <p class="summary">本轮修复截图中出现的失败：Ipet 只是口头说“请批准点击”，但没有真正进入 observe、没有生成小红点审批，也没有可执行的点击动作。</p>
+    </header>
+
+    <section>
+      <h2>Goal</h2>
+      <ul>
+        <li>让 Brain 不再把本地操作请求当普通聊天回复。</li>
+        <li>让 Human Ops 的 observe 能使用设置页配置的 observe 模型，提取视觉观察和可点击目标坐标。</li>
+        <li>当用户要求点击 Dock / App / 按钮且模型口头请求批准时，后端自动兜底为 observe，再根据 <code>click_target</code> 生成 reviewable click proposal。</li>
+        <li>让小红点可以显示在绝对屏幕坐标上，而不仅限于 Ipet WebView 窗口内部。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Worker Split</h2>
+      <div class="grid">
+        <div class="mini">
+          <strong>Debugger</strong>
+          <p>沿 Brain 回复解析、后端 SSE、Human Ops observe/click 和前端审批预览追踪数据流。</p>
+        </div>
+        <div class="mini">
+          <strong>Backend</strong>
+          <p>修复 Brain 决策兜底、observe 模型接入、VLM <code>click_target</code> 解析与审批事件生成。</p>
+        </div>
+        <div class="mini">
+          <strong>Body UI</strong>
+          <p>补充 Qt 顶层小红点预览窗口，解决 Dock 等窗口外目标无法被 WebView 内红点覆盖的问题。</p>
+        </div>
+        <div class="mini">
+          <strong>QA</strong>
+          <p>先写失败测试，再实现修复，最后跑目标回归和全量回归。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Files Changed</h2>
+      <ul>
+        <li><code>brain/llm.py</code>: 更新结构化回复提示，把 <code>observe</code> 和 <code>propose_act</code> 标为当前可执行决策，禁止用 <code>say</code> 口头请求批准。</li>
+        <li><code>backend/app.py</code>: 增加本地操作请求兜底、observe 模型映射、observe 后点击提案生成。</li>
+        <li><code>backend/vision_analyzer.py</code>: 支持 VLM 返回 <code>click_target</code>，并把用户目标提示传给截图分析 prompt。</li>
+        <li><code>index.html</code>: 审批小红点继续保留 WebView 内预览，同时通过 QtBridge 请求桌面级小红点。</li>
+        <li><code>main.py</code>: 增加 <code>ClickPreviewOverlay</code> 顶层透明预览窗口与 QtBridge 槽函数。</li>
+        <li><code>tests/test_brain_structured_replies.py</code>、<code>tests/test_vision_analyzer.py</code>、<code>tests/test_neo_backend_contract.py</code>、<code>tests/test_chat_modes_ui.py</code>: 增加回归覆盖。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Achieved Effect</h2>
+      <ul>
+        <li>“试试点一下 Dock 栏里的设置”这类请求不会再停留在普通聊天文本。</li>
+        <li>如果模型仍旧输出“请批准我点击”这种自然语言，后端会识别为桌面操作请求，先 observe。</li>
+        <li>开启 observe 模型后，截图分析可以返回 <code>click_target</code>，后端据此生成 Human Ops 审批卡和红点预览。</li>
+        <li>批准前不会真正点击；点击仍走 <code>/api/human-ops/proposals/{id}/decision</code>。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <p><span class="ok">已通过：</span></p>
+      <code class="command">python -m py_compile backend/app.py backend/vision_analyzer.py brain/llm.py main.py</code>
+      <code class="command">python -m unittest tests.test_brain_structured_replies tests.test_vision_analyzer tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_main_runtime_env -v</code>
+      <code class="command">python -m unittest discover -s tests -p "test*.py" -v</code>
+      <p>全量回归结果：204 个测试通过。</p>
+    </section>
+
+    <section>
+      <h2>Remaining Work</h2>
+      <ul>
+        <li><span class="warn">需要重启当前 Ipet 应用进程</span>，因为本轮修改了 <code>main.py</code>、前端和后端代码；正在运行的旧进程不会自动加载新 QtBridge 与后端逻辑。</li>
+        <li>Anthropic-compatible observe 模型目前没有接入独立图像消息格式，本轮先保留为不启用 VLM 分析。</li>
+        <li>下一步应补 type、hotkey、wait/read feedback，并把每次动作写入 Human Ops ledger。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Recommended Next Step</h2>
+      <p>重启 Ipet 后，在设置页打开 Human Ops 的 observe model，选择支持截图输入的 OpenAI-compatible / Ollama VLM 模型，再用同一句 Dock 点击请求实测审批卡、小红点和批准后点击执行。</p>
+    </section>
+  </main>
+</body>
+</html>

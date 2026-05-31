@@ -124,7 +124,7 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertNotIn("pendingSpeakBuffer.match", source)
         self.assertNotIn("await fallbackSpeakByBrowser(nextText)", source)
 
-    def test_index_respects_runtime_topic_history_capabilities(self) -> None:
+    def test_index_respects_local_topic_history_capabilities(self) -> None:
         source = INDEX_HTML.read_text(encoding="utf-8")
         self.assertIn("supports_history_detail: raw.supports_history_detail !== false", source)
         self.assertIn("supports_delete: raw.supports_delete !== false", source)
@@ -171,12 +171,27 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('appendMessage("user", String(item.content || "")', source)
         self.assertIn('assistantTurn: Number(item.assistant_turn || 0) || null,', source)
 
+    def test_index_routes_human_ops_approval_to_proposal_endpoint_and_red_dot_preview(self) -> None:
+        source = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertIn("function showHumanOpsClickPreview", source)
+        self.assertIn("function hideHumanOpsClickPreview", source)
+        self.assertIn('id = "human-ops-click-preview-dot"', source)
+        self.assertIn('className = "human-ops-click-preview-dot"', source)
+        self.assertIn("window.screenX", source)
+        self.assertIn("window.screenY", source)
+        self.assertIn("qtBridge.showClickPreview(JSON.stringify(preview))", source)
+        self.assertIn("qtBridge.hideClickPreview()", source)
+        self.assertIn('payload.preview?.marker === "red_dot"', source)
+        self.assertIn('/api/human-ops/proposals/${encodeURIComponent(turnId)}/decision', source)
+        self.assertNotIn('fetch(`${backend}/api/chat/approval`', source)
+
     def test_index_history_assistant_messages_render_without_pet_bubbles(self) -> None:
         source = INDEX_HTML.read_text(encoding="utf-8")
         self.assertIn("appendAssistantHistoryBlock(item)", source)
         self.assertNotIn('appendMessage(role === "assistant" ? "pet" : "user"', source)
 
-    def test_settings_replaces_topic_history_runtime_controls_with_neo_aspect_controls(self) -> None:
+    def test_settings_replaces_old_topic_history_controls_with_neo_aspect_controls(self) -> None:
         html = SETTINGS_HTML.read_text(encoding="utf-8")
         js = SETTINGS_JS.read_text(encoding="utf-8")
         self.assertNotIn('id="chat-topic-history-enabled"', html)
@@ -192,8 +207,18 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('id="memory-review-queue"', html)
         self.assertIn('id="brain-decision-temperature"', html)
         self.assertIn('id="ops-observe-screen"', html)
+        self.assertIn('id="ops-observe-model-enabled"', html)
+        self.assertIn('id="ops-observe-model-provider"', html)
+        self.assertIn('id="ops-observe-model-endpoint"', html)
+        self.assertIn('id="ops-observe-fetch-models-btn"', html)
+        self.assertIn('id="ops-observe-model-list"', html)
+        self.assertIn('id="ops-observe-model-name"', html)
+        self.assertIn('id="ops-observe-api-key"', html)
         self.assertIn('id="ops-require-act-review"', html)
         self.assertIn('id="click-preview-dot"', html)
+        self.assertIn('observe_model', js)
+        self.assertIn('function fetchObserveModels', js)
+        self.assertIn('scope: "observe"', js)
         self.assertNotIn('id="chat-asr-interim-results"', html)
         self.assertNotIn('id="vision-enabled"', html)
         self.assertNotIn('id="vision-analyzer-api-key"', html)
@@ -207,7 +232,7 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertNotIn('id="hermes-status-detail"', html)
         self.assertNotIn("/api/hermes/status", js)
 
-    def test_settings_excludes_runtime_and_astrbot_controls(self) -> None:
+    def test_settings_excludes_removed_platform_controls(self) -> None:
         html = SETTINGS_HTML.read_text(encoding="utf-8")
         js = SETTINGS_JS.read_text(encoding="utf-8")
         self.assertIn('id="brain-model-endpoint"', html)

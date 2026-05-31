@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ipet Neo Aspect - Natural Language Observe</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.65; color: #1f2937; }
+    h1 { font-size: 26px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 28px; border-bottom: 1px solid #dbe4f0; padding-bottom: 6px; }
+    code { background: #f3f6fb; padding: 2px 5px; border-radius: 5px; }
+    ul { padding-left: 22px; }
+    .note { background: #f7fbff; border: 1px solid #cfe0ff; padding: 14px 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Natural Language Observe</h1>
+  <p class="note">日期：2026-05-29。目标：把 Brain 和 Observe 之间的边界从 JSON 任务/JSON 结果改成自然语言提问和自然语言回答。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>brain</strong>：把 observe 决策简化为自然语言 question / observe_prompt，并在 observe 返回后再次决策。</li>
+    <li><strong>body</strong>：继续负责截图和屏幕分辨率，不再要求 observe 模型输出 JSON。</li>
+    <li><strong>human-ops</strong>：点击仍只接受 Brain 的 <code>propose_act</code>，并保持红点审核。</li>
+    <li><strong>qa-reports</strong>：更新回归测试、Workflow 和本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/decisions.py</code></li>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>backend/vision_analyzer.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_vision_analyzer.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain 对 Observe 只发送自然语言问题，不再构造 <code>observe_task</code> JSON。</li>
+    <li>Observe 模型提示明确要求自然语言回答，并明确不要输出 JSON 或固定 schema。</li>
+    <li>Observe 的自然语言答案保存为 <code>observe_answer</code>，然后交回 Brain 做下一步决策。</li>
+    <li>如果用户需要点击，Brain 根据自然语言观察结果中的坐标生成 <code>propose_act</code>，Human Ops 再展示红点审批。</li>
+    <li>VLM HTTP 调用固定 <code>trust_env=false</code>，避免系统 SOCKS 代理影响远程模型请求。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>python -m py_compile brain/decisions.py brain/llm.py backend/app.py backend/vision_analyzer.py</code>: passed.</li>
+    <li>Targeted regression: 42 tests passed.</li>
+    <li>Full regression: pending final run.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>需要真实启动 Ipet 验证：普通看屏幕应得到自然语言可见内容；点击任务应先得到自然语言坐标，再触发红点审批。</li>
+    <li>Anthropic-compatible 图片 observe 仍未接入，本轮只收敛 OpenAI-compatible / Ollama OpenAI-style VLM。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>重启 Ipet 后先问“你能看到的屏幕内容有哪些，按截图如实回答”，再问“点击 Dock 栏里的设置”。如果第一步能自然语言描述屏幕，第二步能显示红点审批，就说明 Human Ops 的 observe+click 主链路打通。</p>
+</body>
+</html>

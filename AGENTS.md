@@ -61,7 +61,7 @@ Useful stable facts:
 - Tests live under `tests/`.
 - Debug helpers live under `scripts/debug/`.
 - Fixed role prompts live under `docs/subagents/`.
-- Root scratch files, generated output, local runtime state, caches, and personal configs should be ignored or removed instead of documented as project structure.
+- Root scratch files, generated output, local app state, caches, and personal configs should be ignored or removed instead of documented as project structure.
 
 ## Hot Files And Ownership
 
@@ -114,7 +114,7 @@ Use this map before opening large files:
 - Read model or request types before implementations when tracing behavior.
 - When a task touches one subsystem, stay inside that subsystem until an interface boundary forces expansion.
 - Use `git status --short` before cleanup. Treat unrelated modified/untracked files as user work and never revert them.
-- Deleting tracked files, ignored runtime state, caches, or generated outputs is destructive. Explain why, what it affects, and ask for approval unless the user explicitly named the exact deletion target.
+- Deleting tracked files, ignored local app state, caches, or generated outputs is destructive. Explain why, what it affects, and ask for approval unless the user explicitly named the exact deletion target.
 
 ## HTML Report Rule
 
@@ -136,31 +136,31 @@ Run the smallest useful set first.
 ### Body
 
 ```powershell
-python -m unittest tests.test_active_vision tests.test_vision_analyzer tests.test_vision_api tests.test_vision_service tests.test_vision_state tests.test_asr_api tests.test_asr_service tests.test_asr_server_api tests.test_health_endpoint -v
+python -m unittest tests.test_active_vision tests.test_vision_analyzer tests.test_vision_service tests.test_vision_state tests.test_asr_api tests.test_asr_service tests.test_asr_server_api -v
 ```
 
 ### Brain
 
 ```powershell
-python -m unittest tests.test_chat_segmented_flow tests.test_chat_dual_output tests.test_react_trace_visibility tests.test_health_endpoint -v
+python -m unittest tests.test_brain_llm_providers tests.test_brain_structured_replies tests.test_neo_backend_contract -v
 ```
 
 ### Human Ops
 
 ```powershell
-python -m unittest tests.test_chat_modes_ui tests.test_settings_file_allowlist tests.test_health_endpoint -v
+python -m unittest tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_neo_aspect_core -v
 ```
 
 ### Memory & Skills
 
 ```powershell
-python -m unittest tests.test_chat_topics tests.test_chat_topics_api tests.test_skills_api tests.test_skills_manager tests.test_skills_runtime tests.test_skills_compat_contracts -v
+python -m unittest tests.test_chat_topics tests.test_chat_topics_api tests.test_ipet_memory_store tests.test_neo_aspect_core -v
 ```
 
 ### Settings And UI Contracts
 
 ```powershell
-python -m unittest tests.test_neo_aspect_settings_page tests.test_settings_file_allowlist tests.test_chat_modes_ui -v
+python -m unittest tests.test_neo_aspect_settings_page tests.test_chat_modes_ui tests.test_neo_backend_contract -v
 ```
 
 ### Documentation Audit

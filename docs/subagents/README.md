@@ -1,103 +1,41 @@
 # Fixed Subagent Team
 
-This directory defines the long-lived subagent roles for this repository.
+This directory defines the long-lived Neo Aspect ownership roles. Use these names for subagent prompts, code reviews, and task reports.
 
-## Why this model
+## Roles
 
-The project already has stable subsystem boundaries:
+- `body`: local observation, voice I/O, pet presentation, and device-facing commands.
+- `brain`: LLM provider calls, one-step decision schema, prompts, and chat SSE contracts.
+- `human-ops`: approval review, rejection flow, action execution records, and safety copy.
+- `memory-skills`: local memory, summaries, user preferences, reviewed skill recipes, and learned procedures.
+- `settings-console`: web settings page and settings API contracts.
+- `desktop-shell`: `main.py`, Qt/WebEngine bridge, tray/menu behavior, and host process lifecycle.
+- `qa-reports`: regression planning, contract checks, documentation audits, and HTML reports.
 
-- desktop shell
-- pet runtime UI
-- settings console
-- chat runtime backend
-- MCP platform backend
-- vision runtime backend
-- QA and integration
+## Routing
 
-Using fixed roles is more efficient than re-inventing task-specific agents on every request.
+- Pet shell, expressions, bubbles, ASR/TTS, or observation: lead `body`.
+- Brain model selection, structured decisions, or chat streaming: lead `brain`.
+- Click/type/hotkey/open-app proposals and approvals: lead `human-ops`.
+- Durable memory or skill recipe persistence: lead `memory-skills`.
+- Settings UI or settings payloads: lead `settings-console`.
+- Window behavior, native menus, app startup, or Qt bridge: lead `desktop-shell`.
+- Repo cleanup, test matrix, docs, and reports: lead `qa-reports`.
 
-## Working model
+## Cross-Review
 
-- The coordinator agent assigns exactly one lead owner for each task.
-- Support agents may advise or review, but should not edit the lead's high-conflict file.
-- High-conflict files:
-  - `main.py`
-  - `index.html`
-  - `backend/app.py`
-- `js/` is vendor territory and should be treated as read-only in normal feature work.
+- `main.py` and `index.html` bridge changes: lead `desktop-shell`, review `body`.
+- Settings UI and backend settings routes: one side leads, the other reviews, plus `qa-reports`.
+- Brain decision event changes: lead `brain`, review `body`, `human-ops`, and `qa-reports`.
+- Approval or execution changes: lead `human-ops`, review `brain` and `qa-reports`.
+- Memory or skill persistence changes: lead `memory-skills`, review `brain` and `qa-reports`.
 
-## Role list
+## Test Slices
 
-- `desktop-shell`
-- `pet-runtime-ui`
-- `settings-console`
-- `backend-agent-runtime`
-- `backend-mcp-platform`
-- `backend-vision-runtime`
-- `qa-integration`
-
-## Lead assignment matrix
-
-- Shell, window, tray, bridge, backend process lifecycle:
-  - lead: `desktop-shell`
-- Runtime UI, chat rendering, approval controls, TTS playback UX:
-  - lead: `pet-runtime-ui`
-- Settings page and configuration UX:
-  - lead: `settings-console`
-- LangGraph, chat flow, SSE events, provider behavior:
-  - lead: `backend-agent-runtime`
-- MCP runtime, stdio transport, manifests, tool registration:
-  - lead: `backend-mcp-platform`
-- Automatic vision, active observation, OCR/VLM analyzer, evidence context:
-  - lead: `backend-vision-runtime`
-- Cross-module validation and regression planning:
-  - lead: `qa-integration`
-
-## Cross-boundary review rules
-
-- `main.py` <-> `index.html`:
-  - lead: `desktop-shell`
-  - reviewer: `pet-runtime-ui`
-- `settings.js` <-> backend settings or MCP APIs:
-  - reviewer required on the opposite side
-- Chat SSE contract changes:
-  - lead: `backend-agent-runtime`
-  - reviewers: `pet-runtime-ui`, `qa-integration`
-- Vision capture/evidence contract changes:
-  - lead: `backend-vision-runtime`
-  - reviewers: `desktop-shell` when `main.py` capture behavior changes, `qa-integration` for regression coverage
-
-## Standard handoff format
-
-Each subagent should return:
-
-1. Scope it owned
-2. Files changed
-3. Behavioral changes
-4. Risks or assumptions
-5. Verification completed
-
-## Test ownership
-
-- `backend-agent-runtime`
-  - `tests/test_chat_segmented_flow.py`
-  - `tests/test_agent_graph_runtime.py`
-  - `tests/test_chat_dual_output.py`
-  - `tests/test_react_trace_visibility.py`
-- `backend-mcp-platform`
-  - `tests/test_mcp_bridge_tools.py`
-  - `tests/test_mcp_command_resolution.py`
-  - `tests/test_mcp_server_config.py`
-  - `tests/test_mcp_servers_listing.py`
-  - `tests/test_stdio_client_protocol.py`
-  - `tests/test_tool_runtime.py`
-- `backend-vision-runtime`
-  - `tests/test_active_vision.py`
-  - `tests/test_vision_analyzer.py`
-  - `tests/test_vision_api.py`
-  - `tests/test_vision_service.py`
-  - `tests/test_vision_state.py`
-- `settings-console`
-  - `tests/test_settings_mcp_draft.py`
-- Global baseline
-  - `python -m unittest discover -s tests -p "test*.py" -v`
+- Body: `tests.test_active_vision tests.test_vision_analyzer tests.test_vision_service tests.test_vision_state tests.test_asr_api tests.test_asr_service tests.test_asr_server_api`
+- Brain: `tests.test_brain_llm_providers tests.test_brain_structured_replies tests.test_neo_backend_contract`
+- Human Ops: `tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_neo_aspect_core`
+- Memory & Skills: `tests.test_chat_topics tests.test_chat_topics_api tests.test_ipet_memory_store tests.test_neo_aspect_core`
+- Settings: `tests.test_neo_aspect_settings_page tests.test_chat_modes_ui tests.test_neo_backend_contract`
+- Desktop Shell: `tests.test_main_runtime_env`
+- QA Reports: targeted slices plus the task HTML report check.

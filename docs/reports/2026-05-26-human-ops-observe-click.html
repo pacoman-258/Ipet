@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ipet Neo Aspect - Human Ops Observe + Click</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #243447;
+      --muted: #637487;
+      --line: rgba(201, 213, 229, 0.95);
+      --panel: rgba(255, 255, 255, 0.88);
+      --blue: #5c8dff;
+      --pink: #ea88ae;
+      --green: #51b881;
+      --red: #ff3355;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 16%, rgba(255, 211, 227, 0.78), transparent 30%),
+        radial-gradient(circle at 88% 12%, rgba(198, 223, 255, 0.72), transparent 28%),
+        linear-gradient(180deg, #f7fafd, #edf2f7);
+    }
+
+    main {
+      width: min(960px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    header,
+    section {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 18px;
+      box-shadow: 0 18px 34px rgba(49, 76, 111, 0.08);
+    }
+
+    header {
+      padding: 28px;
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: 28px;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    section {
+      padding: 22px 24px;
+      margin-top: 14px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+      line-height: 1.75;
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(92, 141, 255, 0.12);
+      color: #335fcb;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      color: #5562a5;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--red);
+      box-shadow: 0 0 0 5px rgba(255, 51, 85, 0.18);
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Human Ops Observe + Click</h1>
+      <p>本轮把 Ipet 的第一批人类式操作能力接入 Neo Aspect：observe 可以自由执行，click 必须先给人类 review，并用红点预览点击位置。</p>
+      <div class="meta">
+        <span class="pill">日期：2026-05-26</span>
+        <span class="pill">分支：Neo_Aspect</span>
+        <span class="pill">范围：Brain / Human Ops / Body UI / Settings</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>修改内容</h2>
+      <ul>
+        <li>后端 <code>/api/chat/stream</code> 增加 BrainDecision 分流：<code>observe</code> 直接执行屏幕观察，<code>propose_act: click</code> 生成待审批 Human Ops proposal。</li>
+        <li>新增 <code>/api/human-ops/proposals/{proposal_id}/decision</code>，批准后才执行 click，拒绝则返回可继续对话的结果。</li>
+        <li>桌面 host 增加 <code>human_ops_click</code> 命令，macOS 下通过 System Events 执行坐标点击。</li>
+        <li>聊天 UI 增加 <span class="dot"></span>红点点击预览，审批按钮改走新的 Human Ops proposal endpoint。</li>
+        <li>设置页新增独立 <code>observe_model</code> 配置，可为观察任务单独填写 provider、endpoint、模型名、API key，并支持拉取模型列表。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>达成效果</h2>
+      <ul>
+        <li>Ipet 可以根据 Brain 决策先看屏幕，不需要人类审批。</li>
+        <li>Ipet 想点击时不会直接动手，而是在聊天里显示动作卡片和红点位置，等待人类批准。</li>
+        <li>审批通过后，点击动作经后端写入桌面命令文件，由 Qt host 执行并回传结果。</li>
+        <li>observe 专用模型配置已经进入公开/私有配置契约，密钥只保存不回显。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>验证</h2>
+      <ul>
+        <li><code>python -m py_compile backend/app.py main.py</code> 通过。</li>
+        <li><code>python -m unittest tests.test_neo_aspect_core tests.test_brain_structured_replies tests.test_neo_backend_contract tests.test_chat_modes_ui tests.test_main_runtime_env -v</code>：100 tests OK。</li>
+        <li><code>node --check settings.js</code> 通过。</li>
+        <li>临时启动本机后端后，<code>/settings</code>、<code>/settings.js</code>、<code>/api/settings/config</code> 均可访问；Playwright 图形截图因 npm 代理网络权限未完成。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>待办事项</h2>
+      <ul>
+        <li>把 <code>observe_model</code> 真正接入屏幕图像分析，而不只是配置入口。</li>
+        <li>继续扩展 Human Ops 的 <code>type_text</code>、<code>hotkey</code>、<code>open_app</code>、<code>wait</code> 等动作。</li>
+        <li>为 proposal 增加更完整的过期、取消、重复审批保护和审计记录。</li>
+        <li>补一次真实桌面端手动验收：观察当前屏幕、显示红点、批准后点击。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>推荐下一步</h2>
+      <p>先做 <code>observe_model</code> 的真实视觉分析接入，让 observe 具备更高密度的屏幕理解；随后接 <code>type_text</code> 和 <code>hotkey</code>，Ipet 就能完成第一条完整的“看、点、输入、确认反馈”闭环。</p>
+    </section>
+  </main>
+</body>
+</html>

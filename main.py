@@ -1000,6 +1000,8 @@ class PetBridge(QObject):
     startAsrWarmupRequested = Signal()
     minimizeWindowRequested = Signal()
     closeWindowRequested = Signal()
+    showClickPreviewRequested = Signal(str)
+    hideClickPreviewRequested = Signal()
 
     @Slot(str)
     def petStateChanged(self, payload: str) -> None:
@@ -1024,6 +1026,65 @@ class PetBridge(QObject):
     @Slot()
     def closeWindow(self) -> None:
         self.closeWindowRequested.emit()
+
+    @Slot(str)
+    def showClickPreview(self, payload: str) -> None:
+        self.showClickPreviewRequested.emit(str(payload or ""))
+
+    @Slot()
+    def hideClickPreview(self) -> None:
+        self.hideClickPreviewRequested.emit()
+
+
+def normalize_click_preview_payload(payload: dict | None) -> dict[str, object]:
+    source = payload if isinstance(payload, dict) else {}
+    try:
+        x = int(round(float(source.get("x"))))
+        y = int(round(float(source.get("y"))))
+    except Exception:
+        return {}
+    try:
+        size = int(round(float(source.get("size", 20))))
+    except Exception:
+        size = 20
+    size = max(10, min(48, size))
+    label = _clean_vision_text(source.get("label") or source.get("target") or "目标位置", max_length=120) or "目标位置"
+    return {"x": x, "y": y, "size": size, "label": label}
+
+
+class ClickPreviewOverlay(QLabel):
+    def __init__(self):
+        super().__init__(None)
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
+        no_focus_flag = getattr(Qt.WindowType, "WindowDoesNotAcceptFocus", None)
+        if no_focus_flag is not None:
+            flags |= no_focus_flag
+        self.setWindowFlags(flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        show_without_activating = getattr(Qt.WidgetAttribute, "WA_ShowWithoutActivating", None)
+        if show_without_activating is not None:
+            self.setAttribute(show_without_activating, True)
+        self.setText("")
+        self.setStyleSheet(
+            "background: #ff3b30; border: 3px solid rgba(255,255,255,0.95); border-radius: 10px;"
+        )
+
+    def show_preview(self, payload: dict | None) -> bool:
+        preview = normalize_click_preview_payload(payload)
+        if not preview:
+            self.hide()
+            return False
+        size = int(preview["size"])
+        self.setFixedSize(size, size)
+        self.setStyleSheet(
+            f"background: #ff3b30; border: 3px solid rgba(255,255,255,0.95); border-radius: {size // 2}px;"
+        )
+        self.setToolTip(str(preview["label"]))
+        self.move(int(preview["x"]) - size // 2, int(preview["y"]) - size // 2)
+        self.show()
+        self.raise_()
+        return True
 
 
 class ControlPanel(QWidget):
@@ -1648,6 +1709,39 @@ return procName & linefeed & menuText & linefeed & windowTitle
             "menu_bar_items": menu_items[:16],
         },
     }
+
+
+def _screen_coordinate(value, fallback: int = 0) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def execute_human_ops_click(
+    payload: dict | None,
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> dict[str, object]:
+    if not _is_macos(platform_name):
+        raise RuntimeError("Human Ops click is currently implemented through macOS System Events.")
+    data = payload if isinstance(payload, dict) else {}
+    x = _screen_coordinate(data.get("x"))
+    y = _screen_coordinate(data.get("y"))
+    label = str(data.get("label") or data.get("target") or "目标位置").strip() or "目标位置"
+    script = f'tell application "System Events" to click at {{{x}, {y}}}'
+    result = runner(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "osascript failed").strip()
+        raise RuntimeError(detail)
+    return {"clicked": True, "x": x, "y": y, "label": label}
 
 
 ACTIVE_VISION_ALLOWED_ACTIONS = {"focus_target"}
@@ -2727,16 +2821,6 @@ def capture_active_vision_frame_payload(
             "method": str(frame_payload.get("capture_backend") or "screen_capture")[:80],
             "frame_hash": str(frame_payload.get("frame_hash") or "")[:120],
         }
-        try:
-            observation_payload = observation_provider(vision_cfg, platform_name=platform_name) if observation_provider else {}
-        except TypeError:
-            observation_payload = observation_provider(vision_cfg) if observation_provider else {}
-        except Exception as exc:
-            observation_payload = {"unknowns": [f"active vision metadata observation failed: {exc}"]}
-        if isinstance(observation_payload, dict):
-            for key in ("unknowns", "desktop_context", "foreground_app", "window_title"):
-                if observation_payload.get(key) and not frame_payload.get(key):
-                    frame_payload[key] = observation_payload[key]
         frame_payload["active_observation"] = trace
         return frame_payload
     except Exception:
@@ -2935,6 +3019,7 @@ class DesktopPet(QMainWindow):
         self._shutdown_in_progress = False
         self.control_panel = None
         self.settings_window = None
+        self.click_preview_overlay = None
         self._settings_window_url = ""
         self.resize_margin = 8
         self._window_dragging = False
@@ -2951,6 +3036,8 @@ class DesktopPet(QMainWindow):
         self.bridge.startAsrWarmupRequested.connect(self.request_asr_warmup)
         self.bridge.minimizeWindowRequested.connect(self.showMinimized)
         self.bridge.closeWindowRequested.connect(self.close)
+        self.bridge.showClickPreviewRequested.connect(self.show_click_preview)
+        self.bridge.hideClickPreviewRequested.connect(self.hide_click_preview)
 
         self.browser = QWebEngineView(self)
         self.browser.setMouseTracking(True)
@@ -3286,6 +3373,15 @@ class DesktopPet(QMainWindow):
             self._write_desktop_host_heartbeat()
             return
 
+        if command_type == "human_ops_click":
+            try:
+                result = execute_human_ops_click(payload)
+                self._write_desktop_command_response(command, "success", result)
+            except Exception as exc:
+                self._write_desktop_command_response(command, "error", {"error": str(exc)})
+            self._write_desktop_host_heartbeat()
+            return
+
         if command_type == "active_vision_capture":
             try:
                 frame = capture_active_vision_frame_payload(self, payload, self.config.get("vision", {}))
@@ -3382,6 +3478,28 @@ class DesktopPet(QMainWindow):
             window.show()
         window.raise_()
         window.activateWindow()
+
+    def show_click_preview(self, payload: str) -> None:
+        try:
+            data = json.loads(str(payload or "{}"))
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        try:
+            if self.click_preview_overlay is None:
+                self.click_preview_overlay = ClickPreviewOverlay()
+            self.click_preview_overlay.show_preview(data)
+        except Exception as exc:
+            print(f"点击预览显示失败: {exc}")
+
+    def hide_click_preview(self) -> None:
+        overlay = getattr(self, "click_preview_overlay", None)
+        if overlay is not None:
+            try:
+                overlay.hide()
+            except Exception:
+                pass
 
     def open_settings_page(self) -> None:
         self.ensure_backend_service()
@@ -4074,6 +4192,11 @@ class DesktopPet(QMainWindow):
         try:
             if self.settings_window is not None:
                 self.settings_window.close()
+        except Exception:
+            pass
+        try:
+            if self.click_preview_overlay is not None:
+                self.click_preview_overlay.close()
         except Exception:
             pass
         self.shutdown_desktop()

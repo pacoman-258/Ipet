@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet Neo Aspect Backend Platform Cleanout</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f4ef;
+      --paper: #fffaf1;
+      --ink: #25231f;
+      --muted: #6c665d;
+      --line: #ded6c9;
+      --accent: #d85743;
+      --accent-soft: #f5ded7;
+      --green: #2f7d57;
+      --blue: #356d9d;
+      --shadow: 0 14px 38px rgba(42, 34, 24, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(255, 250, 241, 0.92), rgba(246, 244, 239, 0.98)),
+        var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+
+    main {
+      width: min(1040px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+
+    header {
+      margin-bottom: 28px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 54px);
+      letter-spacing: 0;
+      line-height: 1.05;
+    }
+
+    .summary {
+      margin: 18px 0 0;
+      max-width: 820px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    section {
+      margin-top: 22px;
+      padding: 24px;
+      background: rgba(255, 250, 241, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eee6d8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .mini {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf8;
+    }
+
+    .mini strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .pillrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #733126;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .ok {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .info {
+      color: var(--blue);
+      font-weight: 700;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .command {
+      display: block;
+      overflow-x: auto;
+      margin: 10px 0;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #28231f;
+      color: #fff8ea;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">2026-05-27 · Neo Aspect Cleanup</p>
+      <h1>后端平台残留大清理报告</h1>
+      <p class="summary">本轮目标是把后端从旧 Agent / Runtime / MCP 平台模型里彻底拔出来，只保留 Neo Aspect 当前需要的轻量 API、Brain、Human Ops、Memory & Skills 与 Body 相关后端能力。</p>
+    </header>
+
+    <section>
+      <h2>目标</h2>
+      <ul>
+        <li>删除已经确定舍弃的旧 Agent、LangGraph、Hermes / AstrBot、MCP、工具运行时和旧技能运行时后端代码。</li>
+        <li>把测试、文档和脚本改回 Neo Aspect 的四模块模型：Body、Brain、Human Ops、Memory & Skills。</li>
+        <li>保持项目目录简洁，不碰 <code>model/</code>、<code>js/</code> Live2D 资源与运行库，也不删除 <code>pet_config.json</code> 或 <code>data/</code> 用户数据。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Worker / Subagent Split</h2>
+      <div class="grid">
+        <div class="mini">
+          <strong>Schrodinger 子窗口</strong>
+          <p>只读审计旧后端平台边界，定位可删除的 Agent / Runtime / MCP / Hermes / AstrBot 代码与测试。</p>
+        </div>
+        <div class="mini">
+          <strong>Leibniz 子窗口</strong>
+          <p>只读复核文档、角色提示和测试残留，确认哪些内容属于 Neo Aspect 新结构，哪些属于旧平台。</p>
+        </div>
+        <div class="mini">
+          <strong>Main Coordinator</strong>
+          <p>执行批准后的删除、代码改写、文档重写、锁文件刷新、目录缓存清理和最终验证。</p>
+        </div>
+        <div class="mini">
+          <strong>QA Reports</strong>
+          <p>整理回归命令、关键词审计结果和本轮 HTML 报告，给后续任务留下清晰入口。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Files Changed</h2>
+      <h3>删除的旧平台后端</h3>
+      <p>移除了 <code>backend/agent_graph.py</code>、<code>backend/agent_orchestrator.py</code>、<code>backend/runtime_*</code>、<code>backend/mcp*</code>、<code>backend/hermes.py</code>、<code>backend/tool_runtime.py</code>、<code>backend/tooling/</code>、<code>backend/skills/</code>、旧 memory harness 和旧 storage path 等文件。</p>
+
+      <h3>保留并收窄的后端</h3>
+      <p><code>backend/</code> 当前只保留 <code>app.py</code>、<code>active_vision.py</code>、<code>asr*.py</code>、<code>chat_topics.py</code>、<code>ipet_memory_store.py</code>、<code>models.py</code>、<code>tts.py</code>、<code>vision*.py</code> 等 Neo 当前需要的 API 与服务切片。</p>
+
+      <h3>重写和更新</h3>
+      <ul>
+        <li>更新 <code>README.md</code>、<code>README.zh-CN.md</code>、<code>AGENTS.md</code>、<code>docs/PROJECT_STRUCTURE.md</code>、<code>docs/WORKFLOW.md</code>、<code>docs/SUBAGENTS.md</code>。</li>
+        <li>重写 <code>docs/subagents/</code> 角色库，新增 Body、Brain、Human Ops、Memory & Skills、QA Reports 等 Neo 角色提示。</li>
+        <li>更新 <code>tests/</code>，删除旧运行时与 MCP 测试，保留并调整当前可验证的 Brain、Human Ops、Body、Memory、Settings 合同测试。</li>
+        <li>更新 <code>pyproject.toml</code> 与 <code>uv.lock</code>，移除 LangGraph / LangChain / LangSmith / WebSockets 相关依赖链。</li>
+        <li>清理 Python 缓存、测试临时空目录和已经清空的 <code>integrations/</code> 空壳目录。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Achieved Effect</h2>
+      <div class="pillrow">
+        <span class="pill">Backend is thin</span>
+        <span class="pill">No Agent runtime shell</span>
+        <span class="pill">No MCP platform layer</span>
+        <span class="pill">No Hermes / AstrBot bridge</span>
+        <span class="pill">Neo docs aligned</span>
+      </div>
+      <p style="margin-top: 14px;">项目后端现在更接近目标结构：Ipet 自身通过 Brain 做一次一步决策，通过 Human Ops 处理观察和可审查动作，通过 Memory & Skills 沉淀记忆和流程，而不是维护一套独立 Agent 平台。</p>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <p><span class="ok">已执行并通过：</span></p>
+      <code class="command">python -m py_compile backend/app.py backend/chat_topics.py backend/models.py backend/vision.py backend/vision_analyzer.py backend/ipet_memory_store.py brain/llm.py brain/decisions.py human_ops/approvals.py human_ops/previews.py memory/review.py skills/recipes.py main.py</code>
+      <code class="command">python -m unittest discover -s tests -p "test*.py" -v</code>
+      <p class="note">本报告写入后已再次执行新鲜回归确认，全量测试结果为 201 个测试通过。</p>
+    </section>
+
+    <section>
+      <h2>Remaining Work</h2>
+      <ul>
+        <li>继续把 <code>backend/app.py</code> 的 API surface 拆向更明确的 <code>body/</code>、<code>brain/</code>、<code>human_ops/</code>、<code>memory/</code> 模块边界。</li>
+        <li>为 Human Ops 的 observe / click / type / hotkey 建立更完整的动作 ledger 与用户批准记录。</li>
+        <li>把 Memory & Skills 的“建议保存，用户 review 后批准”做成稳定 UI 流程。</li>
+        <li>继续审计 <code>scripts/</code> 和 <code>docs/superpowers/</code>，只保留对 Neo 仍有价值的计划、烟测和开发辅助。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Recommended Next Step</h2>
+      <p><span class="info">建议下一步：</span>开始 Human Ops 的动作闭环二期：在已有 observe + click 基础上，补齐 type、hotkey、wait/read feedback，并把每一次 act 的预览、批准、执行结果和失败重试写进统一的 Human Ops ledger。</p>
+    </section>
+  </main>
+</body>
+</html>

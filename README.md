@@ -61,7 +61,7 @@ Create local configuration from the example when needed:
 Copy-Item pet_config.example.json pet_config.json
 ```
 
-`pet_config.json` is local-only. Do not commit API keys, local absolute paths, screenshots, generated audio, or runtime state.
+`pet_config.json` is local-only. Do not commit API keys, local absolute paths, screenshots, generated audio, or local app state.
 
 ## Tests
 

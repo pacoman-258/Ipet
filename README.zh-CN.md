@@ -61,7 +61,7 @@ uv run --no-sync python main.py
 Copy-Item pet_config.example.json pet_config.json
 ```
 
-`pet_config.json` 只属于本机。不要提交 API Key、本地绝对路径、截图、生成音频或运行状态。
+`pet_config.json` 只属于本机。不要提交 API Key、本地绝对路径、截图、生成音频或本地应用状态。
 
 ## 测试
 
@@ -84,7 +84,7 @@ python -m unittest discover -s tests -p "test*.py" -v
 - 后续待办
 - 推荐下一步
 
-小任务可以写小报告；破坏性后端或工作流重构必须写得更完整一点。这样人类读 diff 前，也能先知道本轮到底动了哪里，喵。
+小任务可以写小报告；破坏性后端或工作流重构必须写得更完整一点。这样人类读 diff 前，也能先知道本轮到底动了哪里。
 
 ## 核心文档
 
