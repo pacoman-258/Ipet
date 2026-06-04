@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain ReAct 审批前设计报告</title>
+</head>
+<body>
+  <h1>Brain ReAct 审批前设计报告</h1>
+
+  <h2>goal</h2>
+  <p>为 Brain 构筑显式 ReAct 能力做设计规格，避免桌面操作目标还未推进到 Human Ops 审批就被 <code>say</code> 或 <code>stop</code> 提前结束。</p>
+
+  <h2>worker or subagent split</h2>
+  <p>brain 负责新增 ReAct 决策语义和 goal 状态；backend 负责受控 ReAct 编排；human-ops 继续作为所有副作用动作的审批停点；qa-reports 负责设计自检、测试范围定义和本报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>docs/superpowers/specs/2026-06-04-brain-react-preapproval-design.md</code></li>
+    <li><code>docs/reports/2026-06-04-brain-react-preapproval-design.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>设计规格确认采用方案 C：新增显式 <code>think</code> 决策和 <code>goal.status</code>，由后端在审批前执行有上限的无副作用 ReAct 循环。<code>propose_act</code> 仍然立即停在 Human Ops 审批，Body 不会自动执行点击、输入或其它副作用动作。</p>
+
+  <h2>remaining work</h2>
+  <p>本轮只完成设计规格，没有进入实现。审批后验证、多步任务和 Memory/Skills ReAct 明确留到后续阶段。</p>
+
+  <h2>recommended next step</h2>
+  <p>请用户审阅设计规格；确认后再进入实现计划，按 TDD 增加 <code>BrainDecision.think</code>、Brain prompt 合同、chat stream ReAct 编排和相关回归测试。</p>
+</body>
+</html>
