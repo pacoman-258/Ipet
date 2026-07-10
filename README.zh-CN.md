@@ -23,17 +23,17 @@ Ipet Neo Aspect 是一个本地桌宠产品，后端重构采用 Body-first 模�
 
 ```text
 Ipet/
-|-- main.py                    # 桌面宿主与 Qt/WebEngine 桥
-|-- backend/                   # Neo 过渡期仍在使用的 Python API 表面
-|-- body/                      # 目标 Body 模块：宿主、观察、语音、表现
-|-- brain/                     # 目标 Brain 模块：LLM 单步决策
-|-- human_ops/                 # 目标审批、动作复核和执行记录
-|-- memory/                    # 目标长期记忆与摘要
+|-- main.py                    # 桌面组合、Qt 生命周期与兼容薄包装
+|-- backend/                   # API 组合、路由、辅助函数与适配器
+|-- body/                      # Body 宿主、观察、语音与表现行为
+|-- brain/                     # Brain LLM 单步决策
+|-- human_ops/                 # 审批、动作复核和执行记录
+|-- memory/                    # 长期记忆与摘要
 |-- skills/                    # 内置与学习得到的本地技能
-|-- app/                       # 目标应用组合层
-|-- frontend/                  # 根 UI 迁移后的目标前端目录
-|-- index.html                 # 过渡期桌宠 UI 入口，仍从根目录加载
-|-- settings.html              # 过渡期设置页入口，仍从根目录加载
+|-- app/                       # 桌面组合与宿主支持模块
+|-- frontend/                  # 桌宠 UI 控制器与行为模块
+|-- index.html                 # 根桌宠 UI 文档与脚本装载入口
+|-- settings.html              # 根设置页入口
 |-- settings.css
 |-- settings.js
 |-- docs/                      # 架构、工作流、所有权和报告
@@ -45,7 +45,7 @@ Ipet/
 |-- README.html                # 中文 HTML 阅读版
 ```
 
-Neo 模型正在落地，部分实现文件仍处在旧 Python 布局中。根目录 UI 文件会保留到桌面宿主和后端加载路径一起迁移为止。
+根入口路径会为桌面加载兼容保持稳定。`main.py`、`backend/app.py` 和 `index.html` 只负责组合与装载；新增领域行为应放入对应模块目录。
 
 ## 本地启动
 

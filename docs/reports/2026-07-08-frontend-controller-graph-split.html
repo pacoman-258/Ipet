@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend Controller Graph Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 12px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <h1>Frontend Controller Graph Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move frontend controller assembly out of <code>frontend/index.js</code> into a dedicated no-bundler browser-global module while preserving the existing facade, controller registration, and startup behavior.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This subwindow performed the implementation and source-test updates. The main window remains responsible for review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/controller_graph.js</code></li>
+    <li><code>frontend/index.js</code></li>
+    <li><code>index.html</code></li>
+    <li><code>tests/test_frontend_controller_graph_source.py</code></li>
+    <li><code>tests/test_frontend_app_bootstrap_source.py</code></li>
+    <li><code>tests/test_index_helpers_source.py</code></li>
+    <li><code>tests/test_chat_modes_ui.py</code></li>
+    <li><code>tests/test_frontend_app_config_source.py</code></li>
+    <li><code>tests/test_frontend_app_refs_source.py</code></li>
+    <li><code>tests/test_frontend_app_state_source.py</code></li>
+    <li><code>tests/test_frontend_asr_source.py</code></li>
+    <li><code>tests/test_frontend_chat_input_state_source.py</code></li>
+    <li><code>tests/test_frontend_chat_messages_source.py</code></li>
+    <li><code>tests/test_frontend_chat_modes_source.py</code></li>
+    <li><code>tests/test_frontend_chat_panel_source.py</code></li>
+    <li><code>tests/test_frontend_chat_sidebars_source.py</code></li>
+    <li><code>tests/test_frontend_chat_stream_source.py</code></li>
+    <li><code>tests/test_frontend_chat_submit_source.py</code></li>
+    <li><code>tests/test_frontend_chat_worklog_source.py</code></li>
+    <li><code>tests/test_frontend_human_ops_preview_source.py</code></li>
+    <li><code>tests/test_frontend_pet_scene_source.py</code></li>
+    <li><code>tests/test_frontend_pet_state_notify_source.py</code></li>
+    <li><code>tests/test_frontend_shell_bridge_source.py</code></li>
+    <li><code>tests/test_frontend_shell_visuals_source.py</code></li>
+    <li><code>tests/test_frontend_speech_source.py</code></li>
+    <li><code>docs/reports/2026-07-08-frontend-controller-graph-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>frontend/controller_graph.js</code> now owns state/ref/facade/controller registry creation and all controller factory calls. <code>frontend/index.js</code> is reduced to a thin startup entrypoint that creates the graph and calls <code>graph.facade.init()</code>. <code>index.html</code> loads the graph after <code>controller_facade.js</code> and before <code>index.js</code>.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known implementation work remains for this split. Broader unrelated working-tree changes existed before this task and were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main-window review should inspect the graph split for dependency order and compare first-screen behavior in the desktop host if it wants runtime assurance beyond source tests.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>node --check frontend/controller_graph.js frontend/index.js frontend/controller_facade.js</code>: passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_controller_graph_source tests.test_index_helpers_source tests.test_frontend_app_bootstrap_source tests.test_chat_modes_ui -v</code>: passed, 31 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest discover -s tests -p "test_frontend_*_source.py" -v</code>: passed, 84 tests.</li>
+  </ul>
+</body>
+</html>

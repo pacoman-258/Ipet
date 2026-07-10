@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Human Ops Prompt Split Report</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      max-width: 920px;
+      margin: 32px auto;
+      padding: 0 20px;
+      color: #20242a;
+      background: #ffffff;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 17px;
+      margin-top: 24px;
+      border-bottom: 1px solid #d8dee6;
+      padding-bottom: 4px;
+    }
+    code {
+      background: #f4f6f8;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      font-weight: 700;
+      color: #116329;
+    }
+  </style>
+</head>
+<body>
+  <h1>Backend Human Ops Prompt Split</h1>
+  <p><strong>Date:</strong> 2026-06-20</p>
+  <p><strong>Status:</strong> <span class="status">GREEN</span></p>
+
+  <h2>Goal</h2>
+  <p>
+    Continue slimming <code>backend/app.py</code> by moving Human Ops continuation prompt and post-approval observe prompt
+    construction into a Human Ops-owned module while preserving the approval route, SSE behavior, Brain ReAct continuation,
+    proposal labels, and proposal argument semantics.
+  </p>
+
+  <h2>Worker Split</h2>
+  <p>
+    Human Ops/backend split worker edited only the backend Human Ops prompt boundary, focused Human Ops tests, and this report.
+    No main, frontend, body, settings, staging, commit, cleanup, or destructive work was performed.
+  </p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: kept thin wrappers for Human Ops prompt functions and delegated body construction to <code>human_ops.approval_prompts</code>.</li>
+    <li><code>human_ops/approval_prompts.py</code>: added testable prompt builders for continuation and post-approval observe prompts.</li>
+    <li><code>tests/test_human_ops_approval_prompts.py</code>: added focused tests for chat draft observe prompts, Enter verification prompts, continuation prompt content, and source placement.</li>
+    <li><code>docs/reports/2026-06-20-backend-human-ops-prompt-split.html</code>: recorded this task round.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> no longer inlines the long Human Ops continuation or chat-input observe prompt body.</li>
+    <li>Prompt generation is directly unit-testable under <code>human_ops.approval_prompts</code>.</li>
+    <li>Existing <code>ReviewableProposal</code>, proposal label, and proposal argument semantics continue to flow through Human Ops proposal helpers.</li>
+    <li>Post-approval observe prompts still ask for chat draft presence after <code>type_text</code> and send-result evidence after Enter.</li>
+  </ul>
+
+  <h2>RED Evidence</h2>
+  <ul>
+    <li><code>python -m unittest tests.test_human_ops_approval_prompts -v</code> first failed with <code>ModuleNotFoundError: No module named 'human_ops.approval_prompts'</code>.</li>
+    <li>After adding a minimal module skeleton, the same focused test failed with four assertion failures because prompt bodies were empty and long strings still lived in <code>backend/app.py</code>.</li>
+  </ul>
+
+  <h2>GREEN Evidence</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_human_ops_approval_prompts -v</code>: 4 tests passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_human_ops_approval_prompts tests.test_human_ops_approval_flow tests.test_neo_backend_contract -v</code>: 84 tests passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py human_ops/approval_flow.py human_ops/approval_prompts.py</code>: exit 0.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    Broader <code>backend/app.py</code> slimming is still ongoing in the dirty worktree. This task did not address unrelated
+    backend route extraction, frontend, desktop host, settings, or Body-owned files.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Have the coordinator review only this Human Ops prompt boundary diff against the larger dirty worktree, then continue with
+    the next independent backend split after ownership is confirmed.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_human_ops_approval_prompts tests.test_human_ops_approval_flow tests.test_neo_backend_contract -v</code>: exit 0, 84 tests passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py human_ops/approval_flow.py human_ops/approval_prompts.py</code>: exit 0.</li>
+    <li><code>git diff --check -- backend/app.py human_ops/approval_flow.py human_ops/approval_prompts.py tests/test_human_ops_approval_prompts.py tests/test_human_ops_approval_flow.py docs/reports/2026-06-20-backend-human-ops-prompt-split.html</code>: exit 0.</li>
+  </ul>
+</body>
+</html>

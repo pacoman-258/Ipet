@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Desktop Body Payload Bridge Split - 2026-06-30</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2937;
+      background: #ffffff;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 17px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      font-weight: 700;
+      color: #047857;
+    }
+    .pending {
+      font-weight: 700;
+      color: #92400e;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Body Payload Bridge Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move <code>DesktopPet.current_body_payload</code> and the tightly related web bridge methods <code>apply_config_to_web</code>, <code>play_motion</code>, <code>play_expression</code>, and <code>play_action</code> out of <code>main.py</code> into an injected Body bridge module while preserving the existing <code>DesktopPet</code> method names as thin wrappers.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>desktop-shell</strong>: kept <code>main.py</code> as the Qt host and wrapper owner.</li>
+    <li><strong>body</strong>: owns the payload construction and pet presentation web bridge behavior now isolated in <code>app/body_bridge.py</code>.</li>
+    <li><strong>qa-reports</strong>: added a focused regression test and this task report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/body_bridge.py</code></li>
+    <li><code>tests/test_desktop_body_payload_bridge.py</code></li>
+    <li><code>docs/reports/2026-06-30-desktop-body-payload-bridge-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added <code>BodyBridge</code> with injected path, Live2D, QUrl, display-name, vision-normalization, JSON, and JavaScript execution dependencies; the module does not import <code>main</code>.</li>
+    <li>Preserved payload semantics: default model fallback, <code>live2d_model_path</code> refresh, background URL only when enabled and present, chat display/expression/lipsync fields, and normalized vision config.</li>
+    <li>Preserved bridge action semantics: config application script generation, direct motion/expression JavaScript, and reload-model action chaining through <code>applyConfig(...).then(...)</code>.</li>
+    <li>Reduced the five <code>DesktopPet</code> methods to thin wrappers so existing call sites and patch points remain available.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known follow-up inside this split. A live Qt/WebEngine smoke run can still be useful later because JavaScript execution is only unit-tested through the injected page runner here.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue shrinking <code>main.py</code> by extracting one desktop-shell or Body responsibility at a time, with focused tests that import the new module without importing <code>main</code>.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><span class="status">RED observed</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_body_payload_bridge -v</code> failed before implementation because <code>app.body_bridge</code> did not exist and <code>DesktopPet</code> still contained inline logic.</li>
+    <li><span class="status">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_body_payload_bridge -v</code> passed 4 tests.</li>
+    <li><span class="status">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_body_payload_bridge tests.test_main_runtime_env tests.test_live2d_assets -v</code> passed 72 tests.</li>
+    <li><span class="status">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/body_bridge.py tests/test_desktop_body_payload_bridge.py</code> exited 0.</li>
+    <li><span class="status">GREEN</span>: <code>git diff --check -- main.py</code> exited 0.</li>
+    <li><span class="status">GREEN</span>: <code>git diff --check --no-index -- /dev/null app/body_bridge.py</code>, <code>git diff --check --no-index -- /dev/null tests/test_desktop_body_payload_bridge.py</code>, and <code>git diff --check --no-index -- /dev/null docs/reports/2026-06-30-desktop-body-payload-bridge-split.html</code> produced no whitespace-error output; no-index returned 1 only because each new file differs from <code>/dev/null</code>.</li>
+  </ul>
+</body>
+</html>

@@ -15,6 +15,7 @@ class ApprovalRequirement(str, Enum):
 _STATE_CHANGING_ACTIONS = {
     "click",
     "type_text",
+    "key_press",
     "hotkey",
     "scroll",
     "drag",
@@ -33,6 +34,10 @@ class ReviewableProposal:
     requirement: ApprovalRequirement = ApprovalRequirement.REQUIRED
     preview: ClickPreview | None = None
     approved: bool = False
+
+    @property
+    def requires_review(self) -> bool:
+        return self.requirement == ApprovalRequirement.REQUIRED
 
     @classmethod
     def act(
@@ -62,3 +67,12 @@ class ReviewableProposal:
             preview=self.preview,
             approved=True,
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposal_type": self.proposal_type,
+            "summary": self.summary,
+            "payload": dict(self.payload),
+            "requirement": self.requirement.value,
+            "approved": self.approved,
+        }

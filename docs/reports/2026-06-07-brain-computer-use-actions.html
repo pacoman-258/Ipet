@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Computer Use Actions Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Computer Use Actions Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>Optimize Brain toward a human-like computer-use model that can advance complex tasks through observe, click, type, and Enter primitives, using Human Ops approval for side-effecting actions.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain lead:</strong> computer-use mental model prompt, stage/surface/affordance guidance, action schema.</li>
+    <li><strong>human-ops lead:</strong> reviewable <code>type_text</code> and <code>key_press</code> proposals, approval-driven continuation.</li>
+    <li><strong>desktop-shell:</strong> macOS text and Enter desktop command execution.</li>
+    <li><strong>qa-reports:</strong> regression coverage, workflow update, and this report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>human_ops/approvals.py</code></li>
+    <li><code>main.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_aspect_core.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>docs/reports/2026-06-07-brain-computer-use-actions.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt now teaches a general computer-use mental model based on <code>stage</code>, <code>surface</code>, and <code>affordance</code>, not only GUI click reasoning.</li>
+    <li><code>propose_act</code> now documents and supports <code>click</code>, <code>type_text</code>, and <code>key_press</code> actions.</li>
+    <li>Human Ops proposals can review text input and Enter key actions without red-dot previews.</li>
+    <li>The backend can execute approved text and Enter actions through the desktop command bridge.</li>
+    <li>The macOS host can type reviewed text through System Events and press Enter/Return via key code 36.</li>
+    <li>Complex proposals can opt into <code>continue_after_approval</code>: after an approved action executes, the backend observes the new surface and asks Brain for the next reviewable step.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Only Enter/Return is implemented for <code>key_press</code>; broader hotkeys remain future work.</li>
+    <li>Continuation is intentionally gated by <code>continue_after_approval</code> to avoid changing ordinary one-shot approvals.</li>
+    <li>WeChat-specific contact search and message-reading quality still depends on observe model output and future affordance extraction improvements.</li>
+    <li>The worktree remains dirty from earlier rounds; this task avoided destructive cleanup.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Add structured surface and affordance extraction to observe results so Brain receives candidate entries like Dock app icons, chat inputs, browser address bars, and terminal prompts as first-class context.</p>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend App Settings Adapters Split - 2026-07-08</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px auto;
+      max-width: 920px;
+      color: #1f2933;
+    }
+    h1, h2 {
+      line-height: 1.2;
+    }
+    code {
+      background: #eef2f7;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .status {
+      border-left: 4px solid #0f766e;
+      background: #ecfdf5;
+      padding: 12px 16px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Backend App Settings Adapters Split</h1>
+  <p class="status"><strong>Status:</strong> DONE</p>
+
+  <h2>Goal</h2>
+  <p>
+    Move the backend settings config compatibility wrapper logic out of <code>backend/app.py</code>
+    into a dedicated adapter module while keeping the legacy private names in <code>backend.app</code>
+    callable and patchable for existing tests and routes.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>Implementation worker:</strong> this backend settings config wrapper split window.</li>
+    <li><strong>Main window:</strong> reserved for acceptance only; it does not need to patch code.</li>
+    <li><strong>Other agents:</strong> unrelated working-tree changes were left untouched.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app_settings_adapters.py</code> - new adapter module with dependency dataclass and thin delegates to <code>backend.settings_config</code>.</li>
+    <li><code>backend/app.py</code> - settings config wrappers now route through the adapter module and preserve the old private names.</li>
+    <li><code>tests/test_backend_app_settings_adapters.py</code> - new regression coverage for adapter delegation, wrapper thinness, and import boundaries.</li>
+    <li><code>docs/reports/2026-07-08-backend-app-settings-adapters-split.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> no longer contains the settings config helper bodies; it now keeps only the legacy wrapper names.</li>
+    <li>The new adapter module owns the dependency bundle for <code>config_path</code>, <code>defaults</code>, and <code>allowed_keys</code>.</li>
+    <li>Existing route wiring still goes through <code>backend.app</code> wrapper functions, so patch points remain stable.</li>
+    <li>Direct adapter tests confirm the helper still forwards to <code>backend.settings_config</code> with the expected dependencies.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>No known functional gaps from this split.</li>
+    <li>Future rounds can keep trimming <code>backend/app.py</code> only if they preserve the same wrapper contract.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Let the main window verify the wrapper boundary, then continue with the next small extraction only if
+    another config-related cluster is still worth splitting.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_settings_adapters.py tests/test_backend_app_settings_adapters.py tests/test_backend_settings_config.py</code> - passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_settings_adapters tests.test_backend_settings_config tests.test_backend_settings_routes tests.test_neo_backend_contract -v</code> - passed, 89 tests.</li>
+    <li><code>git diff --check -- backend/app.py backend/app_settings_adapters.py tests/test_backend_app_settings_adapters.py tests/test_backend_settings_config.py docs/reports/2026-07-08-backend-app-settings-adapters-split.html</code> - passed.</li>
+  </ul>
+</body>
+</html>

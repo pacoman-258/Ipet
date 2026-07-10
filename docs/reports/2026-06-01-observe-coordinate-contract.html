@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Observe 坐标契约修复报告</title>
+</head>
+<body>
+  <h1>Observe 坐标契约修复报告</h1>
+
+  <h2>goal</h2>
+  <p>修复 Human Ops 点击前置观察的坐标契约，让 VLM 明确区分截图像素坐标和 macOS 屏幕点坐标。</p>
+
+  <h2>worker or subagent split</h2>
+  <p>body 负责截图 payload 元数据；brain 负责 observe prompt 契约；human-ops 负责点击审批链路使用屏幕坐标；qa-reports 负责回归测试和报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>backend/vision_analyzer.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>tests/test_vision_analyzer.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-01-observe-coordinate-contract.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>截图采集 payload 现在携带编码后的实际图片宽高。后端在 active observe 中补充图片像素尺寸、屏幕点 bounds、屏幕点尺寸和双向缩放比例。OpenAI-compatible VLM 和 Google AI Studio VLM prompt 都会明确要求：如果返回点击坐标，必须返回 macOS screen coordinates，而不是 screenshot pixel coordinates。</p>
+
+  <h2>remaining work</h2>
+  <p>本轮修复的是模型输入契约和自动化回归；真实 VLM 是否完全遵守仍需要用实际 Dock 或桌面目标做一次人工端到端验证。</p>
+
+  <h2>recommended next step</h2>
+  <p>重新执行一次“点击 Dock 设置”的 Human Ops 流程，观察模型返回坐标是否落在 macOS 屏幕点坐标系，并确认红点和批准后的点击位置一致。</p>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend Chat Input State Split - 2026-07-03</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #1f2933;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 22px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    code {
+      background: #f2f4f7;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Chat Input State Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move chat input availability decisions out of <code>frontend/index.js</code> into a dedicated browser namespace module while keeping the legacy wrapper names used by ASR, chat panel, app config, and chat submit dependencies.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This frontend split worker handled the isolated chat input state extraction. No subagent was used, and the main window remains responsible for final review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/chat_input_state.js</code> - new <code>window.IpetChatInputState.createChatInputStateController</code> module.</li>
+    <li><code>frontend/index.js</code> - wires the controller and keeps <code>syncChatInputAvailability</code> / <code>canSubmitChatInput</code> wrappers.</li>
+    <li><code>index.html</code> - loads <code>chat_input_state.js</code> between <code>chat_modes.js</code> and <code>asr.js</code>.</li>
+    <li><code>tests/test_frontend_chat_input_state_source.py</code> - new source contract tests for namespace, load order, wrapper delegation, and moved behavior.</li>
+    <li><code>tests/test_frontend_asr_source.py</code> - updates the ASR controller source assertion for the new pre-declared controller reference.</li>
+    <li><code>tests/test_chat_modes_ui.py</code> - includes the new split asset in aggregate frontend load/source coverage.</li>
+    <li><code>docs/reports/2026-07-03-frontend-chat-input-state-split.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>frontend/chat_input_state.js</code> now owns the ASR-busy, submit-allowed, streaming-disabled, and read-only decisions for chat input controls. <code>frontend/index.js</code> keeps stable wrapper names so existing ASR, chat panel, chat submit, and app config dependency injection continues to work.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. The shared worktree still contains unrelated dirty and untracked files owned by other active workers.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main-window review should confirm the source-test contract, then continue the next frontend extraction only after checking current ownership of <code>frontend/index.js</code> and <code>index.html</code>.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>.venv/bin/python -m unittest tests.test_frontend_chat_input_state_source -v</code> failed before implementation with missing module, missing script load entry, and missing wrappers.</li>
+    <li>Syntax: <code>node --check frontend/chat_input_state.js</code> passed.</li>
+    <li>Syntax: <code>node --check frontend/index.js</code> passed.</li>
+    <li>GREEN: <code>.venv/bin/python -m unittest tests.test_frontend_chat_input_state_source tests.test_frontend_asr_source tests.test_chat_modes_ui -v</code> passed, 23 tests.</li>
+    <li>Whitespace: final tracked-file and no-index checks were run for this task's changed files and report.</li>
+  </ul>
+</body>
+</html>

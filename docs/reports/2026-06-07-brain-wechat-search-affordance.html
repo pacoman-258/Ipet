@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain WeChat Search Affordance Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain WeChat Search Affordance Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Brain 在“打开微信并根据某联系人聊天信息回复”这类任务里更像人类找入口：如果联系人条目不可见但搜索框可见，应点击搜索框、输入联系人、回车或点击搜索结果，而不是反复观察或伪造联系人条目。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 在结构化 prompt 中明确 <code>locate_contact</code> 的微信搜索路径。</li>
+    <li><strong>body:</strong> 观察上下文只根据真实观察文本生成 <code>chat_thread</code> affordance，避免把用户目标里的联系人名当作可点击证据。</li>
+    <li><strong>qa-reports:</strong> 增加搜索框可见但联系人条目不可见时的回归测试。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/reports/2026-06-07-brain-wechat-search-affordance.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt now tells the model to use WeChat search in <code>locate_contact</code> when the target contact row is not visible.</li>
+    <li><code>_infer_computer_use_context</code> no longer fabricates a <code>chat_thread</code> affordance just because the user requested a specific contact.</li>
+    <li>Search-field affordances still preserve their own coordinates and support <code>click</code>, <code>type_text</code>, and <code>key_press</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model tests.test_neo_backend_contract.NeoBackendContractTests.test_wechat_search_field_does_not_fabricate_target_chat_thread tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_contact_and_input_affordances_from_observe_text -v</code>: passed, 3 tests.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code>: passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code>: passed, 281 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Run a live WeChat task to verify the actual observe model reports stable search-field and search-result coordinates.</li>
+    <li>Add bounds checks against active display rectangles before red-dot preview if real-world coordinates are still noisy.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Use a real desktop run where the requested contact is not visible in the current WeChat list, then confirm Brain proposes the human search path: click search field, type contact, press Enter or click result.</p>
+</body>
+</html>

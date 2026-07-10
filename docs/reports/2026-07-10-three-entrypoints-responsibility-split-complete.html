@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>三处入口职责拆分完成 - 2026-07-10</title>
+  <style>
+    body { max-width: 960px; margin: 32px auto; padding: 0 20px; color: #1f2937; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    h1 { font-size: 26px; }
+    h2 { margin-top: 24px; font-size: 18px; }
+    code { padding: 2px 5px; border-radius: 4px; background: #f3f4f6; }
+    .pass { color: #047857; font-weight: 700; }
+    .pending { color: #92400e; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>三处入口职责拆分完成</h1>
+
+  <h2>Goal</h2>
+  <p>完成三处历史大入口的职责拆分收口，并更新项目文档，确保 <code>main.py</code>、<code>backend/app.py</code> 与 <code>index.html</code> 后续保持 composition-only，不再承接新增领域行为。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>所有代码拆分均由各代码子窗口完成，主窗口只负责独立验收、边界审计与回归验证。本子窗口只负责本轮文档收口与最终报告，没有修改业务代码；文档完成后由主窗口完成最终验证重跑。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>AGENTS.md</code>：明确三处 hot files 的 composition-only 边界，并更新 ownership 与任务路由。</li>
+    <li><code>README.md</code>、<code>README.zh-CN.md</code>：将仓库布局改为当前模块化现状，移除过时的未来迁移描述。</li>
+    <li><code>docs/PROJECT_STRUCTURE.md</code>：记录当前目录职责、稳定根路径和入口约束。</li>
+    <li><code>docs/SUBAGENTS.md</code>：要求实现子窗口把领域行为放入 owner 模块，只在入口集成薄委托或装载变更。</li>
+    <li><code>docs/WORKFLOW.md</code>：更新启动流程和入口职责。</li>
+    <li><code>docs/architecture.md</code>：记录三处入口拆分后的架构边界。</li>
+    <li><code>docs/reports/2026-07-10-three-entrypoints-responsibility-split-complete.html</code>：本轮最终收口报告。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>main.py</code> 被定义为桌面组合/bootstrap、Qt 生命周期与兼容薄包装入口；屏幕捕获、action wiring、active vision、Body bridge、配置动作和点击预览等实现归属 <code>app/</code> 与 <code>body/</code>。</li>
+    <li><code>backend/app.py</code> 被定义为 FastAPI 实例、中间件、状态/依赖、router 注册与兼容导出入口；路由和领域逻辑归属 backend route/helper/adapter 模块或对应产品模块。</li>
+    <li><code>index.html</code> 被定义为根 UI 文档与脚本装载入口；<code>frontend/index.js</code> 启动 controller graph，聊天主题历史、skills、chat/app graph sections 等行为归属各自前端模块。</li>
+    <li>根入口路径继续保留，兼容桌面宿主现有加载方式；稳定路径不再被描述为实现尚未拆分。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>本轮拆分、文档收口和最终验证没有已知遗留项。后续评审应继续阻止领域逻辑回流到三处入口。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>后续实现任务按更新后的 ownership 和任务路由直接派发到对应模块，并在评审中持续检查三处入口的 composition-only 边界。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><span class="pass">PASS</span> 本子窗口针对本轮文件运行 <code>git diff --check</code>。</li>
+    <li><span class="pass">PASS</span> 主窗口在文档完成后重跑全量回归：669 tests OK。</li>
+    <li><span class="pass">PASS</span> 主窗口在文档完成后重跑入口边界测试：58 tests OK。</li>
+    <li><span class="pass">PASS</span> 主窗口在文档完成后对三个前端模块运行 <code>node --check</code>，均 exit 0。</li>
+    <li><span class="pass">PASS</span> 主窗口在文档完成后重跑侧栏互斥 runtime smoke，输出 <code>sidebars mutual exclusion: OK</code>。</li>
+  </ul>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Frontend Speech Split Report - 2026-06-15</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #243447;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    code {
+      background: #f2f5f8;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Speech Split Report</h1>
+  <p><strong>Date:</strong> 2026-06-15</p>
+
+  <h2>Goal</h2>
+  <p>Move frontend TTS, audio playback, lip sync, and expression helper logic out of <code>frontend/index.js</code> into a focused <code>frontend/speech.js</code> controller while keeping existing chat stream call sites stable.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>frontend speech/TTS split worker:</strong> implemented the speech controller extraction, index wrappers, source tests, and this report.</li>
+    <li><strong>Main window / other workers:</strong> preserved existing split work in helpers, ASR, sidebars, CSS, backend, main window, and settings files.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/speech.js</code> - new <code>window.IpetSpeech.createSpeechController(deps)</code> module.</li>
+    <li><code>frontend/index.js</code> - removed speech-owned state and implementation details; kept same-name wrappers delegating to <code>speechController</code>.</li>
+    <li><code>index.html</code> - loads <code>frontend/speech.js</code> after <code>chat_sidebars.js</code> and before <code>index.js</code>.</li>
+    <li><code>tests/test_frontend_speech_source.py</code> - focused RED/GREEN source test for module existence, load order, and controller delegation.</li>
+    <li><code>tests/test_chat_modes_ui.py</code> - includes <code>speech.js</code> in split frontend source aggregation and asset checks.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>TTS queue, active audio, audio context, analyser, media source, lip sync RAF, pending speech buffer, expression resolution, browser fallback speech, and TTS playback now live in <code>frontend/speech.js</code>.</li>
+    <li><code>frontend/index.js</code> still exposes <code>stopSpeaking</code>, <code>setMouthOpen</code>, <code>resolveExpressionName</code>, <code>triggerExpressionSafe</code>, <code>stopLipSyncLoop</code>, <code>startLipSync</code>, <code>fallbackSpeakByBrowser</code>, <code>enqueueTTSChunk</code>, <code>feedSpeakBuffer</code>, and <code>playNextTTSChunk</code> as wrappers.</li>
+    <li>The existing <code>/api/tts</code> request body, audio URL fetch behavior, expression fallback, lip sync gain, and final stream flush behavior were preserved.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known follow-up is required for this split. Runtime browser playback remains covered by existing manual app smoke paths rather than a browser automation test in this round.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>When the parallel frontend splits settle, run an integrated desktop smoke check that streams one chat response, plays TTS, and confirms mouth movement on the loaded Live2D model.</p>
+</body>
+</html>

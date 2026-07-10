@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Observe 坐标比例与红点预览修复报告</title>
+</head>
+<body>
+  <h1>Observe 坐标比例与红点预览修复报告</h1>
+
+  <h2>goal</h2>
+  <p>继续修复 Human Ops 点击链路：实测 VLM 图片像素到 macOS 屏幕点坐标的换算比例，并让点击预览红点在 Dock 上方可见。</p>
+
+  <h2>worker or subagent split</h2>
+  <p>body 负责截图尺寸与红点 overlay；brain 负责 observe 后续决策的坐标上下文；human-ops 负责审批前预览语义；qa-reports 负责回归测试和报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>main.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-02-observe-scale-preview-red-dot.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>实测当前主屏原始截图为 2940x1912 像素，CoreGraphics 屏幕 bounds 为 1470x956 点；Ipet 实际送给 VLM 的编码图会缩为 1920x1249。因此 VLM 图片像素到 macOS 点坐标的换算约为 x=0.765625、y=0.765412。后端现在把这段换算上下文传给 follow-up Brain，让 Brain 在输出 <code>propose_act</code> 前能把截图/图像像素坐标换成 macOS 屏幕坐标。Qt 红点预览改为 tooltip 级透明窗口并直接绘制圆点，避免被 Dock 盖住。</p>
+
+  <h2>remaining work</h2>
+  <p>本轮做了本地比例实测、临时 overlay 截图验证和自动化回归。仍建议重新跑一次真实 “观察 Dock 设置 - 审批点击” 流程，确认 VLM 输出、红点位置、批准后点击三者对齐。</p>
+
+  <h2>recommended next step</h2>
+  <p>启动 Ipet 主程序并让 Human Ops 对 Dock 系统设置执行一次观察和审批点击；若 VLM 仍返回截图像素，检查 follow-up Brain 是否按上下文换算到了约 x=364、y=907 的 macOS 屏幕点。</p>
+</body>
+</html>

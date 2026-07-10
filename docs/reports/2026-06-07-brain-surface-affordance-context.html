@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Surface And Affordance Context Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Surface And Affordance Context Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Ipet Brain 更像人类使用电脑：通过观察当前表面和可用入口，组合 observe、click、type_text、key_press enter 等小动作，推进打开微信、定位联系人、读取聊天信息并回复这类复杂任务。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 强化 computer-use prompt，要求复杂任务动作携带 <code>continue_after_approval</code>。</li>
+    <li><strong>human-ops:</strong> 将 observe 结果派生成结构化 <code>surface</code> 和 <code>affordances</code>，并注入 ReAct follow-up 与批准后续跑提示。</li>
+    <li><strong>qa-reports:</strong> 增加回归测试和本 HTML 报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-surface-affordance-context.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>“打开微信”会被识别为桌面动作和点击型 App 启动请求，默认 observe prompt 会要求 macOS 屏幕坐标。</li>
+    <li>Dock 微信图标观察结果会派生成 <code>desktop_gui</code> / <code>app_icon</code> / <code>click_to_open</code> affordance，并带可点击坐标。</li>
+    <li>微信场景可识别搜索框、联系人聊天条目、聊天输入框，并能在同一段观察出现多组坐标时就近绑定。</li>
+    <li>终端提示符会作为 <code>terminal_shell</code> 的 <code>terminal_prompt</code> affordance，支持输入和回车。</li>
+    <li>ReAct follow-up 和 Human Ops 批准后续跑都会收到 <code>Structured computer-use context</code>，降低 Brain 反复 observe 的概率。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>当前 affordance 抽取仍是轻量规则，真实微信界面的联系人搜索、消息阅读和回复草稿质量仍依赖 observe 模型文字质量。</li>
+    <li>尚未做真实桌面端到端演练；需要在 Ipet 运行态中用 Dock 微信完成一次人工审批链路验证。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>在真实 macOS 桌面上运行一次“打开微信并根据某联系人聊天信息回复”的审批链路，记录 observe 文本、结构化 context 和每次 Brain 决策，再针对实际失败点补 affordance 抽取或 prompt 约束。</p>
+</body>
+</html>

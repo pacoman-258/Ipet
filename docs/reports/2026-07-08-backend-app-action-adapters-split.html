@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend App Action Adapters Split</title>
+</head>
+<body>
+  <h1>Backend App Action Adapters Split</h1>
+  <ul>
+    <li><strong>Goal:</strong> Move the desktop command wrapper and Human Ops action execution body out of <code>backend/app.py</code> into a dedicated adapter, while keeping the legacy private wrapper names callable and patchable.</li>
+    <li><strong>Worker split:</strong> Main window handles acceptance only; this subwindow performed the implementation and verification. The new adapter owns the reusable action logic, and <code>backend.app</code> now serves as a thin compatibility wrapper.</li>
+    <li><strong>Files changed:</strong> <code>backend/app.py</code>, <code>backend/app_action_adapters.py</code>, <code>tests/test_backend_app_action_adapters.py</code>, <code>docs/reports/2026-07-08-backend-app-action-adapters-split.html</code>.</li>
+    <li><strong>Achieved effect:</strong> Desktop command dispatch and Human Ops action execution now live in a dedicated adapter module. The legacy wrapper names remain intact, the click branch still routes through <code>backend.app._perform_human_ops_click</code>, and non-click actions still flow through the existing desktop command client contract.</li>
+    <li><strong>Remaining work:</strong> No known functional gaps from this split. The new adapter is intentionally small and still depends on injected callbacks for the transport boundary.</li>
+    <li><strong>Recommended next step:</strong> Keep watching future Human Ops changes for any further split between action transport and proposal shaping, and extend tests only at the wrapper boundary when patch points change.</li>
+    <li><strong>Verification:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_action_adapters.py tests/test_backend_app_action_adapters.py</code>; <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_action_adapters tests.test_backend_desktop_command_client tests.test_backend_app_route_dependencies tests.test_neo_backend_contract -v</code>; <code>git diff --check -- backend/app.py backend/app_action_adapters.py tests/test_backend_app_action_adapters.py docs/reports/2026-07-08-backend-app-action-adapters-split.html</code>.</li>
+  </ul>
+</body>
+</html>

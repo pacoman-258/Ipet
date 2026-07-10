@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Observe Context Split - 2026-06-15</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; max-width: 920px; margin: 32px auto; padding: 0 20px; color: #1f2933; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 28px; border-bottom: 1px solid #d9e2ec; padding-bottom: 4px; }
+    code { background: #f0f4f8; padding: 1px 5px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #e3f8ef; color: #0c6b58; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Backend Observe Context Split</h1>
+  <p><span class="status">DONE</span> 2026-06-15</p>
+
+  <h2>Goal</h2>
+  <p>Continue the third backend split by moving observe prompt, coordinate context, target hint, frame enrichment, and observe analyzer configuration helpers out of <code>backend/app.py</code> into a focused module while preserving the legacy private helper names in <code>backend/app.py</code>.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>observe/coordinate split worker:</strong> created <code>backend/observe_context.py</code>, kept <code>backend/app.py</code> as a wrapper/orchestration layer, and added focused tests.</li>
+    <li><strong>main window / coordinator:</strong> review-only boundary respected; no changes were made to <code>main.py</code>, <code>index.html</code>, <code>frontend/index.js</code>, or <code>settings.js</code>.</li>
+    <li><strong>Existing dirty worktree:</strong> pre-existing changes in Human Ops, computer-use context, Brain, UI, and reports were treated as external work and were not reverted.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/observe_context.py</code> - new focused observe/context helper module.</li>
+    <li><code>backend/app.py</code> - imports the new module and keeps the requested private helper names as thin wrappers.</li>
+    <li><code>tests/test_observe_context.py</code> - new focused tests for coordinate context, narrow coordinate follow-up prompts, target-hint preservation, and observe model timeout defaults/clamping.</li>
+    <li><code>docs/reports/2026-06-15-backend-observe-context-split.html</code> - this task report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Moved observe prompt and coordinate context helpers out of <code>backend/app.py</code> without carrying FastAPI app state, topic store, pending proposals, or desktop command writing into the new module.</li>
+    <li>Preserved compatibility for direct contract-test calls such as <code>backend_app._frame_with_observe_prompt</code> and <code>backend_app._observe_model_analyzer_config</code>.</li>
+    <li>Kept model analyzer config behavior, including provider mapping, Google AI Studio default model, default 90 second timeout, and 5-300 second clamping.</li>
+    <li>Reduced <code>backend/app.py</code> to 1903 lines in the current working tree.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_observe_context -v</code> initially failed because <code>backend.observe_context</code> did not exist.</li>
+    <li>GREEN: the same focused test command passed after implementation: 4 tests OK.</li>
+    <li>Regression: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_observe_context tests.test_computer_use_context tests.test_human_ops_proposals tests.test_neo_backend_contract tests.test_brain_structured_replies tests.test_brain_llm_providers -v</code> passed: 114 tests OK.</li>
+    <li>Compile: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/observe_context.py backend/app.py tests/test_observe_context.py</code> passed with exit code 0.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li><code>backend/app.py</code> still owns observe route orchestration, desktop command capture, VisionAnalyzer invocation, and SSE/react loop coordination.</li>
+    <li><code>backend/computer_use_context.py</code> and <code>backend/observe_context.py</code> now share nearby coordinate/screen concepts; a later cleanup can decide whether to consolidate the duplicate screen-bounds helper behind a public utility.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>For the next backend split, extract the impure observe orchestration around <code>_perform_human_ops_observe</code> only after assigning a single owner for the remaining <code>backend/app.py</code> route/SSE boundary.</p>
+</body>
+</html>

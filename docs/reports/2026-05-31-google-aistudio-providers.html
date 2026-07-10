@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Google AI Studio Provider Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2933; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    ul { padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Google AI Studio Provider Report</h1>
+  <p><strong>日期：</strong>2026-05-31</p>
+
+  <h2>Goal</h2>
+  <p>在 Brain 模型提供方和 Human Ops observe 模型提供方中加入 Google AI Studio，并让 Google 配置只依赖 API Key，同时确保 API provider、模型状态和密钥在应用重开后继续沿用上一次保存的配置。</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <ul>
+    <li><strong>brain：</strong>新增 Google AI Studio Gemini <code>generateContent</code> 调用、模型发现和响应解析。</li>
+    <li><strong>body / human-ops：</strong>让 observe 独立模型支持 Google AI Studio 多模态截图观察。</li>
+    <li><strong>settings-console：</strong>在设置页加入 Google AI Studio 选项、端点免填状态和已保存密钥提示。</li>
+    <li><strong>desktop-shell：</strong>修正桌面主进程默认配置形状，避免保存时丢失 Brain / observe provider 和 API key。</li>
+    <li><strong>qa-reports：</strong>补充回归测试和本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>backend/vision.py</code></li>
+    <li><code>backend/vision_analyzer.py</code></li>
+    <li><code>main.py</code></li>
+    <li><code>settings.html</code></li>
+    <li><code>settings.js</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/architecture.md</code></li>
+    <li><code>tests/test_brain_llm_providers.py</code></li>
+    <li><code>tests/test_vision_analyzer.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>tests/test_neo_aspect_settings_page.py</code></li>
+    <li><code>tests/test_chat_modes_ui.py</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain 可通过 <code>google_aistudio</code> provider 调用 Gemini <code>generateContent</code>，并支持把 <code>https://generativelanguage.googleapis.com</code> 这类只填 host 的地址自动规范化成 <code>/v1beta</code> API 基址。</li>
+    <li><code>/api/brain/models</code> 对 Google AI Studio 不再要求用户填写端点，并会复用保存的 API key；若用户显式提供 host-only endpoint，也会自动补齐正确的 <code>/v1beta/models</code> 路径。</li>
+    <li>Google AI Studio 模型列表现在会按 <code>pageSize=1000</code> 拉取并跟进 <code>nextPageToken</code> 自动翻页，避免只拿到第一页。</li>
+    <li>定位到真实根因：这台机器访问 Google 依赖本地代理，但原实现对 Google provider 固定 <code>trust_env=False</code>，导致直连超时；同时环境里有 <code>ALL_PROXY=socks5://...</code>，直接信任全部代理环境又会因缺少 <code>socksio</code> 依赖而报 <code>ImportError</code>。</li>
+    <li>Google provider 现改为显式优先使用 <code>HTTPS_PROXY/HTTP_PROXY</code> 这类 http 代理，不再误吃 <code>ALL_PROXY</code> 的 socks 代理，也不再把超时洗成 <code>unknown provider error</code>。</li>
+    <li>Google AI Studio 拉取模型失败时，后端现在会返回真实的 <code>502</code> 错误，而不是伪装成 fallback 成功，便于直接定位真实问题。</li>
+    <li>Human Ops observe 独立模型可用 Google AI Studio 多模态接口读取截图，发送 inline image data。</li>
+    <li>设置页对 Brain 和 observe 都提供 Google AI Studio 选项，选中后端点输入会禁用并提示只需 API Key。</li>
+    <li>桌面主进程保存配置时保留 Brain provider/API key 以及 observe provider/API key，避免应用重开后丢失 API 配置。</li>
+    <li>设置页静态资源现在带 <code>Cache-Control: no-store</code>，并把 <code>settings.js</code> 资源版本升到 <code>v=9</code>，避免 Qt WebEngine 继续复用旧脚本导致用户看到过期的 401 报错。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <p>已运行完整回归：<code>python -m unittest discover -s tests -p "test*.py" -v</code>，结果：217 tests OK。随后又运行定向回归：<code>python -m unittest tests.test_brain_llm_providers tests.test_neo_backend_contract tests.test_neo_aspect_settings_page -v</code>，结果：53 tests OK。</p>
+  <p>定向回归覆盖了 Google AI Studio 的 host-only endpoint 规范化、<code>models.list</code> 分页拉取、http 代理选择、真实错误透传，以及设置页静态资源禁缓存行为。</p>
+  <p>另外直接用保存中的真实 Google API key 通过更新后的 <code>brain.llm.list_provider_models</code> 实测拉回 <code>37</code> 个模型；再通过后端路由 <code>POST /api/brain/models</code> 端到端实测，同样返回 <code>HTTP 200</code> 和 <code>37</code> 个模型。</p>
+
+  <h2>Remaining Work</h2>
+  <p>主要剩余工作是让桌面端重启后吃到这份新代码；Google 远端联网拉模型本身已经用真实 key 实测通过。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>重开一次应用设置页，确认新的 <code>/settings.js?v=9</code> 已生效；随后再点一次 Brain 模型“拉取模型”，预期应直接返回真实的 Google 模型列表，不再报 <code>unknown provider error</code>。</p>
+</body>
+</html>

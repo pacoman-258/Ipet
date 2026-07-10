@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-09 Backend App Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { font-weight: 700; color: #137333; }
+  </style>
+</head>
+<body>
+  <h1>Backend App Split Report</h1>
+  <p><span class="status">Status:</span> DONE</p>
+
+  <h2>Goal</h2>
+  <p>Take the first low-risk split from <code>backend/app.py</code> by extracting Human Ops proposal helpers while preserving API behavior and compatibility exports.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>backend Brain/Human Ops split worker:</strong> moved proposal formatting, default continuation, and expected-text inheritance into a focused Human Ops module.</li>
+    <li><strong>qa-reports:</strong> added focused module-boundary tests and recorded this task report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: retained private compatibility wrappers and pending-proposal state ownership; delegated proposal helper logic to <code>human_ops.proposals</code>.</li>
+    <li><code>human_ops/proposals.py</code>: new pure/near-pure helper module for proposal labels, SSE payloads, default continuation, proposal construction, argument access, and Enter expected-text inheritance.</li>
+    <li><code>tests/test_human_ops_proposals.py</code>: new focused tests for the extracted helper boundary.</li>
+    <li><code>docs/reports/2026-06-09-backend-app-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> is thinner around Human Ops proposal construction and now keeps only FastAPI/global pending-state responsibilities for that path.</li>
+    <li>Existing private helper names remain available from <code>backend.app</code>, so direct test imports and route call sites do not need a broad migration.</li>
+    <li>The new module can be unit-tested without starting FastAPI or mutating <code>HUMAN_OPS_PENDING_PROPOSALS</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_human_ops_proposals -v</code> failed with <code>ModuleNotFoundError: No module named 'human_ops.proposals'</code>.</li>
+    <li>GREEN: the same focused test command passed: 2 tests, OK.</li>
+    <li>Regression: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_human_ops_proposals tests.test_neo_backend_contract tests.test_brain_structured_replies tests.test_brain_llm_providers -v</code> passed: 106 tests, OK.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Computer-use observation/context helpers still live in <code>backend/app.py</code> and are the next natural extraction candidate.</li>
+    <li><code>backend/app.py</code> still owns route orchestration, observe context derivation, desktop command bridge helpers, and settings routes.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Move the structured observe/context inference helpers into a backend or Body-owned module with focused tests, keeping <code>backend.app</code> wrappers for existing private imports during the transition.</p>
+</body>
+</html>

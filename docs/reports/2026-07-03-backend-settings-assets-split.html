@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Settings Assets Split Report</title>
+  <style>
+    body {
+      color: #202124;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px auto;
+      max-width: 920px;
+      padding: 0 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      border-bottom: 1px solid #d8dde6;
+      font-size: 18px;
+      margin-top: 28px;
+      padding-bottom: 4px;
+    }
+    code {
+      background: #f3f5f8;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Backend Settings Assets Split Report</h1>
+  <p><strong>Date:</strong> 2026-07-03</p>
+
+  <h2>Goal</h2>
+  <p>
+    从 <code>backend/app.py</code> 拆出 settings 静态资源响应和缺失资源 404 处理，
+    减少路由函数内重复的 <code>exists</code> 检查与 <code>FileResponse</code> no-store header 拼装。
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>backend worker:</strong> 负责实际代码拆分、局部测试新增、回归验证和本报告。</li>
+    <li><strong>QA/test-alignment worker:</strong> 主窗口发现旧 source tests 仍按 <code>backend/app.py</code> 内联资产响应断言后，负责把测试口径同步到新的 <code>backend/settings_assets.py</code> 边界。</li>
+    <li><strong>main window:</strong> 按用户安排仅做检查，不参与本轮文件写入。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/settings_assets.py</code>: 新增 settings 静态资源 spec、no-store header 常量、统一响应 helper 和 404 逻辑。</li>
+    <li><code>backend/app.py</code>: 保留现有 FastAPI route 函数，将五个 settings 静态资源路由体改为委托新模块。</li>
+    <li><code>tests/test_backend_settings_assets.py</code>: 新增后端 settings assets 单元测试。</li>
+    <li><code>tests/test_settings_form_source.py</code>: 将 <code>/settings_form.js</code> source 断言更新为 route 留在 <code>app.py</code>、asset spec 留在 <code>settings_assets.py</code>。</li>
+    <li><code>tests/test_settings_model_picker_source.py</code>: 将 <code>/settings_model_picker.js</code> source 断言更新为 route 留在 <code>app.py</code>、asset spec 留在 <code>settings_assets.py</code>。</li>
+    <li><code>docs/reports/2026-07-03-backend-settings-assets-split.html</code>: 新增本轮 HTML 报告。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>settings 静态资源的 no-store cache header 定义集中到 <code>backend/settings_assets.py</code>。</li>
+    <li>settings 静态资源的路径、media type 和原 404 detail 文案集中在 asset spec 中。</li>
+    <li><code>/settings</code>、<code>/settings.css</code>、<code>/settings.js</code>、<code>/settings_form.js</code>、<code>/settings_model_picker.js</code> 路由路径保持不变。</li>
+    <li><code>backend/app.py</code> 不再在这些 route body 内重复资源存在性检查和 <code>FileResponse</code> header 拼装。</li>
+    <li>旧 source tests 已对齐新边界：<code>backend/app.py</code> 验 route 和委托，<code>backend/settings_assets.py</code> 验路径、media type、404 detail 和 <code>NO_STORE_HEADERS</code>。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    无本轮阻塞项。主窗口发现的旧 source tests 已由 QA/test-alignment worker 对齐。
+    仓库中仍有既有未提交的 <code>backend/app.py</code> 大范围拆分改动，
+    本轮没有回退、清理或格式化其他 worker 的改动。
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    由主窗口检查本轮 diff 是否符合 settings-console/backend contract 边界；
+    若后续要跑 full regression，需要由对应 owner 同步更新任何仍按旧源码字符串断言
+    <code>backend/app.py</code> 内联 settings asset 检查的测试。
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_settings_assets -v</code>: RED 阶段先因缺少 <code>backend.settings_assets</code> 失败，GREEN 阶段 3 tests OK。</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/settings_assets.py tests/test_backend_settings_assets.py</code>: exit 0。</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_settings_assets tests.test_neo_aspect_settings_page tests.test_neo_backend_contract -v</code>: 89 tests OK。</li>
+    <li><code>git diff --check -- backend/app.py backend/settings_assets.py tests/test_backend_settings_assets.py docs/reports/2026-07-03-backend-settings-assets-split.html</code>: exit 0。</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_settings_form_source tests.test_settings_model_picker_source tests.test_backend_settings_assets -v</code>: QA RED 复现 14 tests / 2 failures，旧 source tests 仍期待 <code>backend/app.py</code> 内联 form/model-picker asset path 和 <code>exists()</code> 检查。</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_settings_form_source tests.test_settings_model_picker_source tests.test_backend_settings_assets -v</code>: QA GREEN 14 tests OK。</li>
+    <li><code>git diff --check -- tests/test_settings_form_source.py tests/test_settings_model_picker_source.py docs/reports/2026-07-03-backend-settings-assets-split.html</code>: QA exit 0。</li>
+  </ul>
+</body>
+</html>

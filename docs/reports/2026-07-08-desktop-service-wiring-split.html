@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Service Wiring Split Report</title>
+</head>
+<body>
+  <h1>Desktop Service Wiring Split</h1>
+  <h2>Goal</h2>
+  <p>Move the DesktopServiceLifecycle construction wiring out of main.py without changing behavior.</p>
+
+  <h2>Worker Split</h2>
+  <p>Main window handled acceptance only. This subwindow implemented the wiring extraction, added focused regression tests, and wrote the task report.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li>main.py</li>
+    <li>app/desktop_service_wiring.py</li>
+    <li>tests/test_desktop_service_wiring.py</li>
+    <li>tests/test_desktop_service_lifecycle.py</li>
+    <li>docs/reports/2026-07-08-desktop-service-wiring-split.html</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>DesktopPet.__init__ now delegates DesktopServiceLifecycle creation to app/desktop_service_wiring.py through a thin dependency builder. main.py no longer directly instantiates DesktopServiceLifecycle, while the runtime dependency set and behavior remain the same.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this slice. Broader lifecycle cleanup or further decomposition can happen later if desired.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Proceed with the next desktop-shell split only if another constructor or bridge block still carries too much wiring in main.py.</p>
+
+  <h2>Verification</h2>
+  <p>Ran /Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_service_wiring.py tests/test_desktop_service_wiring.py tests/test_desktop_service_lifecycle.py</p>
+  <p>Ran /Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_service_wiring tests.test_desktop_service_lifecycle tests.test_main_runtime_env -v</p>
+  <p>Ran git diff --check -- main.py app/desktop_service_wiring.py tests/test_desktop_service_wiring.py tests/test_desktop_service_lifecycle.py docs/reports/2026-07-08-desktop-service-wiring-split.html</p>
+</body>
+</html>

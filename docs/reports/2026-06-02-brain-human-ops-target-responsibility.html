@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Human Ops 目标负责提示词修复报告</title>
+</head>
+<body>
+  <h1>Brain Human Ops 目标负责提示词修复报告</h1>
+
+  <h2>goal</h2>
+  <p>修复 Brain 在用户要求点击或打开桌面目标时只描述观察结果、不继续推进 Human Ops 点击审批的问题。</p>
+
+  <h2>worker or subagent split</h2>
+  <p>brain 负责系统提示词和下一步决策契约；human-ops 负责审批语义边界；qa-reports 负责红绿测试、回归验证和本报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-02-brain-human-ops-target-responsibility.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>Brain 的固定结构化回复提示词现在明确要求符合 Human Ops 工作风格：对用户给出的点击、打开、操作目标负责；目标可见但缺少数字坐标时不能用 <code>say</code> 收尾，必须再次 <code>observe</code> 索取可点击中心点的 macOS 屏幕坐标；拿到可信坐标后必须返回 <code>propose_act</code>，由 Body 在用户批准后执行。</p>
+  <p>新增的 Brain 单元测试先验证旧提示词缺少该责任链会失败，再验证新提示词包含这些关键约束。</p>
+
+  <h2>remaining work</h2>
+  <p>本轮修复的是 Brain 决策提示词契约和文档，不直接重新启动桌面端做真实点击审批流。仍建议在应用内再跑一次 “打开 Dock 里的 Chrome” 之类的真实流程，确认 observe、红点预览、批准后点击三段联动。</p>
+
+  <h2>recommended next step</h2>
+  <p>用实际 VLM 重新发起一个 Dock 图标点击任务；期望 Brain 在 observe 只描述目标而没有数字坐标时继续要求中心坐标，而不是回复“我看到了”。</p>
+</body>
+</html>

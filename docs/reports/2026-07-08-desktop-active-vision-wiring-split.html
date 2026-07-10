@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>2026-07-08 desktop active vision wiring split</title>
+</head>
+<body>
+  <h1>Desktop Active Vision Wiring Split</h1>
+
+  <h2>Goal</h2>
+  <p>继续拆分 main.py 中 Active Vision 兼容导出、wrapper 装配和 bridge wiring 职责，同时保留旧公开/私有名字、patch 点和默认 provider identity。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>主窗口只验收；本实现子窗口负责代码编辑、专门 wiring 测试和报告。未触碰 backend/app.py、frontend/index.js、frontend/controller_graph.js 或其他无关文件。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/main.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/app/desktop_active_vision_wiring.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/tests/test_desktop_active_vision_wiring.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/docs/reports/2026-07-08-desktop-active-vision-wiring-split.html</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>新增 app/desktop_active_vision_wiring.py，集中生成 Active Vision 常量/compat wrapper 导出、ActiveVisionBridge 装配以及 discover/capture 入口函数。main.py 只安装兼容导出、保留 _active_vision_bridge 薄入口，并把 discover_active_vision_target_candidates 与 capture_active_vision_frame_payload 绑定为由 wiring 模块生成的旧名入口。</p>
+  <p>默认 provider identity 继续指向 main.py 暴露的旧函数对象，包括 enumerate_active_vision_desktop_targets、enumerate_macos_dock_item_candidates、enumerate_active_vision_running_app_candidates、run_active_vision_light_interaction、capture_screen_frame_payload 和 collect_screen_observations。</p>
+
+  <h2>Remaining Work</h2>
+  <p>本轮限定范围已完成。仓库中存在大量其他未提交/未跟踪改动，本轮未回退、未清理、未扩大触碰范围。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>由主窗口验收本轮拆分；后续如继续瘦 main.py，建议沿用 wiring 模块 + provider identity 回归测试的拆分方式。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: /Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_active_vision_wiring -q failed as expected before implementation because app.desktop_active_vision_wiring did not exist.</li>
+    <li>GREEN slice: /Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_active_vision_wiring tests.test_desktop_active_vision_bridge -q passed, 8 tests.</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_active_vision_wiring.py tests/test_desktop_active_vision_wiring.py tests/test_desktop_active_vision_bridge.py passed.</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_active_vision_wiring tests.test_desktop_active_vision_bridge tests.test_main_runtime_env -q passed, 73 tests. The run emitted existing PyQt6/PySide6 duplicate Objective-C class warnings.</li>
+    <li>git diff --check -- main.py app/desktop_active_vision_wiring.py tests/test_desktop_active_vision_wiring.py docs/reports/2026-07-08-desktop-active-vision-wiring-split.html passed.</li>
+  </ul>
+</body>
+</html>

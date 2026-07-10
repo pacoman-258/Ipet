@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Screen Capture Bridge Split - 2026-07-03</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 1px 4px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Screen Capture Bridge Split</h1>
+  <p><strong>Date:</strong> 2026-07-03</p>
+
+  <h2>Goal</h2>
+  <p>Move the desktop screen capture Qt bridge and default-provider identity unwrapping out of <code>main.py</code> into <code>app/screen_capture_bridge.py</code>, while preserving every legacy <code>main.py</code> export used by existing tests and callers.</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <ul>
+    <li><strong>desktop-shell:</strong> kept <code>main.py</code> as the legacy export surface and converted screen capture functions to thin bridge delegates.</li>
+    <li><strong>body:</strong> preserved behavior by delegating to existing <code>body.screen_capture</code> implementations.</li>
+    <li><strong>qa-reports:</strong> added focused regression coverage and this HTML report.</li>
+    <li><strong>Subagents:</strong> none used in this round.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/screen_capture_bridge.py</code>: new Qt-free injected bridge for screen capture delegation and provider unwrapping.</li>
+    <li><code>main.py</code>: retained old function names as wrappers, injected Qt dependencies through the new bridge, and reused bridge unwrapping for active vision providers.</li>
+    <li><code>tests/test_desktop_screen_capture_bridge.py</code>: new tests for import isolation, default-provider unwrapping, custom-provider passthrough, and <code>main.py</code> wrapper delegation.</li>
+    <li><code>docs/reports/2026-07-03-desktop-screen-capture-bridge-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>app.screen_capture_bridge</code> does not import <code>main</code>, Qt bindings, or <code>body.screen_capture</code> at import time.</li>
+    <li><code>main.capture_qt_screen_frame_payload</code>, <code>main.capture_macos_screencapture_payload</code>, <code>main._encode_pixmap_frame</code>, and <code>main.collect_screen_observations</code> keep legacy names but delegate through the bridge.</li>
+    <li>Default provider identity unwrapping maps legacy <code>main.py</code> wrappers back to <code>body.screen_capture</code> implementations to avoid recursive calls.</li>
+    <li>Custom injected providers remain custom and are not replaced unless they are the exact default wrapper identity.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this slice. <code>main.py</code> had broad pre-existing local modifications before this round, so future reviews should keep using focused diffs around screen capture bridge lines.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue the desktop split by moving the next isolated bridge surface into <code>app/</code> with the same pattern: dependency injection in <code>app</code>, legacy wrappers in <code>main.py</code>, and identity-provider regression tests.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_desktop_screen_capture_bridge tests.test_main_runtime_env tests.test_screen_capture_payload -v</code>: passed, 74 tests.</li>
+    <li><code>.venv/bin/python -m py_compile main.py app/screen_capture_bridge.py tests/test_desktop_screen_capture_bridge.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py app/screen_capture_bridge.py tests/test_desktop_screen_capture_bridge.py</code>: passed.</li>
+    <li><code>git diff --no-index --check /dev/null docs/reports/2026-07-03-desktop-screen-capture-bridge-split.html</code>: no whitespace warnings. Git returned the normal no-index difference status for a new file.</li>
+  </ul>
+</body>
+</html>

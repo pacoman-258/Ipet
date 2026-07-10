@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Service Lifecycle Split - 2026-06-20</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; max-width: 920px; margin: 32px auto; padding: 0 20px; color: #202124; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 26px; }
+    code { background: #f2f4f7; padding: 2px 5px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #e6f4ea; color: #137333; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Service Lifecycle Split</h1>
+  <p><span class="status">GREEN</span> 2026-06-20 desktop-shell worker report</p>
+
+  <h2>Goal</h2>
+  <p>Move backend, ASR service, ASR warmup monitor, and managed-process shutdown lifecycle logic out of <code>main.py</code> into an app-layer lifecycle module while keeping existing <code>DesktopPet</code> call sites stable.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li>Lead worker: <code>desktop-shell</code>.</li>
+    <li>Scope kept to desktop startup/shutdown and host-side service process lifecycle.</li>
+    <li>No backend, frontend, Body, Human Ops, settings, staging, commit, cleanup, or revert work was performed.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code>: constructs <code>DesktopServiceLifecycle</code>, exposes compatibility process properties, and delegates service methods.</li>
+    <li><code>app/service_lifecycle.py</code>: new lifecycle owner for backend launch, ASR launch, warmup progress monitoring, and managed process stopping.</li>
+    <li><code>tests/test_desktop_service_lifecycle.py</code>: focused split/import/delegation/injection tests.</li>
+    <li><code>docs/reports/2026-06-20-desktop-service-lifecycle-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>main.py</code> no longer contains the large backend/ASR service lifecycle method bodies.</li>
+    <li><code>DesktopPet.ensure_backend_service</code>, <code>ensure_asr_service</code>, <code>request_asr_warmup</code>, warmup monitor helpers, and stop helpers remain as thin compatibility wrappers.</li>
+    <li><code>backend_process</code>, <code>backend_started_by_app</code>, <code>asr_process</code>, and <code>asr_started_by_app</code> remain readable and writable through <code>DesktopPet</code> properties.</li>
+    <li>The new module receives process, HTTP, clock, threading, path, health-check, Python resolver, and logging helpers by dependency injection, making command construction and local-backend ASR shortcut behavior testable without starting real services.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_service_lifecycle -v</code> failed before implementation because <code>app.service_lifecycle</code> was missing and <code>DesktopPet</code> still owned the logic directly.</li>
+    <li>GREEN: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_service_lifecycle -v</code> passed after extraction.</li>
+    <li>Regression: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_service_lifecycle tests.test_main_runtime_env tests.test_desktop_runtime -v</code> passed: 75 tests.</li>
+    <li>Compile: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/service_lifecycle.py tests/test_desktop_service_lifecycle.py</code> passed.</li>
+    <li>Whitespace: <code>git diff --check -- main.py app/service_lifecycle.py tests/test_desktop_service_lifecycle.py tests/test_main_runtime_env.py docs/reports/2026-06-20-desktop-service-lifecycle-split.html</code> passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>The desktop shell still contains other responsibilities unrelated to service lifecycle, including Qt/WebEngine bridge setup, window behavior, click preview, and desktop command handling. Those should remain separate future splits.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main coordinator review the lifecycle boundary, then pick the next independent <code>main.py</code> responsibility for a separate desktop-shell worker.</p>
+</body>
+</html>

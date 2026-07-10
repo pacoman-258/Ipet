@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Runtime Split - 2026-06-09</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; margin: 32px; color: #1f2933; }
+    h1 { margin-bottom: 0.2rem; }
+    h2 { margin-top: 1.5rem; border-bottom: 1px solid #d9e2ec; padding-bottom: 0.25rem; }
+    code { background: #f0f4f8; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Runtime Split</h1>
+  <p><strong>Date:</strong> 2026-06-09</p>
+
+  <h2>Goal</h2>
+  <p>
+    Extract the first desktop runtime/service utility layer from <code>main.py</code> into
+    <code>app/desktop_runtime.py</code> while preserving the existing <code>main</code> API surface and
+    test patch points.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>Lead:</strong> desktop-shell worker for <code>main.py</code> runtime/service utility split.</li>
+    <li><strong>QA role:</strong> focused unit tests plus existing <code>tests.test_main_runtime_env</code> compatibility checks.</li>
+    <li><strong>Coordinator constraint:</strong> no edits to <code>backend/app.py</code>, <code>index.html</code>, <code>settings.js</code>, active vision blocks, or <code>DesktopPet</code> startup flow.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/desktop_runtime.py</code> - new extracted runtime/service helper module.</li>
+    <li><code>main.py</code> - retained original helper names as wrappers that pass current globals and patchable helpers into the new module.</li>
+    <li><code>tests/test_desktop_runtime.py</code> - new focused tests for pure runtime logic.</li>
+    <li><code>docs/reports/2026-06-09-desktop-runtime-split.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Moved Qt runtime env defaults, platform checks, Python command resolution, service log helpers, service health checks, local URL parsing, port probing, and backend launch URL selection into <code>app/desktop_runtime.py</code>.</li>
+    <li>Kept <code>main.Qt</code>, <code>main.requests</code>, <code>main.subprocess</code>, and the existing helper names available for direct imports and mocks.</li>
+    <li>Preserved compatibility for tests that patch <code>main.ROOT_DIR</code>, <code>main.SERVICE_LOG_DIR</code>, <code>main.Path.home</code>, <code>main._preferred_python_commands</code>, <code>main._python_supports_backend</code>, <code>main._python_command_exists</code>, and <code>main.requests.get</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><strong>RED:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_runtime -v</code> failed because <code>app.desktop_runtime</code> did not exist.</li>
+    <li><strong>GREEN:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_runtime tests.test_main_runtime_env -v</code> passed: 70 tests.</li>
+    <li><strong>Compile:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile app/desktop_runtime.py main.py tests/test_desktop_runtime.py</code> passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li><code>main.py</code> still owns Qt binding setup, window flags, <code>DesktopPet</code>, active vision, settings window behavior, and desktop command execution.</li>
+    <li>Future cuts can continue moving desktop shell composition only after coordinating ownership for high-conflict blocks.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Have the main coordinator review the wrapper boundaries, then assign the next sub-window to a narrower
+    desktop-shell slice such as window-policy helpers or service process lifecycle, with fresh focused tests.
+  </p>
+</body>
+</html>

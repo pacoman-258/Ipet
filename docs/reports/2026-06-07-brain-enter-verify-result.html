@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Enter Verify Result Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Enter Verify Result Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>补齐微信回复复杂任务的发送后验证：批准回车后，Ipet 应观察目标回复是否已经出现在聊天记录中，再允许 Brain 用 <code>goal.status=done</code> 结束。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 在 send_reply 阶段要求 <code>key_press enter</code> proposal 带 <code>expected_text</code>。</li>
+    <li><strong>human-ops:</strong> 为已批准的 Enter 动作生成发送结果验证 observe prompt，核对聊天记录和输入框状态。</li>
+    <li><strong>qa-reports:</strong> 增加从 Enter 审批到 done 的回归测试，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-enter-verify-result.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt 现在要求聊天发送阶段的 Enter proposal 带 <code>expected_text</code>。</li>
+    <li>审批执行 <code>key_press enter</code> 后，post-approval observe prompt 会核对预期回复是否出现在聊天记录底部。</li>
+    <li>回归覆盖了 Enter 审批后观察发送结果，再由 Brain 返回 <code>goal.status=done</code> 的闭环。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>仍缺真实 macOS + Ipet + 微信端到端演练证据，尤其是 observe 模型实际读取聊天记录和草稿/发送状态的稳定性。</li>
+    <li>真实演练后可继续补 observe 文本格式适配和更严格的发送结果结构化字段。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>运行一次真实桌面审批链路：打开微信、点击联系人、读取上下文、输入回复、回车发送、验证聊天记录，然后根据真实日志补剩余缺口。</p>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Default Continue After Approval Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Default Continue After Approval Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>防止复杂电脑操作在第一步获批执行后断链：当 Brain 漏写 <code>continue_after_approval</code>，但 goal 仍指向非终态阶段时，backend 应为桌面/聊天任务默认继续观察并请求下一步 Brain 决策。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 仍通过 goal 表达当前阶段、后续阶段和审批 handoff。</li>
+    <li><strong>human-ops:</strong> 在创建 proposal 时根据非终态 goal 自动补齐 <code>continue_after_approval</code>。</li>
+    <li><strong>qa-reports:</strong> 增加模型漏字段时仍能继续到下一条审批动作的契约测试，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-default-continue-after-approval.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Proposal creation now detects non-terminal desktop/chat operation goals with a remaining <code>stage</code> or <code>next</code>.</li>
+    <li>If Brain did not explicitly set <code>continue_after_approval</code>, backend adds it before storing the pending Human Ops proposal.</li>
+    <li>Approving the first action in a complex WeChat reply goal now still triggers post-action observe and the next reviewable proposal.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_complex_goal_defaults_continue_after_approval_when_missing tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_approval_continues_complex_goal_to_next_reviewable_action tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_contact_and_input_affordances_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_marks_focused_input_from_cursor_text tests.test_neo_backend_contract.NeoBackendContractTests.test_post_approval_observe_prompt_for_wechat_reply_reads_chat_context tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_continuation_observes_sent_message_then_done -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 275 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need real desktop evidence that the model's goal stages are stable enough across the complete WeChat path.</li>
+    <li>Future hardening may add a compact continuation state object instead of relying only on the current goal fields.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run the real WeChat task and inspect whether each proposal carries a sensible stage/next pair through launch, contact selection, input focus, typing, send, and verification.</p>
+</body>
+</html>

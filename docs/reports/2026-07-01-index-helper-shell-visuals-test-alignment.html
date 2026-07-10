@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Index Helper Shell Visuals Test Alignment - 2026-07-01</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #1f2933;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 22px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    code {
+      background: #f2f4f7;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Index Helper Shell Visuals Test Alignment</h1>
+
+  <h2>Goal</h2>
+  <p>Align the index helper source test contract with the shell visuals split so the test recognizes shell-owned wrappers delegating to <code>shellVisualsController</code> while pure helper wrappers still delegate to <code>window.IpetIndexHelpers</code>.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This worker handled the source-test contract repair in the shared worktree. The main window remains responsible for review and final acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>tests/test_index_helpers_source.py</code> - updated the legacy wrapper test to distinguish shell visuals delegates from pure helper delegates.</li>
+    <li><code>docs/reports/2026-07-01-index-helper-shell-visuals-test-alignment.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The failing helper contract now matches the current architecture: <code>clamp</code>, <code>toRateString</code>, <code>roundInt</code>, background visuals, status, shell buttons, error banner, and Qt logging wrappers delegate through <code>shellVisualsController</code>; parsing and normalization wrappers still delegate to <code>helpers</code>.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this contract fix. The repository still contains unrelated dirty and untracked files from other workers.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main-window review should confirm the test contract reads clearly, then continue normal integration of the broader frontend split.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_index_helpers_source.IndexHelpersSourceTests.test_index_uses_helper_namespace_but_keeps_legacy_wrappers -v</code> - reproduced the original failure before editing.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_index_helpers_source tests.test_frontend_shell_visuals_source -v</code> - passed, 9 tests.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -q</code> - passed, 488 tests.</li>
+    <li><code>git diff --check -- tests/test_index_helpers_source.py tests/test_frontend_shell_visuals_source.py docs/reports/2026-07-01-index-helper-shell-visuals-test-alignment.html</code> - passed with no output.</li>
+    <li><code>git diff --check --no-index -- /dev/null tests/test_index_helpers_source.py</code> - no whitespace-error output.</li>
+    <li><code>git diff --check --no-index -- /dev/null tests/test_frontend_shell_visuals_source.py</code> - no whitespace-error output.</li>
+    <li><code>git diff --check --no-index -- /dev/null docs/reports/2026-07-01-index-helper-shell-visuals-test-alignment.html</code> - no whitespace-error output.</li>
+  </ul>
+</body>
+</html>

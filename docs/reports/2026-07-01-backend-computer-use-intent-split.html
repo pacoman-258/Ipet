@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-07-01 Backend Computer Use Intent Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px;
+      color: #202124;
+      background: #fbfbfd;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #e6e8ef;
+      border-radius: 8px;
+      padding: 28px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 17px;
+    }
+    code {
+      background: #f3f5f9;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Backend Computer Use Intent Split</h1>
+
+    <h2>Goal</h2>
+    <p>把桌面观察、桌面动作和点击意图识别集中到 <code>backend/computer_use_context.py</code>，让 <code>backend/app.py</code> 只保留兼容 wrapper。</p>
+
+    <h2>Worker / Subagent Split</h2>
+    <p>本轮由后端拆分子窗口 worker 在共享工作区完成；主窗口只做 fresh 验收。未执行 stage、commit、cleanup 或 revert，也未触碰其它子窗口负责的 <code>main.py</code>、<code>frontend/index.js</code>。</p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>backend/computer_use_context.py</code>: 新增 <code>_DESKTOP_OBSERVE_TERMS</code>、<code>_looks_like_desktop_observe_request</code> 和 <code>_looks_like_click_request</code>，复用已有 app launch/chat action helper。</li>
+      <li><code>backend/app.py</code>: 删除本地重复 intent term 常量和内联判断，旧公开 wrapper 改为委托 <code>_computer_use_context_helpers</code>。</li>
+      <li><code>tests/test_computer_use_context.py</code>: 增加 observe/action/click 行为覆盖和 app wrapper 委托测试。</li>
+      <li><code>docs/reports/2026-07-01-backend-computer-use-intent-split.html</code>: 新增本轮拆分报告。</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <p><code>app.py</code> 不再重复维护桌面/点击意图词表；“看看屏幕/当前屏幕”可识别为 observe，“如何/为什么打开 app”不会误判为 action，“帮我打开微信/点击按钮”仍保持 action/click 行为。</p>
+
+    <h2>Remaining Work</h2>
+    <p>本轮未拆默认 observe prompt、react prompt 或 human ops observe 执行流。后续可继续把相关自然语言 prompt 构造收敛到更小 helper。</p>
+
+    <h2>Recommended Next Step</h2>
+    <p>主窗口可 fresh 运行 computer-use context、human ops observe 和 Neo backend contract 测试；下一波优先选择仍在 <code>app.py</code> 中保留业务判断的兼容 wrapper。</p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_computer_use_context -v</code>: failed first with missing helper functions, then passed after implementation.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_computer_use_context tests.test_backend_human_ops_observe tests.test_neo_backend_contract -v</code>: passed, 90 tests.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/computer_use_context.py tests/test_computer_use_context.py</code>: passed.</li>
+      <li><code>git diff --check -- backend/app.py backend/computer_use_context.py tests/test_computer_use_context.py</code>: passed with no output.</li>
+      <li><code>git diff --check --no-index -- /dev/null docs/reports/2026-07-01-backend-computer-use-intent-split.html</code>: no whitespace-error output; exit code 1 only indicates the new file differs from <code>/dev/null</code>.</li>
+    </ul>
+  </main>
+</body>
+</html>

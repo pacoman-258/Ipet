@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Human Ops 全屏点击边界修复报告</title>
+</head>
+<body>
+  <h1>Human Ops 全屏点击边界修复报告</h1>
+  <h2>目标</h2>
+  <p>修复点击预览和执行被 Qt 窗口边界误导或遮挡的问题，让 Human Ops 点击按屏幕绝对坐标工作。</p>
+
+  <h2>worker / subagent split</h2>
+  <p>human-ops 负责审批后的点击语义；desktop-shell 负责 Qt 主窗口避让；body 负责红点预览呈现；qa-reports 负责测试和报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>index.html</code></li>
+    <li><code>main.py</code></li>
+    <li><code>tests/test_chat_modes_ui.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-01-human-ops-global-click-boundary.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>网页内红点不再把窗口外坐标夹到 WebView 边缘，避免显示一个假的窗口内目标点。批准点击时，桌面宿主会先短暂隐藏 Ipet 主窗口，再执行真实点击，防止 Qt 窗口挡住屏幕上的目标。</p>
+
+  <h2>remaining work</h2>
+  <p>全局 Qt 预览覆盖层仍依赖 QWebChannel 已连接；如果桥接未就绪，窗口外目标不会显示假红点，但也可能没有全屏红点。真实点击仍依赖 macOS 事件投递权限。</p>
+
+  <h2>recommended next step</h2>
+  <p>用 Dock、桌面图标或其他 Ipet 主窗口外/下方目标做一次人工验证：确认红点不再贴在 WebView 边缘，批准后目标应用收到点击。</p>
+</body>
+</html>

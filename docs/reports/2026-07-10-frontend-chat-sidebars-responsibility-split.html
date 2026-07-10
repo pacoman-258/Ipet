@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Frontend Chat Sidebars Responsibility Split</title>
+  <style>
+    body { max-width: 920px; margin: 40px auto; padding: 0 24px; font: 16px/1.6 sans-serif; color: #1f2937; }
+    h1, h2 { color: #111827; }
+    code { padding: 2px 5px; background: #f3f4f6; border-radius: 4px; }
+    li { margin: 6px 0; }
+    .pass { color: #166534; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Frontend Chat Sidebars Responsibility Split</h1>
+
+  <h2>Goal</h2>
+  <p>将话题历史与聊天技能选择从 <code>frontend/chat_sidebars.js</code> 拆为独立叶模块，让组合层只负责模块装配与两个抽屉的互斥协调，同时保留原有公开 API、中文文案和行为契约。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>实现由本子窗口完成，主窗口负责独立审查、集成验收和全量回归。仓库内其他并行工作者的改动保持原样，未回退、清理或格式化。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/chat_topic_history.js</code>：新增，拥有话题状态、加载、创建、选择、删除、消息替换和历史抽屉 DOM 行为。</li>
+    <li><code>frontend/chat_skills.js</code>：新增，拥有技能目录、默认与选中状态、加载、渲染、切换和技能抽屉 DOM 行为。</li>
+    <li><code>frontend/chat_sidebars.js</code>：缩减为叶 controller 装配、互斥回调和 API 合并。</li>
+    <li><code>index.html</code>：在 <code>chat_sidebars.js</code> 前加载两个叶模块。</li>
+    <li><code>tests/test_frontend_chat_sidebars_source.py</code>：新增职责边界、命名空间、状态归属和脚本顺序断言。</li>
+    <li><code>tests/test_chat_modes_ui.py</code>：将聚合 source 读取与脚本顺序断言扩展到两个叶模块。</li>
+    <li><code>docs/reports/2026-07-10-frontend-chat-sidebars-responsibility-split.html</code>：本报告。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>chat_sidebars.js</code> 从 713 行职责混合实现缩减为 22 行组合层。</li>
+    <li>topic 与 skill 两套状态不再共处同一闭包，各叶模块自行拥有 API 与 DOM 行为。</li>
+    <li><code>window.IpetChatSidebars.createChatSidebarsController</code> 及其合并返回 API 保持不变。</li>
+    <li>历史和技能抽屉打开时仍会互相关闭，controller graph 无需调整。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>本轮范围内无剩余实现工作。按任务约束未运行全量回归，也未修改 controller graph。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>由主窗口在合并并行工作后运行全量回归，并在桌面宿主中手动确认历史抽屉、技能抽屉、新建话题与技能勾选流程。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>职责边界测试先在旧结构上失败：缺少两个叶模块及对应脚本装配。</li>
+    <li class="pass">PASS：39 个相关 frontend source unittest。</li>
+    <li class="pass">PASS：<code>py_compile</code> 检查相关测试文件。</li>
+    <li class="pass">PASS：<code>node --check</code> 检查三个相关 JavaScript 模块。</li>
+  </ul>
+</body>
+</html>

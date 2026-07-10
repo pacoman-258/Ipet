@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Context Menu Split - 2026-07-03</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #202124;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f1f3f4;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Context Menu Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move <code>DesktopPet.show_context_menu</code> menu construction and selected-action dispatch from <code>main.py</code> into <code>app/context_menu.py</code>, leaving the desktop host method as a thin delegate.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This round was handled by the desktop-shell worker. The coordinator/main window is expected to inspect only; no staging, commit, dependency install, network call, destructive cleanup, or cross-worker revert was performed.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code>: imports and constructs <code>DesktopContextMenuController</code>, stores it on <code>DesktopPet</code>, and delegates <code>show_context_menu</code>.</li>
+    <li><code>app/context_menu.py</code>: new controller that builds the right-click menu, executes it at <code>owner.browser.mapToGlobal(pos)</code>, and dispatches selected actions.</li>
+    <li><code>tests/test_desktop_context_menu.py</code>: new focused tests for controller behavior, module isolation from <code>main</code>, and the thin <code>DesktopPet</code> delegate.</li>
+    <li><code>docs/reports/2026-07-03-desktop-context-menu-split.html</code>: this task report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The context menu behavior remains unchanged: settings opens the settings page, lock toggles <code>owner.window_locked</code> and <code>owner.config["window"]["locked"]</code>, reload reapplies web config, and quit closes the owner. The Qt menu classes remain injected from <code>main.py</code>, while menu behavior is no longer inline in <code>DesktopPet</code>.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining implementation work for this split. Existing unrelated dirty files were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main coordinator review the focused diff and, if desired, run a broader desktop-shell regression after other parallel workers finish their slices.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_context_menu -v</code>: failed before implementation because <code>app.context_menu</code> did not exist and <code>main.py</code> did not delegate; passed after implementation.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/context_menu.py tests/test_desktop_context_menu.py</code>: passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_context_menu tests.test_main_runtime_env -v</code>: passed, 70 tests.</li>
+  </ul>
+</body>
+</html>

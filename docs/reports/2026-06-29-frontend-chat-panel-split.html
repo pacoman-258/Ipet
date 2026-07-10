@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>2026-06-29 Frontend Chat Panel Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2933;
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    code {
+      background: #eef2f7;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Chat Panel Split</h1>
+
+  <h2>Goal</h2>
+  <p>
+    Continue slimming <code>frontend/index.js</code> by moving chat panel open,
+    close, state, persisted position, drag, and resize logic into a dedicated
+    frontend module while preserving the legacy entry functions used by the UI.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>frontend chat panel split worker:</strong> extracted the controller and wired it into the existing frontend entrypoint.</li>
+    <li><strong>qa-reports:</strong> added focused source coverage and this task report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/chat_panel.js</code> - new chat panel controller namespace.</li>
+    <li><code>frontend/index.js</code> - retained thin wrappers and delegated chat panel behavior.</li>
+    <li><code>index.html</code> - loaded the new split asset before <code>frontend/index.js</code>.</li>
+    <li><code>tests/test_frontend_chat_panel_source.py</code> - new focused source tests.</li>
+    <li><code>tests/test_chat_modes_ui.py</code> - updated split asset order assertions.</li>
+    <li><code>docs/reports/2026-06-29-frontend-chat-panel-split.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>window.IpetChatPanel.createChatPanelController(deps)</code> now owns chat panel storage, clamped position restore, open/close behavior, chat state updates, and drag/resize interactions.</li>
+    <li><code>frontend/index.js</code> keeps <code>loadChatPanelState</code>, <code>saveChatPanelState</code>, <code>setChatState</code>, <code>openChat</code>, and <code>closeChat</code> as thin delegation functions.</li>
+    <li>The root UI loads <code>frontend/chat_panel.js</code> after chat message helpers and before the main app entry.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    No backend, desktop host, or settings work was included. A future frontend
+    pass could move additional non-panel chat orchestration out of
+    <code>frontend/index.js</code>.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Continue the frontend split by identifying the next cohesive responsibility
+    still embedded in <code>frontend/index.js</code>, preferably one with an
+    existing source-test pattern.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_chat_panel_source tests.test_chat_modes_ui -v</code> failed before implementation because the new module and load order were absent.</li>
+    <li>GREEN: the same focused command passed after extraction: 20 tests, OK.</li>
+    <li>Requested tests: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_chat_panel_source tests.test_chat_modes_ui tests.test_frontend_chat_messages_source tests.test_frontend_chat_submit_source -v</code> passed: 26 tests, OK.</li>
+    <li>Syntax: <code>node --check frontend/chat_panel.js frontend/index.js</code> exited 0 with no output.</li>
+    <li>Whitespace: <code>git diff --check -- frontend/index.js frontend/chat_panel.js index.html tests/test_frontend_chat_panel_source.py tests/test_chat_modes_ui.py docs/reports/2026-06-29-frontend-chat-panel-split.html</code> exited 0 with no output for the tracked diff.</li>
+    <li>Untracked whitespace supplement: because the existing <code>frontend/</code> split files and this new report are untracked in the dirty workspace, <code>git diff --no-index --check -- /dev/null &lt;file&gt;</code> was also run for <code>frontend/chat_panel.js</code>, <code>frontend/index.js</code>, <code>tests/test_frontend_chat_panel_source.py</code>, and this report. Each command produced no whitespace output; exit code 1 is expected for no-index file-vs-null differences.</li>
+  </ul>
+</body>
+</html>

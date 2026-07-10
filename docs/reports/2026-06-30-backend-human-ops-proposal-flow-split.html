@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Human Ops Proposal Flow Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 2rem; color: #1f2933; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.05rem; margin-top: 1.4rem; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Backend Human Ops Proposal Flow Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move backend-specific Human Ops approval proposal and continuation prompt glue out of <code>backend/app.py</code> while preserving the existing public helper names used by chat stream and approval routes.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This subwindow worker implemented the extraction directly in the shared workspace. The main window remains responsible for review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: kept compatibility wrappers and delegated proposal-flow behavior to the new backend module.</li>
+    <li><code>backend/human_ops_proposal_flow.py</code>: added dependency-injected backend glue for pending proposal creation, continuation prompts, post-approval observe prompts, and thin proposal helpers.</li>
+    <li><code>tests/test_backend_human_ops_proposal_flow.py</code>: added boundary, wrapper, pending-store, continuation, and prompt regression coverage.</li>
+    <li><code>docs/reports/2026-06-30-backend-human-ops-proposal-flow-split.html</code>: added this task report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>backend/app.py</code> no longer owns the implementation of proposal payload formatting, default continuation decisions, pending proposal record creation, or prompt construction. The new module does not import <code>backend.app</code> and receives the pending store, UUID factory, clock, intent predicates, terminal-goal predicate, and computer-use context renderer through explicit dependencies.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this slice. The wider worktree is dirty from parallel拆分 work, so unrelated diffs were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main window review should focus on whether the dependency provider in <code>backend/app.py</code> is the right long-term home, or whether later route splits should own it.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_human_ops_proposal_flow tests.test_neo_backend_contract tests.test_human_ops_approval_flow -v</code>: passed, 86 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/human_ops_proposal_flow.py tests/test_backend_human_ops_proposal_flow.py</code>: passed.</li>
+    <li><code>git diff --check -- backend/app.py</code>: passed with no output.</li>
+    <li><code>git diff --check --no-index -- /dev/null backend/human_ops_proposal_flow.py</code>: no whitespace-error output; exit 1 only because the file is new relative to <code>/dev/null</code>.</li>
+    <li><code>git diff --check --no-index -- /dev/null tests/test_backend_human_ops_proposal_flow.py</code>: no whitespace-error output; exit 1 only because the file is new relative to <code>/dev/null</code>.</li>
+    <li><code>git diff --check --no-index -- /dev/null docs/reports/2026-06-30-backend-human-ops-proposal-flow-split.html</code>: no whitespace-error output; exit 1 only because the file is new relative to <code>/dev/null</code>.</li>
+  </ul>
+</body>
+</html>

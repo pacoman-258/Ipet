@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Type To Enter Continuation Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Type To Enter Continuation Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>推进 Ipet 使用简单人类动作完成微信回复任务的最后阶段：批准输入回复后，Ipet 应观察草稿是否完整进入输入框，并在可发送时提出回车审批。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 接收包含 <code>chat_context</code> 和发送就绪信息的 follow-up prompt，再提出 <code>key_press enter</code>。</li>
+    <li><strong>human-ops:</strong> 为已批准的 <code>type_text</code> 动作生成草稿感知的 post-approval observe prompt。</li>
+    <li><strong>qa-reports:</strong> 增加从输入审批到回车审批的回归测试，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-type-to-enter-continuation.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>审批执行 <code>type_text</code> 后，post-approval observe prompt 会包含刚输入的草稿文本。</li>
+    <li>观察问题会明确要求确认草稿是否完整出现在微信聊天输入框中。</li>
+    <li>当观察和 Brain 后续决策认为可以发送时，Human Ops 会发出 <code>key_press enter</code> 审批，而不是自动发送。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>仍需真实 macOS + Ipet + 微信端到端演练，验证 observe 模型是否能稳定确认草稿和发送状态。</li>
+    <li>发送后还应补 verify_result 阶段，观察消息是否真的出现在聊天记录中。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>补发送后 verify_result 的回归：批准 Enter 后观察微信聊天记录，确认刚发送的回复可见，然后允许 Brain 用 <code>goal.status=done</code> 结束任务。</p>
+</body>
+</html>

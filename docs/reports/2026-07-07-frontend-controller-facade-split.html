@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Frontend Controller Facade Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #243447;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f1f4f8;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Controller Facade Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the pure controller compatibility wrappers out of <code>frontend/index.js</code> into a dedicated frontend facade module while preserving runtime behavior.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Frontend split worker only. No subagents were used. The main window role remains review-only per user instruction; this worker performed the removal work in its own task scope.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/controller_facade.js</code>: new facade module with registry-backed wrapper methods and explicit missing-controller errors.</li>
+    <li><code>frontend/index.js</code>: creates the mutable controller registry, builds the facade, registers controllers after construction, passes facade methods as dependencies, and starts with <code>facade.init()</code>.</li>
+    <li><code>index.html</code>: loads <code>frontend/controller_facade.js</code> after app bootstrap modules and before <code>frontend/index.js</code>.</li>
+    <li><code>tests/test_frontend_shell_visuals_source.py</code>, <code>tests/test_frontend_asr_source.py</code>, <code>tests/test_frontend_chat_sidebars_source.py</code>, <code>tests/test_frontend_pet_scene_source.py</code>, <code>tests/test_frontend_app_bootstrap_source.py</code>, <code>tests/test_chat_modes_ui.py</code>: updated source tests for facade ownership and index registry wiring.</li>
+    <li><code>tests/test_frontend_app_config_source.py</code>, <code>tests/test_frontend_chat_input_state_source.py</code>, <code>tests/test_frontend_chat_messages_source.py</code>, <code>tests/test_frontend_chat_modes_source.py</code>, <code>tests/test_frontend_chat_panel_source.py</code>, <code>tests/test_frontend_chat_stream_source.py</code>, <code>tests/test_frontend_chat_submit_source.py</code>, <code>tests/test_frontend_chat_worklog_source.py</code>, <code>tests/test_frontend_human_ops_preview_source.py</code>, <code>tests/test_frontend_pet_state_notify_source.py</code>, <code>tests/test_frontend_shell_bridge_source.py</code>, <code>tests/test_frontend_speech_source.py</code>, <code>tests/test_index_helpers_source.py</code>: follow-up source-test alignment for legacy wrapper expectations after the facade split.</li>
+    <li><code>docs/reports/2026-07-07-frontend-controller-facade-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>frontend/index.js</code> no longer declares the long list of pure forwarding wrappers such as <code>showError</code>, <code>loadTopicHistory</code>, <code>streamChat</code>, <code>loadModel</code>, <code>applyConfig</code>, and <code>init</code>.</li>
+    <li>The new facade reads controllers from a mutable registry at call time, so facade methods can be passed before all controllers exist and still resolve the current controller later.</li>
+    <li>Missing controllers or missing methods now throw explicit <code>IpetControllerFacade</code> errors instead of producing vague undefined-call failures.</li>
+    <li>Source tests now verify the facade module exists, load order is correct, index uses registry/facade wiring, and representative wrappers live in the facade instead of index.</li>
+    <li>Follow-up source tests now assert that old wrapper methods are mapped by <code>frontend/controller_facade.js</code>, that <code>frontend/index.js</code> registers the owning controller and passes <code>facade.method</code> dependencies, and that <code>frontend/index.js</code> no longer declares the removed wrapper functions.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining source-test work in this split. Broader runtime/browser smoke testing was not requested and was not run.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window review the diff and, if desired, run a desktop smoke test to exercise startup, chat, ASR push-to-talk, topic history, and model loading through the facade.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: targeted source tests failed before implementation because <code>frontend/controller_facade.js</code> and the new script order/wiring were missing.</li>
+    <li>PASS: <code>node --check frontend/controller_facade.js</code></li>
+    <li>PASS: <code>node --check frontend/index.js</code></li>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_shell_visuals_source tests.test_frontend_asr_source tests.test_frontend_chat_sidebars_source tests.test_frontend_pet_scene_source tests.test_frontend_app_bootstrap_source tests.test_chat_modes_ui -v</code></li>
+    <li>PASS: <code>git diff --check -- frontend/index.js frontend/controller_facade.js index.html tests/test_frontend_shell_visuals_source.py tests/test_frontend_asr_source.py tests/test_frontend_chat_sidebars_source.py tests/test_frontend_pet_scene_source.py tests/test_frontend_app_bootstrap_source.py tests/test_chat_modes_ui.py docs/reports/2026-07-07-frontend-controller-facade-split.html</code></li>
+    <li>RED: follow-up target source suite reproduced 17 stale assertions expecting thin wrapper functions to remain in <code>frontend/index.js</code>.</li>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_app_config_source tests.test_frontend_chat_input_state_source tests.test_frontend_chat_messages_source tests.test_frontend_chat_modes_source tests.test_frontend_chat_panel_source tests.test_frontend_chat_stream_source tests.test_frontend_chat_submit_source tests.test_frontend_chat_worklog_source tests.test_frontend_human_ops_preview_source tests.test_frontend_pet_state_notify_source tests.test_frontend_shell_bridge_source tests.test_frontend_speech_source tests.test_index_helpers_source tests.test_chat_modes_ui -v</code></li>
+    <li>PASS: <code>node --check frontend/controller_facade.js</code></li>
+    <li>PASS: <code>node --check frontend/index.js</code></li>
+    <li>PASS: <code>git diff --check -- frontend/controller_facade.js frontend/index.js tests/test_frontend_app_config_source.py tests/test_frontend_chat_input_state_source.py tests/test_frontend_chat_messages_source.py tests/test_frontend_chat_modes_source.py tests/test_frontend_chat_panel_source.py tests/test_frontend_chat_stream_source.py tests/test_frontend_chat_submit_source.py tests/test_frontend_chat_worklog_source.py tests/test_frontend_human_ops_preview_source.py tests/test_frontend_pet_state_notify_source.py tests/test_frontend_shell_bridge_source.py tests/test_frontend_speech_source.py tests/test_index_helpers_source.py tests/test_chat_modes_ui.py docs/reports/2026-07-07-frontend-controller-facade-split.html</code></li>
+  </ul>
+</body>
+</html>

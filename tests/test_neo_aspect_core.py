@@ -13,10 +13,13 @@ from skills.recipes import SkillRecipeProposal
 class NeoAspectDecisionTests(unittest.TestCase):
     def test_say_and_observe_do_not_require_review(self) -> None:
         self.assertFalse(BrainDecision.say("我先看一下。").requires_review)
+        self.assertFalse(BrainDecision.think("需要先观察屏幕。").requires_review)
         self.assertFalse(BrainDecision.observe("screen").requires_review)
 
     def test_state_changing_decisions_require_review(self) -> None:
         self.assertTrue(BrainDecision.propose_act("click", {"x": 10, "y": 20}).requires_review)
+        self.assertTrue(BrainDecision.propose_act("type_text", {"text": "你好"}).requires_review)
+        self.assertTrue(BrainDecision.propose_act("key_press", {"key": "enter"}).requires_review)
         self.assertTrue(BrainDecision.propose_remember("preference", "用户喜欢简洁回答").requires_review)
         self.assertTrue(BrainDecision.propose_learn_skill("Use Codex", ["打开 Codex"]).requires_review)
 
@@ -26,6 +29,7 @@ class NeoAspectDecisionTests(unittest.TestCase):
 
     def test_decision_kind_values_are_stable(self) -> None:
         self.assertEqual(DecisionKind.SAY.value, "say")
+        self.assertEqual(DecisionKind.THINK.value, "think")
         self.assertEqual(DecisionKind.OBSERVE.value, "observe")
         self.assertEqual(DecisionKind.PROPOSE_ACT.value, "propose_act")
         self.assertEqual(DecisionKind.PROPOSE_REMEMBER.value, "propose_remember")
@@ -42,6 +46,7 @@ class NeoAspectHumanOpsTests(unittest.TestCase):
         self.assertEqual(preview.y, 240)
         self.assertEqual(preview.label, "发送按钮")
         self.assertEqual(preview.to_dict()["marker"], "red_dot")
+        self.assertGreaterEqual(preview.to_dict()["size"], 24)
 
     def test_act_proposal_requires_approval(self) -> None:
         preview = ClickPreview(x=10, y=20, label="Codex 图标")
@@ -59,6 +64,24 @@ class NeoAspectHumanOpsTests(unittest.TestCase):
     def test_observe_proposal_is_not_reviewable_action(self) -> None:
         with self.assertRaises(ValueError):
             ReviewableProposal.act(action_type="observe", summary="观察屏幕", payload={})
+
+    def test_text_and_enter_actions_are_reviewable(self) -> None:
+        text_proposal = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入回复",
+            payload={"text": "收到，我马上处理。"},
+        )
+        enter_proposal = ReviewableProposal.act(
+            action_type="key_press",
+            summary="按下回车",
+            payload={"key": "enter"},
+        )
+
+        self.assertTrue(text_proposal.requires_review)
+        self.assertEqual(text_proposal.payload["action_type"], "type_text")
+        self.assertEqual(text_proposal.payload["arguments"]["text"], "收到，我马上处理。")
+        self.assertTrue(enter_proposal.requires_review)
+        self.assertEqual(enter_proposal.payload["arguments"]["key"], "enter")
 
 
 class NeoAspectMemorySkillTests(unittest.TestCase):

@@ -25,7 +25,7 @@ DEFAULT_VISION_CONFIG: dict[str, Any] = {
     "analyzer": {
         "enabled": False,
         "provider": "none",
-        "timeout_sec": 15.0,
+        "timeout_sec": 90.0,
         "max_text_chars": 600,
         "max_image_bytes": 3_000_000,
         "api_key": "",
@@ -69,7 +69,7 @@ MAX_TIMELINE_SUMMARY_LENGTH = 180
 MAX_TIMELINE_TEXT_ITEMS = 6
 MAX_TIMELINE_TEXT_LENGTH = 120
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png"}
-VISION_ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm"}
+VISION_ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm", "google_aistudio_vlm"}
 VISION_ANALYZER_IMAGE_DETAILS = {"low", "high", "auto"}
 VISION_ACTIVE_INTERACTION_LEVELS = {"light", "none"}
 VISION_REQUEST_KEYWORDS = (
@@ -211,6 +211,8 @@ def normalize_vision_config(config: Any) -> dict[str, Any]:
             normalized["analyzer"]["api_key_env"] = ""
     elif analyzer_provider == "openai_compatible_vlm" and not normalized["analyzer"]["base_url"]:
         normalized["analyzer"]["base_url"] = "https://api.openai.com/v1"
+    elif analyzer_provider == "google_aistudio_vlm" and not normalized["analyzer"]["base_url"]:
+        normalized["analyzer"]["base_url"] = "https://generativelanguage.googleapis.com/v1beta"
     normalized["include_ui_metadata"] = bool(
         source.get("include_ui_metadata", DEFAULT_VISION_CONFIG["include_ui_metadata"])
     )

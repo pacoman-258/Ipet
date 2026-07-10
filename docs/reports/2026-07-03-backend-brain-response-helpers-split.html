@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Brain Response Helpers Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 16px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Backend Brain Response Helpers Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the brain SSE formatting, brain error sanitization, and completion-to-decision helper logic out of <code>backend/app.py</code> into one FastAPI-free helper module while preserving the legacy app wrapper names.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Single worker only. No subagents were used. The main window was treated as validation-only and <code>main.py</code> was not edited.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/brain_response_helpers.py</code>: new standalone helper module.</li>
+    <li><code>backend/app.py</code>: compatibility wrappers now delegate to the helper module.</li>
+    <li><code>tests/test_backend_brain_response_helpers.py</code>: new focused helper and wrapper tests.</li>
+    <li><code>docs/reports/2026-07-03-backend-brain-response-helpers-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The SSE, redaction, and completion fallback behavior is now testable without importing the FastAPI app. <code>backend/app.py</code> still exposes <code>_sse</code>, <code>_sanitize_brain_error</code>, and <code>_decision_from_completion</code> for existing callers.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. Broader backend route splits remain outside this task.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Keep later brain response behavior changes in <code>backend/brain_response_helpers.py</code> first, then use the app wrappers only as compatibility boundaries.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_backend_brain_response_helpers tests.test_neo_backend_contract -v</code>: passed, 85 tests.</li>
+    <li><code>.venv/bin/python -m py_compile backend/app.py backend/brain_response_helpers.py tests/test_backend_brain_response_helpers.py</code>: passed.</li>
+    <li><code>git diff --check -- backend/app.py backend/brain_response_helpers.py tests/test_backend_brain_response_helpers.py</code>: passed.</li>
+    <li><code>git diff --no-index --check -- /dev/null docs/reports/2026-07-03-backend-brain-response-helpers-split.html</code>: no whitespace diagnostics; no-index returned 1 because the new file differs from <code>/dev/null</code>.</li>
+  </ul>
+</body>
+</html>

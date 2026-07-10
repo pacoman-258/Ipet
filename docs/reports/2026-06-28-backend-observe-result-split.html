@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Observe Result Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px;
+      color: #1f2933;
+      background: #f7f9fb;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #dde3ea;
+      border-radius: 8px;
+      padding: 28px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 26px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 18px;
+    }
+    code {
+      background: #eef2f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Backend Observe Result Split</h1>
+    <h2>Goal</h2>
+    <p>继续瘦身 <code>backend/app.py</code>，把 observe 结果转文本和模型整理协调逻辑拆到 <code>backend/observe_result.py</code>，同时保留 <code>backend.app</code> 的同名兼容入口。</p>
+
+    <h2>Worker / Subagent Split</h2>
+    <p>本轮由 backend observe result split 子窗口执行；职责边界按 Body 观察结果整理与 QA 报告处理，没有派生额外子代理。</p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>backend/app.py</code>: 将 <code>_observation_text_from_result</code> 与 <code>_enrich_observation_frame_with_model</code> 改为薄 wrapper。</li>
+      <li><code>backend/observe_result.py</code>: 新增 observe 结果文本整理和模型 enrich 协调 helper，不反向 import <code>backend.app</code>。</li>
+      <li><code>tests/test_backend_observe_result.py</code>: 新增 focused split 测试，覆盖优先级、fallback、unknowns 过滤、analysis 状态、截图 fallback 与模型 enrich。</li>
+      <li><code>docs/reports/2026-06-28-backend-observe-result-split.html</code>: 本报告。</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <p><code>backend/app.py</code> 不再内联 observe 结果长文本分支主体；既有 <code>backend.app._observation_text_from_result</code> 和 <code>backend.app._enrich_observation_frame_with_model</code> 名称仍存在，测试或 patch 入口保持兼容。</p>
+
+    <h2>Remaining Work</h2>
+    <p>未处理 observe prompt、坐标上下文、computer-use context 等相邻拆分点；本轮刻意不触碰 route 行为、main、frontend 或 settings。</p>
+
+    <h2>Recommended Next Step</h2>
+    <p>后续可继续按同样模式拆分 <code>backend/app.py</code> 中的 observe 坐标状态或 computer-use context wrapper，但应由对应 owner 单独领取，避免在脏工作树里扩大冲突面。</p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_observe_result tests.test_neo_backend_contract -v</code> 在实现前失败，新增 focused 测试显示 <code>backend.observe_result</code> 缺失且 app wrapper 尚未拆薄。</li>
+      <li>GREEN: 同一 unittest 命令在实现后通过，输出 <code>Ran 88 tests</code> / <code>OK</code>。</li>
+      <li>Compile: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/observe_result.py tests/test_backend_observe_result.py</code> 通过，退出码 0。</li>
+      <li>Diff whitespace: <code>git diff --check -- backend/app.py backend/observe_result.py tests/test_backend_observe_result.py docs/reports/2026-06-28-backend-observe-result-split.html</code> 通过，退出码 0。</li>
+    </ul>
+  </main>
+</body>
+</html>

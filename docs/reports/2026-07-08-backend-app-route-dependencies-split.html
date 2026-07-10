@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend App Route Dependencies Split</title>
+</head>
+<body>
+  <h1>Backend App Route Dependencies Split</h1>
+  <section>
+    <h2>Goal</h2>
+    <p>Move the route dependency factory assembly out of <code>backend/app.py</code> into a dedicated module, while keeping the legacy private factory names as thin forwarding wrappers and preserving route behavior.</p>
+  </section>
+  <section>
+    <h2>Worker Split</h2>
+    <ul>
+      <li>Subwindow: implemented the backend refactor and test coverage.</li>
+      <li>Main window: review-only acceptance path; no patching.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>backend/app.py</code></li>
+      <li><code>backend/app_route_dependencies.py</code></li>
+      <li><code>tests/test_backend_app_route_dependencies.py</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li>Route dependency assembly now lives in <code>backend/app_route_dependencies.py</code>.</li>
+      <li>Legacy private factory names in <code>backend/app.py</code> remain available as thin forwarders.</li>
+      <li>Settings route dependencies still call the existing backend wrapper patch points.</li>
+      <li>Chat stream, human ops decision, brain models, audio, health, and chat topics dependencies continue to resolve through the current backend wiring.</li>
+      <li>No <code>@app.get</code>, <code>@app.post</code>, <code>@app.websocket</code>, or <code>@app.delete</code> decorators were reintroduced into <code>backend/app.py</code>.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Remaining Work</h2>
+    <p>None for this split. The route dependency wiring is now isolated in the new module, and the backend compatibility export for <code>DEFAULT_TOPIC_TITLE</code> has been restored after the main-window regression report.</p>
+  </section>
+  <section>
+    <h2>Recommended Next Step</h2>
+    <p>Use the same pattern for any remaining backend wiring that still lives directly in <code>backend/app.py</code>, but only if a future task explicitly targets it.</p>
+  </section>
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_route_dependencies.py tests/test_backend_app_route_dependencies.py</code></li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_route_dependencies tests.test_backend_route_split tests.test_backend_settings_config tests.test_neo_backend_contract -v</code></li>
+      <li><code>git diff --check -- backend/app.py backend/app_route_dependencies.py tests/test_backend_app_route_dependencies.py</code></li>
+    </ul>
+    <p>Result: all checks passed in the split round; this follow-up adds a restored compatibility export and a guard test for <code>backend.app.DEFAULT_TOPIC_TITLE</code>.</p>
+  </section>
+</body>
+</html>

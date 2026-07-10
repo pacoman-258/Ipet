@@ -23,17 +23,17 @@ For coding agents, start with `AGENTS.md`.
 
 ```text
 Ipet/
-|-- main.py                    # desktop host and Qt/WebEngine bridge
-|-- backend/                   # current Python API surface during the Neo transition
-|-- body/                      # target Body module for shell, observation, voice, presentation
-|-- brain/                     # target Brain module for LLM turn decisions
-|-- human_ops/                 # target approvals, action review, and execution records
-|-- memory/                    # target durable memory and summaries
+|-- main.py                    # desktop composition, Qt lifecycle, compatibility wrappers
+|-- backend/                   # API composition, routes, helpers, and adapters
+|-- body/                      # Body shell, observation, voice, and presentation behavior
+|-- brain/                     # Brain LLM turn decisions
+|-- human_ops/                 # approvals, action review, and execution records
+|-- memory/                    # durable memory and summaries
 |-- skills/                    # built-in and learned local skills
-|-- app/                       # target application composition layer
-|-- frontend/                  # target frontend home after root UI migration
-|-- index.html                 # transition-period pet UI entry, still loaded from root
-|-- settings.html              # transition-period settings UI entry, still loaded from root
+|-- app/                       # desktop composition and host support modules
+|-- frontend/                  # pet UI controllers and behavior modules
+|-- index.html                 # root pet UI document and script loader
+|-- settings.html              # root settings UI entry
 |-- settings.css
 |-- settings.js
 |-- docs/                      # architecture, workflow, ownership, and reports
@@ -45,7 +45,7 @@ Ipet/
 |-- README.html                # Chinese HTML README
 ```
 
-The Neo model is being introduced while some implementation files still live under the previous Python layout. Root UI files stay where they are until the desktop host and backend loading paths move together.
+The root entry paths remain stable for desktop compatibility. `main.py`, `backend/app.py`, and `index.html` stay focused on composition and loading; new domain behavior belongs in the corresponding module directory.
 
 ## Local Run
 

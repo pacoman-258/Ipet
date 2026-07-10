@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend Chat Worklog Split Report</title>
+</head>
+<body>
+  <h1>Frontend Chat Worklog Split Report</h1>
+
+  <h2>Goal</h2>
+  <p>继续瘦身 <code>frontend/index.js</code>，把聊天 thought、assistant worklog、assistant history、approval bubble 的渲染状态与 DOM 构造拆到 <code>window.IpetChatWorklog.createChatWorklogController(deps)</code>。</p>
+
+  <h2>Worker Split</h2>
+  <p>frontend 拆分 worker 负责新增 <code>frontend/chat_worklog.js</code> 子模块；主窗口 <code>frontend/index.js</code> 只保留同名 wrapper、聊天流解析、TTS、Live2D 与 Qt click preview 检查/协调逻辑。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/chat_worklog.js</code>：新增 chat worklog controller，迁移 thought/worklog/history/approval bubble 渲染逻辑。</li>
+    <li><code>frontend/index.js</code>：删除本地 worklog 渲染状态，注入 <code>chatWorklogController</code> 并保留 wrapper 调用点。</li>
+    <li><code>index.html</code>：在 <code>speech.js</code> 与 <code>index.js</code> 之间加载 <code>chat_worklog.js</code>。</li>
+    <li><code>tests/test_frontend_chat_worklog_source.py</code>：新增源代码级拆分测试。</li>
+    <li><code>tests/test_chat_modes_ui.py</code>：把拆分资产加载顺序与 thought session 断言更新到新模块。</li>
+    <li><code>tests/test_index_helpers_source.py</code>：跟进修正 helper/source 测试契约，确认 <code>formatStepMeta</code> 属于 helper bundle 与 worklog 渲染模块，不要求 <code>frontend/index.js</code> 保留 wrapper。</li>
+    <li><code>docs/reports/2026-06-16-frontend-chat-worklog-split.html</code>：记录本轮拆分。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>frontend/index.js</code> 不再持有 <code>currentThoughtGroup</code>、<code>currentAssistantWorklog</code>、<code>approvalBubbleRefs</code>、<code>approvalThoughtSessionRefs</code> 等 worklog 渲染内部状态；聊天流仍在主文件内按原事件路径调用 wrapper，DOM class、按钮文本、approval 事件结构保持不变。</p>
+
+  <h2>Remaining Work</h2>
+  <p>这轮只拆 thought/worklog/history/approval bubble 渲染，并已补齐 helper source 测试的新边界。聊天流解析、输入重试、Human Ops click preview、TTS 与 Live2D 主流程仍在 <code>frontend/index.js</code>，后续可继续按同样 controller 模式拆更小边界。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>下一轮优先评估是否把 chat stream event parsing 做成独立 coordinator；拆之前先补行为测试，避免影响 approval continuation 和语音输出时序。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_chat_worklog_source tests.test_chat_modes_ui tests.test_frontend_speech_source tests.test_frontend_chat_sidebars_source tests.test_frontend_asr_source -v</code>：通过，28 tests OK。</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_index_helpers_source tests.test_frontend_chat_worklog_source tests.test_chat_modes_ui -v</code>：通过，23 tests OK；覆盖 <code>formatStepMeta</code> 测试契约修正。</li>
+    <li><code>node --check frontend/chat_worklog.js</code>：通过。</li>
+    <li><code>node --check frontend/index.js</code>：通过。</li>
+  </ul>
+</body>
+</html>

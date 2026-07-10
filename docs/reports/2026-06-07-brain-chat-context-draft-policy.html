@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Chat Context Draft Policy Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Chat Context Draft Policy Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Brain 在微信回复任务中更高效地使用已经观察到的聊天内容：当 <code>chat_context.recent_messages</code> 已经包含目标联系人的可见消息时，Brain 应基于这些消息起草回复，而不是反复观察同一段聊天记录。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 在系统提示中明确 <code>recent_messages</code> 是 <code>read_context</code> 阶段的可用证据。</li>
+    <li><strong>human-ops:</strong> 在审批后 continuation prompt 中提醒 Brain 使用已有聊天依据推进下一步。</li>
+    <li><strong>qa-reports:</strong> 增加 prompt 契约测试，覆盖模型不应因已有聊天上下文而重复 observe 的规则。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-chat-context-draft-policy.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt now names <code>chat_context.recent_messages</code> as sufficient read-context evidence when present.</li>
+    <li>Approval continuation prompts now say to draft or send from available chat context and not repeatedly observe the same messages.</li>
+    <li>The WeChat reply chain can move from read context to focus/type/send with fewer redundant observe turns.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_complex_goal_defaults_continue_after_approval_when_missing tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_approval_continues_complex_goal_to_next_reviewable_action tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_contact_and_input_affordances_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_marks_focused_input_from_cursor_text tests.test_neo_backend_contract.NeoBackendContractTests.test_post_approval_observe_prompt_for_wechat_reply_reads_chat_context tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_continuation_observes_sent_message_then_done -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 275 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need a real WeChat run to verify that observe extracts enough recent messages for useful drafting.</li>
+    <li>Future hardening can add reply-quality constraints, such as preserving user tone or asking the user when the visible chat context is ambiguous.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run a realistic contact reply scenario and compare Brain's drafted reply against the visible <code>recent_messages</code> evidence.</p>
+</body>
+</html>

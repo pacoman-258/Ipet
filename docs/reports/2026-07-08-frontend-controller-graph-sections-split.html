@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend Controller Graph Sections Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 12px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <h1>Frontend Controller Graph Sections Split</h1>
+
+  <h2>Goal</h2>
+  <p>Continue splitting <code>frontend/controller_graph.js</code> by moving grouped controller wiring into a browser-global sections module while preserving the existing <code>window.IpetControllerGraph.createIpetControllerGraph(deps = {})</code> API.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>The previous implementation subwindow created the controller graph sections split. This finishing subwindow corrected adjacent source-test ownership boundaries and updated the report. The main window remains responsible for final acceptance and verification review.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/controller_graph.js</code></li>
+    <li><code>frontend/controller_graph_sections.js</code></li>
+    <li><code>index.html</code></li>
+    <li><code>tests/test_index_helpers_source.py</code></li>
+    <li><code>tests/test_frontend_controller_graph_source.py</code></li>
+    <li><code>tests/test_frontend_app_bootstrap_source.py</code></li>
+    <li><code>tests/test_chat_modes_ui.py</code></li>
+    <li><code>tests/test_frontend_app_config_source.py</code></li>
+    <li><code>tests/test_frontend_app_refs_source.py</code></li>
+    <li><code>tests/test_frontend_asr_source.py</code></li>
+    <li><code>tests/test_frontend_chat_input_state_source.py</code></li>
+    <li><code>tests/test_frontend_chat_messages_source.py</code></li>
+    <li><code>tests/test_frontend_chat_modes_source.py</code></li>
+    <li><code>tests/test_frontend_chat_panel_source.py</code></li>
+    <li><code>tests/test_frontend_chat_sidebars_source.py</code></li>
+    <li><code>tests/test_frontend_chat_stream_source.py</code></li>
+    <li><code>tests/test_frontend_chat_submit_source.py</code></li>
+    <li><code>tests/test_frontend_chat_worklog_source.py</code></li>
+    <li><code>tests/test_frontend_human_ops_preview_source.py</code></li>
+    <li><code>tests/test_frontend_pet_scene_source.py</code></li>
+    <li><code>tests/test_frontend_pet_state_notify_source.py</code></li>
+    <li><code>tests/test_frontend_shell_bridge_source.py</code></li>
+    <li><code>tests/test_frontend_shell_visuals_source.py</code></li>
+    <li><code>tests/test_frontend_speech_source.py</code></li>
+    <li><code>docs/reports/2026-07-08-frontend-controller-graph-sections-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>controller_graph.js</code> remains thin orchestration for runtime/document/helper injection, shared <code>controllerRegistry</code>, facade, state, refs, and one delegation call. The new <code>controller_graph_sections.js</code> owns grouped wiring for chat input, shell, pet, chat, speech/stream, and bootstrap controllers, mutating the same shared controller registry object. Adjacent tests now assert concrete controller factories, registry writes, and facade wiring parameters against <code>controller_graph_sections.js</code> while leaving <code>controller_graph.js</code> assertions focused on orchestration/delegation.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known implementation work remains for this scoped split. Existing unrelated modified and untracked files in the working tree were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main-window review should inspect the browser script order and, if desired, run the desktop host for runtime smoke coverage beyond source tests.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile tests/test_frontend_controller_graph_source.py tests/test_frontend_app_bootstrap_source.py tests/test_chat_modes_ui.py tests/test_frontend_chat_panel_source.py tests/test_frontend_chat_submit_source.py tests/test_frontend_chat_stream_source.py</code> exited 0.</li>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_controller_graph_source tests.test_frontend_app_bootstrap_source tests.test_chat_modes_ui tests.test_frontend_chat_panel_source tests.test_frontend_chat_submit_source tests.test_frontend_chat_stream_source tests.test_frontend_chat_modes_source tests.test_frontend_chat_sidebars_source tests.test_frontend_asr_source tests.test_frontend_chat_messages_source tests.test_frontend_chat_input_state_source tests.test_frontend_human_ops_preview_source tests.test_frontend_pet_state_notify_source tests.test_frontend_shell_visuals_source tests.test_frontend_app_config_source tests.test_frontend_pet_scene_source tests.test_frontend_chat_worklog_source tests.test_frontend_shell_bridge_source tests.test_frontend_app_refs_source tests.test_frontend_speech_source tests.test_frontend_app_state_source -q</code> ran 101 tests and exited OK.</li>
+    <li>PASS: <code>git diff --check -- frontend/controller_graph.js frontend/controller_graph_sections.js index.html tests/test_frontend_controller_graph_source.py tests/test_frontend_app_bootstrap_source.py tests/test_chat_modes_ui.py tests/test_frontend_chat_panel_source.py tests/test_frontend_chat_submit_source.py tests/test_frontend_chat_stream_source.py docs/reports/2026-07-08-frontend-controller-graph-sections-split.html</code> exited 0.</li>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile tests/test_index_helpers_source.py</code> exited 0.</li>
+    <li>PASS: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_index_helpers_source tests.test_frontend_controller_graph_source tests.test_frontend_shell_visuals_source tests.test_frontend_pet_state_notify_source -q</code> ran 18 tests and exited OK.</li>
+    <li>PASS: <code>git diff --check -- tests/test_index_helpers_source.py docs/reports/2026-07-08-frontend-controller-graph-sections-split.html</code> exited 0.</li>
+  </ul>
+</body>
+</html>

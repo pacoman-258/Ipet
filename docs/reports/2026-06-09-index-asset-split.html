@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>2026-06-09 Index Asset Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px;
+      color: #243447;
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f1f4f8;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Index Asset Split</h1>
+
+  <h2>Goal</h2>
+  <p>拆分 root <code>index.html</code> 的内联 CSS 和主内联 JavaScript 到 <code>frontend/</code>，保持 root 入口和运行时加载顺序不变。</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <p>前端拆分 worker 执行第一刀；主窗口职责为检查边界和验证结果。未修改 <code>backend/app.py</code>、<code>main.py</code>、<code>settings.js</code>。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>index.html</code>: 用 <code>./frontend/index.css</code> 和 <code>./frontend/index.js</code> 替换原内联资产块。</li>
+    <li><code>frontend/index.css</code>: 承接原 <code>&lt;style&gt;</code> 内容。</li>
+    <li><code>frontend/index.js</code>: 承接原主 IIFE <code>&lt;script&gt;</code> 内容。</li>
+    <li><code>tests/test_chat_modes_ui.py</code>: 增加合并源 helper，并让 JS/CSS 字符串断言读取拆分后的资产。</li>
+    <li><code>docs/reports/2026-06-09-index-asset-split.html</code>: 记录本轮拆分。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>index.html</code> 保留 Qt、Live2D、PIXI、<code>index.min.js</code> 外部依赖顺序和 macOS 平台探测内联脚本；主 app 脚本仍在 body 末尾加载。测试覆盖新增资产引用和文件存在性。</p>
+
+  <h2>Remaining Work</h2>
+  <p>尚未做 ASR、topics、TTS、Human Ops preview 等内部模块拆分；本轮仅做资产分离。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>下一刀可在独立 worker 中按功能域拆分 <code>frontend/index.js</code>，并同步调整测试 helper 的读取范围。</p>
+</body>
+</html>

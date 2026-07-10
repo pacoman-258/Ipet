@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend App Adapters Split - 2026-07-08</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px auto;
+      max-width: 920px;
+      color: #1f2933;
+    }
+    h1, h2 {
+      line-height: 1.2;
+    }
+    code {
+      background: #eef2f7;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .status {
+      border-left: 4px solid #0f766e;
+      background: #ecfdf5;
+      padding: 12px 16px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Backend App Adapters Split</h1>
+  <p class="status"><strong>Status:</strong> DONE</p>
+
+  <h2>Goal</h2>
+  <p>
+    Continue shrinking <code>backend/app.py</code> by moving the remaining Human Ops observe,
+    observe prompt/result, ReAct prompt, and computer-use compatibility adapters into a dedicated
+    backend adapter module while preserving the old private names exported by <code>backend.app</code>.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>Implementation worker:</strong> this backend app adapter split window.</li>
+    <li><strong>Main window:</strong> expected to verify and accept, with no implementation edits required.</li>
+    <li><strong>Other agents:</strong> existing unrelated worktree changes were left untouched.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app_adapters.py</code> - new aggregation adapter for app-level private compatibility names.</li>
+    <li><code>backend/app.py</code> - imports and re-exports adapter names instead of defining local implementation bodies.</li>
+    <li><code>tests/test_backend_app_adapters.py</code> - new regression coverage for adapter re-exports and representative paths.</li>
+    <li><code>tests/test_backend_observe_result.py</code> - updated the app boundary assertion to expect adapter re-export instead of an app-local thin wrapper.</li>
+    <li><code>docs/reports/2026-07-08-backend-app-adapters-split.html</code> - this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> current size was reduced from 687 lines observed before this task to 432 lines after the split.</li>
+    <li>Computer-use intent helpers, structured context helpers, ReAct helper wrappers, observe prompt/result helpers, and Human Ops observe composition now live in <code>backend/app_adapters.py</code>.</li>
+    <li><code>backend.app</code> still exposes the legacy private names used by existing contract tests.</li>
+    <li>The Human Ops observe adapter lazily resolves <code>backend.app._send_desktop_command</code> and <code>backend.app.VisionAnalyzer</code>, preserving old patch points used by tests.</li>
+    <li>No <code>@app.get</code>, <code>@app.post</code>, <code>@app.websocket</code>, or <code>@app.delete</code> route decorators were introduced in <code>backend/app.py</code>.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li><code>backend/app.py</code> still owns proposal-flow dependency assembly and other route dependency factories.</li>
+    <li>Future rounds can move Human Ops proposal-flow compatibility wrappers into a similar adapter once the app globals are isolated behind a small state dependency object.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Split the remaining Human Ops proposal-flow compatibility functions and route dependency factories only after the current adapter boundary is accepted.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_adapters.py tests/test_backend_app_adapters.py tests/test_backend_observe_result.py</code> - passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_adapters tests.test_backend_route_split tests.test_neo_backend_contract -v</code> - passed, 93 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_human_ops_observe tests.test_computer_use_context tests.test_backend_observe_result -v</code> - passed, 22 tests.</li>
+  </ul>
+</body>
+</html>

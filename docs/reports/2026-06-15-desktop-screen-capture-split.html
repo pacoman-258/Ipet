@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Screen Capture Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; line-height: 1.5; color: #1f2933; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { font-weight: 700; color: #0f766e; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Screen Capture Split</h1>
+  <p class="status">Status: implemented and under verification</p>
+
+  <h2>Goal</h2>
+  <p>
+    Move screen capture, encoded frame payload, visual hash, display layout, and
+    UI metadata observation helpers out of <code>main.py</code> into
+    <code>body/screen_capture.py</code>, while keeping <code>main.py</code>
+    exports as compatibility wrappers.
+  </p>
+
+  <h2>Worker Split</h2>
+  <p>
+    This round acted as the desktop-shell / Body screen capture split worker.
+    The main window and startup path were kept to inspection and wrapper
+    compatibility only. Active Vision candidate discovery and Human Ops
+    click/type/key execution remained in <code>main.py</code>.
+  </p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>body/screen_capture.py</code>: new Body module for capture payload composition, Qt screenshot encoding, macOS screencapture payloads, text cleanup, and screen observation metadata.</li>
+    <li><code>main.py</code>: replaced the moved implementation with thin wrappers that pass the already-selected Qt binding classes into the Body module.</li>
+    <li><code>tests/test_screen_capture_payload.py</code>: new focused unittest coverage for pure payload logic and injected capture paths.</li>
+    <li><code>docs/reports/2026-06-15-desktop-screen-capture-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>body.screen_capture</code> can be imported without importing PySide6 or PyQt6 at module import time.</li>
+    <li><code>main.py</code> still exports the previous screen capture function names for existing imports and monkeypatch-oriented tests.</li>
+    <li>Capture payload fields such as <code>capture_scope</code>, <code>capture_backend</code>, <code>display_layout</code>, <code>display_count</code>, <code>frame_hash</code>, <code>visual_hash</code>, and encoded image dimensions are preserved.</li>
+    <li>Qt dependency selection remains owned by <code>main.py</code> during desktop startup; the new module uses dependency injection or lazy fallback only when called directly.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>python -m unittest tests.test_screen_capture_payload -v</code> failed with four assertions because <code>body.screen_capture</code> was not importable.</li>
+    <li>GREEN smoke: <code>python -m unittest tests.test_screen_capture_payload -v</code> passed after adding the module.</li>
+    <li>Compatibility smoke: <code>python -m unittest tests.test_desktop_runtime tests.test_main_runtime_env -v</code> passed before final report-time verification.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    No intentional behavior change remains in this split. Broader Active Vision
+    candidate discovery and Human Ops execution helpers are still in
+    <code>main.py</code> by design for this round.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Continue with a separate owner-scoped split for Active Vision discovery or
+    Human Ops execution only after this capture payload boundary is reviewed.
+  </p>
+</body>
+</html>

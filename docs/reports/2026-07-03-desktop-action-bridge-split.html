@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Action Bridge Split Report</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2933;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    code {
+      background: #eef2f7;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    section {
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Action Bridge Split Report</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>Move the Human Ops desktop action and Qt QApplication dependency wrapping out of <code>main.py</code> into <code>app/desktop_action_bridge.py</code>, while preserving the public compatibility functions that tests and <code>DesktopCommandRouter</code> patch.</p>
+  </section>
+
+  <section>
+    <h2>Worker / Subagent Split</h2>
+    <p>Desktop worker implemented the file changes. The main window remains responsible for review only. No other worker-owned files were reverted, reformatted, staged, committed, or cleaned.</p>
+  </section>
+
+  <section>
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>main.py</code>: imports <code>create_desktop_action_bridge</code> and delegates the existing Human Ops compatibility wrappers through a bridge factory bound to <code>QApplication</code>.</li>
+      <li><code>app/desktop_action_bridge.py</code>: new dataclass bridge around <code>human_ops.desktop_actions</code> and injected <code>qapplication</code>.</li>
+      <li><code>tests/test_desktop_action_bridge.py</code>: new focused tests for import isolation, action delegation, real action behavior through the bridge, and injected QApplication event handling.</li>
+      <li><code>docs/reports/2026-07-03-desktop-action-bridge-split.html</code>: this report.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved Effect</h2>
+    <p><code>main.py</code> no longer imports <code>human_ops.desktop_actions</code> directly. It keeps <code>_screen_coordinate</code>, <code>_CGPoint</code>, <code>_post_core_graphics_click</code>, <code>execute_human_ops_click</code>, <code>execute_human_ops_type_text</code>, <code>execute_human_ops_key_press</code>, <code>_process_pending_qt_events</code>, <code>_hide_window_for_desktop_click</code>, and <code>_restore_window_after_desktop_click</code> as thin compatibility wrappers. <code>DesktopCommandRouter</code> injection still receives the same patchable names.</p>
+  </section>
+
+  <section>
+    <h2>Remaining Work</h2>
+    <p>No remaining work for this split. The underlying <code>human_ops/desktop_actions.py</code> behavior was intentionally left unchanged.</p>
+  </section>
+
+  <section>
+    <h2>Recommended Next Step</h2>
+    <p>Have the main window review the bridge boundary and continue with the next planned desktop split if the compatibility surface looks acceptable.</p>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_bridge -v</code> initially failed because <code>app.desktop_action_bridge</code> did not exist, confirming the new test covered the missing split.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_bridge -v</code>: 4 tests passed.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_action_bridge.py tests/test_desktop_action_bridge.py</code>: exit code 0.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_bridge tests.test_desktop_actions tests.test_main_runtime_env -v</code>: 78 tests passed.</li>
+    </ul>
+  </section>
+</body>
+</html>

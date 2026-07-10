@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Settings Model Picker Split - 2026-06-28</title>
+  <style>
+    body {
+      margin: 32px;
+      color: #243447;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: #f7f9fc;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 28px;
+      border: 1px solid #d9e2ef;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 28px;
+      font-size: 18px;
+    }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #eef3f8;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: #0f5132;
+      background: #d1e7dd;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Settings Model Picker Split</h1>
+    <p><span class="status">GREEN</span> Worker report for the settings-console model picker split.</p>
+
+    <h2>Goal</h2>
+    <p>
+      Move Brain and Observe model fetch/render behavior out of <code>settings.js</code> into a focused
+      settings model picker module while preserving the settings UI, button behavior, and <code>/api/brain/models</code>
+      request payloads.
+    </p>
+
+    <h2>Worker / Subagent Split</h2>
+    <p>
+      This split implementation worker acted as <code>settings-console</code> lead and <code>qa-reports</code>
+      reporter. No separate subagent was used. Existing dirty worktree changes were treated as owned by other
+      workers and were not reverted, staged, cleaned, or committed.
+    </p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>settings_model_picker.js</code>: added <code>window.IpetSettingsModelPicker.createSettingsModelPickerController(deps)</code> and moved Brain/Observe model option rendering and fetch logic.</li>
+      <li><code>settings.js</code>: created the model picker controller with injected helpers and retained thin compatibility wrappers.</li>
+      <li><code>settings.html</code>: loads <code>/settings_model_picker.js</code> before <code>/settings.js</code>.</li>
+      <li><code>backend/app.py</code>: serves <code>/settings_model_picker.js</code> with the same no-store settings asset response pattern.</li>
+      <li><code>tests/test_settings_model_picker_source.py</code>: added focused source coverage for namespace, split boundary, payload semantics, loading order, and backend route.</li>
+      <li><code>tests/test_neo_aspect_settings_page.py</code> and <code>tests/test_chat_modes_ui.py</code>: updated source assertions to verify the new split location.</li>
+      <li><code>docs/reports/2026-06-28-settings-model-picker-split.html</code>: recorded this task round.</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li>Brain and Observe model status updates, model button rendering, and model list fetches now live in <code>settings_model_picker.js</code>.</li>
+      <li><code>settings.js</code> keeps the original function names and event binding surface but delegates to <code>modelPickerController</code>.</li>
+      <li>The model fetch payload keeps <code>provider</code>, <code>model_endpoint</code>, optional <code>api_key</code>, and Observe <code>scope: "observe"</code>.</li>
+      <li>Google AI Studio still allows hostless model fetching because the endpoint guard remains <code>!endpoint &amp;&amp; !isGoogleAistudio(provider)</code>.</li>
+    </ul>
+
+    <h2>Remaining Work</h2>
+    <p>
+      No remaining implementation work for this split. Manual browser or desktop settings smoke testing was not run in this worker round.
+    </p>
+
+    <h2>Recommended Next Step</h2>
+    <p>
+      Coordinator should inspect this narrow diff in the dirty worktree, then optionally open the settings page and click the Brain/Observe fetch buttons against a configured backend.
+    </p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li>RED: <code>.venv/bin/python -m unittest tests.test_settings_model_picker_source -v</code> failed 5/5 tests before implementation because <code>settings_model_picker.js</code> did not exist.</li>
+      <li>GREEN: <code>.venv/bin/python -m unittest tests.test_settings_model_picker_source -v</code> passed 5/5 tests after implementation.</li>
+      <li>GREEN: <code>.venv/bin/python -m unittest tests.test_settings_model_picker_source tests.test_neo_aspect_settings_page tests.test_chat_modes_ui -v</code> passed 29/29 tests.</li>
+      <li>GREEN: <code>node --check settings.js</code> exited 0.</li>
+      <li>GREEN: <code>node --check settings_model_picker.js</code> exited 0.</li>
+    </ul>
+  </main>
+</body>
+</html>

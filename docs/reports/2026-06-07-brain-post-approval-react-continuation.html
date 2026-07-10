@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Post-Approval ReAct Continuation Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Post-Approval ReAct Continuation Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>继续推进 Ipet 的复杂 computer-use 能力：在用户批准一个简单动作后，Ipet 能像人类一样观察变化后的表面，再提出下一步点击、输入或回车审批，而不是审批后只做一次 Brain 调用就停止。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 复用现有 ReAct follow-up prompt，让审批后的 <code>think</code> / <code>observe</code> 也能继续推进。</li>
+    <li><strong>human-ops:</strong> 在批准执行后加入 bounded continuation loop，一旦出现 <code>propose_act</code> 立即回到 Human Ops 审批边界；同时扩展聊天回复类桌面意图识别。</li>
+    <li><strong>qa-reports:</strong> 增加审批后 observe 再到下一审批的回归测试，并记录本轮报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-post-approval-react-continuation.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>批准并执行一个带 <code>continue_after_approval</code> 的动作后，backend 会先观察新表面。</li>
+    <li>如果 Brain 仍返回 <code>observe</code>，backend 会执行该无副作用观察，并把自然语言结果、坐标上下文和 <code>Structured computer-use context</code> 喂回 Brain。</li>
+    <li>如果 Brain 返回下一步 <code>propose_act</code>，Human Ops 会发出新的审批请求，而不是自动执行。</li>
+    <li>回归覆盖了“点击 Dock 微信后，再观察联系人张三条目，再提出点击张三条目审批”的复杂链路。</li>
+    <li>“根据张三的微信聊天信息回复张三”这类没有显式“打开/点击”的请求也会被识别为桌面操作目标，并使用聊天回复专用 observe prompt。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>真实微信端到端演练仍未执行；当前证据来自后端合约测试和 mock observe/Brain。</li>
+    <li>后续可把 post-approval continuation loop 和 chat stream pre-approval loop 抽成共享 helper，减少长期维护重复。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>在真实 macOS 桌面运行一次打开微信、定位联系人、读取上下文、输入回复、回车发送的人工审批链路，收集每轮 observe 文本和 structured context，再补真实失败点。</p>
+</body>
+</html>

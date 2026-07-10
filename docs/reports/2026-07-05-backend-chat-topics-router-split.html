@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Chat Topics Router Split - 2026-07-05</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2933; }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+    code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+    .status { font-weight: 700; color: #166534; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Backend Chat Topics Router Split</h1>
+    <p class="status">Status: DONE</p>
+
+    <h2>Goal</h2>
+    <p>
+      Move the <code>/api/skills</code> and <code>/api/chat/topics</code> FastAPI route decorators out of
+      <code>backend/app.py</code> into <code>backend/chat_topics_routes.py</code> while preserving the existing
+      HTTP paths, methods, status codes, response shapes, and monkeypatch-friendly helper delegation.
+    </p>
+
+    <h2>Worker / Subagent Split</h2>
+    <p>
+      Backend subwindow owned the implementation, tests, and report for this route split. The main window is expected
+      to review the result only. No frontend, desktop host, settings, ASR, TTS, audio, or unrelated worker report files
+      were intentionally changed.
+    </p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>backend/app.py</code>: keeps <code>_chat_topics_route_deps()</code> and registers the split chat topics router.</li>
+      <li><code>backend/chat_topics_routes.py</code>: owns the skills and chat topics route decorators through <code>create_chat_topics_router()</code> and <code>register_chat_topics_routes()</code>.</li>
+      <li><code>tests/test_backend_chat_topics_routes.py</code>: asserts app-level delegation, app source split constraints, and split-module route decorator ownership.</li>
+      <li><code>docs/reports/2026-07-05-backend-chat-topics-router-split.html</code>: records this task round.</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li><code>backend/app.py</code> no longer contains inline decorators for <code>/api/skills</code> or chat topic routes.</li>
+      <li><code>backend/chat_topics_routes.py</code> now exposes a route factory and registration helper matching the settings route split pattern.</li>
+      <li>Route handlers remain in the split module and call the existing helper functions.</li>
+      <li>Dependencies resolve the current <code>TOPIC_STORE</code> at request time, preserving tests and callers that patch <code>backend_app.TOPIC_STORE</code>.</li>
+      <li>ASR, TTS, audio, settings, frontend, and desktop route code were left outside this task.</li>
+    </ul>
+
+    <h2>Remaining Work</h2>
+    <p>
+      None for this split. Broader backend route decomposition can continue in separate worker-owned tasks.
+    </p>
+
+    <h2>Recommended Next Step</h2>
+    <p>
+      Main window review should confirm the split scope and then proceed with the next backend route extraction only if
+      assigned to a separate worker.
+    </p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_app_source_registers_chat_topics_router_instead_of_inline_decorators tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_split_module_source_declares_chat_topics_router_decorators -v</code>: failed before implementation for the expected missing app registration and missing split-module router decorators.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_chat_topics_api.ChatTopicsApiTests.test_create_list_detail_and_delete_topic_use_local_store -v</code>: failed before dynamic dependency resolution because the router captured the old topic store.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_chat_topics_api.ChatTopicsApiTests.test_create_list_detail_and_delete_topic_use_local_store tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_create_topic_route_delegates_with_store_dependencies tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_list_topic_route_delegates_with_store_dependencies tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_app_source_registers_chat_topics_router_instead_of_inline_decorators tests.test_backend_chat_topics_routes.BackendChatTopicsRouteSplitTests.test_split_module_source_declares_chat_topics_router_decorators -v</code>: 5 tests passed after the dependency fix.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/chat_topics_routes.py tests/test_backend_chat_topics_routes.py</code>: exit 0.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_chat_topics_routes tests.test_chat_topics tests.test_chat_topics_api tests.test_neo_backend_contract -v</code>: 103 tests passed.</li>
+      <li><code>git diff --check -- backend/app.py backend/chat_topics_routes.py tests/test_backend_chat_topics_routes.py</code>: exit 0.</li>
+      <li><code>rg -n "[ \t]+$" docs/reports/2026-07-05-backend-chat-topics-router-split.html</code>: no output.</li>
+    </ul>
+  </main>
+</body>
+</html>

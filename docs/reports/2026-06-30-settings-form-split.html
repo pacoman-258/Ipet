@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-30 Settings Form Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px;
+      color: #202124;
+      background: #fbfbfd;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #e6e8ef;
+      border-radius: 8px;
+      padding: 28px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 17px;
+    }
+    code {
+      background: #f3f5f9;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Settings Form Split</h1>
+
+    <h2>Goal</h2>
+    <p>拆出 <code>settings.js</code> 中的表单模型读写、默认值合并、静态 fallback、点击预览和 provider 表单同步逻辑，放入新的普通浏览器脚本 <code>settings_form.js</code>，同时保留兼容 wrapper。</p>
+
+    <h2>Worker / Subagent Split</h2>
+    <p>本轮由子窗口 worker 在共享工作区直接实现；主窗口只负责后续验收。未执行 stage、commit、cleanup 或 revert。</p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>settings_form.js</code>: 新增 <code>window.IpetSettingsForm.createSettingsFormController</code>，承接表单默认值和读写主体逻辑。</li>
+      <li><code>settings.js</code>: 表单相关同名函数改为委托 <code>formController</code> 的薄 wrapper，保留加载、保存、导航和 model picker 接入。</li>
+      <li><code>settings.html</code>: 在 <code>settings_model_picker.js</code> 和 <code>settings.js</code> 前加载 <code>settings_form.js</code>。</li>
+      <li><code>backend/app.py</code>: 增加 <code>SETTINGS_FORM_JS_PATH</code> 和 <code>/settings_form.js</code> 静态路由，沿用 no-store 资源响应。</li>
+      <li><code>tests/test_settings_form_source.py</code>: 新增源码契约测试，覆盖加载顺序、namespace、薄 wrapper、主体逻辑迁移和静态路由。</li>
+      <li><code>tests/test_neo_aspect_settings_page.py</code>: 调整现有设置页源码断言到新的模块边界。</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <p><code>settings.js</code> 不再内联 clone、默认值、fallback、populate/readForm 主体；model picker 仍通过 settings.js 的 <code>readForm</code>、<code>renderSummary</code>、<code>stringValue</code> 和 <code>isGoogleAistudio</code> 兼容入口工作。</p>
+
+    <h2>Remaining Work</h2>
+    <p>本轮未拆 <code>settings.js</code> 的页面导航、保存加载、summary/diagnostics 渲染逻辑；这些可作为后续更小拆分继续处理。</p>
+
+    <h2>Recommended Next Step</h2>
+    <p>下一轮可拆出 settings summary/diagnostics 渲染，或把 settings 页事件绑定整理成独立 controller，但应继续保留薄 wrapper 和无 bundler 入口。</p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li><code>node --check settings_form.js</code>: passed</li>
+      <li><code>node --check settings.js</code>: passed</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_settings_form_source -v</code>: failed first as expected before implementation, then passed</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_settings_form_source tests.test_neo_aspect_settings_page tests.test_settings_model_picker_source tests.test_neo_backend_contract -v</code>: passed, 97 tests</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py tests/test_settings_form_source.py</code>: passed</li>
+      <li><code>git diff --check -- settings.js settings.html backend/app.py tests/test_neo_aspect_settings_page.py tests/test_settings_model_picker_source.py</code>: passed with no output</li>
+    </ul>
+  </main>
+</body>
+</html>

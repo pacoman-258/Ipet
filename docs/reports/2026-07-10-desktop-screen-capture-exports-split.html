@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>2026-07-10 desktop screen capture exports split</title>
+</head>
+<body>
+  <h1>Desktop Screen Capture Compatibility Exports Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move desktop screen-capture compatibility export creation into <code>app/desktop_screen_capture_wiring.py</code> so <code>main.py</code> only installs the exports, while preserving legacy names, default-provider identities, dynamic patch markers, and <code>__module__</code> values.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Implementation was completed in this subwindow. The main window is responsible for independent review, integration acceptance, and the full regression suite. Concurrent work outside the permitted file areas was left untouched.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/desktop_screen_capture_wiring.py</code></li>
+    <li><code>tests/test_desktop_screen_capture_wiring.py</code></li>
+    <li><code>docs/reports/2026-07-10-desktop-screen-capture-exports-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>create_screen_capture_compat_exports</code> now creates and names the complete compatibility surface. The wiring module installs the same generated entries for its own API, and <code>main.py</code> installs a main-owned view with one <code>globals().update(...)</code> call. Runtime lookups preserve bridge patching and the legacy dynamic <code>default_*</code> provider markers for Qt composition, pixmap encoding, macOS capture, Qt capture, and aggregate screen capture.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No scoped implementation work remains. Full repository regression was intentionally not run because the main-window worker owns it. Existing concurrent worktree changes and the environment's PyQt6/PySide6 duplicate-class warnings were not altered.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main-window worker run the full regression suite and merge this scoped change with the other concurrent desktop wiring work.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>Boundary test first failed on the old structure because <code>create_screen_capture_compat_exports</code> did not exist in <code>main.py</code>; it passed after implementation.</li>
+    <li><code>.venv/bin/python -m py_compile main.py app/desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_wiring.py</code>: passed.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_desktop_screen_capture_wiring tests.test_desktop_screen_capture_bridge -v</code>: 9 tests passed.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_screen_capture_payload tests.test_desktop_active_vision_wiring tests.test_desktop_active_vision_bridge tests.test_main_runtime_env -v</code>: 77 tests passed.</li>
+    <li><code>git diff --check -- main.py app/desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_wiring.py docs/reports/2026-07-10-desktop-screen-capture-exports-split.html</code>: passed.</li>
+  </ul>
+</body>
+</html>

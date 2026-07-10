@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Pet Bridge Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 2rem; max-width: 920px; }
+    h1 { font-size: 1.7rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.4rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Pet Bridge Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the <code>PetBridge</code> signal and slot class body out of <code>main.py</code> while preserving <code>main.PetBridge</code> and the existing Qt bridge behavior.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This worker implemented the desktop bridge split directly in the shared worktree. The main window remains responsible for review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/pet_bridge.py</code>: new Qt-neutral factory <code>create_pet_bridge_class</code> with injected QObject base, signal factory, slot decorator, and print function.</li>
+    <li><code>main.py</code>: imports the factory and keeps the public <code>PetBridge</code> name by creating it from the active Qt binding.</li>
+    <li><code>tests/test_desktop_pet_bridge.py</code>: fake QObject, Signal, and Slot tests for bridge emissions and logging without starting real Qt.</li>
+    <li><code>docs/reports/2026-07-01-desktop-pet-bridge-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>main.py</code> no longer contains the full <code>PetBridge</code> class definition. The bridge behavior remains unchanged for <code>DesktopPet.__init__</code>: state, settings, ASR warmup, window control, and click preview signals are still exposed on <code>PetBridge</code>.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known follow-up for this split. The repository was already dirty before this worker started, so unrelated files were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window inspect the small factory boundary and confirm later desktop splits keep Qt-specific dependencies in <code>main.py</code> or narrow adapter modules.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_pet_bridge tests.test_main_runtime_env -v</code>: passed, 69 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/pet_bridge.py tests/test_desktop_pet_bridge.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py app/pet_bridge.py tests/test_desktop_pet_bridge.py</code>: passed with no output.</li>
+  </ul>
+</body>
+</html>

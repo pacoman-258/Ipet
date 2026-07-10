@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Config and Live2D Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; line-height: 1.55; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Config and Live2D Split</h1>
+  <p><strong>Date:</strong> 2026-06-15</p>
+
+  <h2>Goal</h2>
+  <p>Continue the second <code>main.py</code> split by moving desktop configuration helpers and Live2D asset helpers into target module homes while preserving the existing <code>main</code> compatibility API.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>desktop-shell worker:</strong> kept <code>main.py</code> wrappers for patched globals such as <code>ROOT_DIR</code>, <code>CONFIG_PATH</code>, and <code>DEFAULT_CONFIG</code>.</li>
+    <li><strong>body worker:</strong> moved model path, motion, expression, lipsync, and generated model helpers into <code>body/live2d_assets.py</code>.</li>
+    <li><strong>qa-reports worker:</strong> added focused regression tests and this HTML report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/configuration.py</code>: new configuration merge, shape cleanup, loading, custom HTTP TTS preset, and pet display-name helpers.</li>
+    <li><code>body/__init__.py</code>: new Body package marker.</li>
+    <li><code>body/live2d_assets.py</code>: new Live2D path, scan, lipsync, and action-item helper module.</li>
+    <li><code>main.py</code>: configuration and Live2D functions now delegate to the new modules while keeping old function names.</li>
+    <li><code>tests/test_desktop_configuration.py</code>: direct tests for configuration helper behavior and injected config loading.</li>
+    <li><code>tests/test_live2d_assets.py</code>: direct tests for motion inference, generated model scanning, and lipsync metadata.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The desktop host keeps its public helper API, but pure configuration logic now lives in <code>app/configuration.py</code> and Live2D asset logic now lives in <code>body/live2d_assets.py</code>. Existing tests that patch <code>main.ROOT_DIR</code> and <code>main.CONFIG_PATH</code> continue to exercise the wrappers.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: focused tests first failed because <code>app.configuration</code> and <code>body.live2d_assets</code> did not exist.</li>
+    <li>GREEN: <code>.venv/bin/python -m unittest tests.test_desktop_configuration tests.test_live2d_assets -v</code> passed.</li>
+    <li>Regression: <code>.venv/bin/python -m unittest tests.test_desktop_configuration tests.test_live2d_assets tests.test_desktop_runtime tests.test_main_runtime_env -v</code> passed.</li>
+    <li>Compile verification will be run after this report is written.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p><code>main.py</code> still contains large desktop shell, active vision, Qt bridge, and settings-panel logic. The next split should avoid touching the existing frontend and backend hot files unless its owner explicitly routes that work.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue with a focused desktop-shell or Body split for active-vision/desktop-command helpers, with the same wrapper-first compatibility pattern and targeted tests.</p>
+</body>
+</html>

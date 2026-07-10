@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop ScreenVisionController Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2933; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { font-weight: 700; color: #8a5a00; }
+  </style>
+</head>
+<body>
+  <h1>Desktop ScreenVisionController Split</h1>
+  <p><strong>Date:</strong> 2026-06-17</p>
+  <p><strong>Status:</strong> <span class="status">DONE</span></p>
+
+  <h2>Goal</h2>
+  <p>Move <code>ScreenVisionController</code> out of <code>main.py</code> into a focused Body module while keeping the desktop host import surface and existing controller behavior intact.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>desktop ScreenVisionController split worker:</strong> owned <code>main.py</code>, <code>body/screen_vision_controller.py</code>, focused split tests, and this report.</li>
+    <li><strong>main window/coordinator:</strong> should inspect the diff and decide whether the unrelated <code>body/active_vision.py</code> failure belongs to another worker.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code>: imports <code>ScreenVisionController</code> from <code>body.screen_vision_controller</code> and no longer defines the class inline.</li>
+    <li><code>body/screen_vision_controller.py</code>: new focused module containing the controller, lazy Qt dependency loading, screen capture wrapper defaults, observation wrapper defaults, and vision frame posting.</li>
+    <li><code>tests/test_screen_vision_controller_split.py</code>: new source/import-level tests proving the class is no longer defined in <code>main.py</code> and the new module does not import <code>main</code>.</li>
+    <li><code>docs/reports/2026-06-17-desktop-screen-vision-controller-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added a failing split test first, observed RED, then moved the controller to <code>body/screen_vision_controller.py</code>.</li>
+    <li>Kept <code>main.ScreenVisionController</code> available through an import so existing tests and callers continue to work.</li>
+    <li>Kept timer start/stop, capture overlap protection, background capture, payload normalization, observation merge, timeout, and POST behavior covered by existing tests.</li>
+    <li>New module has no reverse import of <code>main</code>; a clean subprocess import confirms <code>main</code> is not loaded.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_screen_vision_controller_split -v</code>: PASS after RED was confirmed.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_main_runtime_env.MainDesktopEnvTests.test_screen_vision_controller_disabled_does_not_start_timer tests.test_main_runtime_env.MainDesktopEnvTests.test_screen_vision_controller_posts_frame_when_enabled tests.test_main_runtime_env.MainDesktopEnvTests.test_screen_vision_controller_posts_on_background_runner_and_skips_overlap tests.test_main_runtime_env.MainDesktopEnvTests.test_screen_vision_controller_can_encode_frame_on_background_runner tests.test_main_runtime_env.MainDesktopEnvTests.test_screen_vision_controller_extends_timeout_for_enabled_analyzer -v</code>: PASS.</li>
+    <li><code>.venv/bin/python -m py_compile main.py body/screen_vision_controller.py tests/test_screen_vision_controller_split.py</code>: PASS.</li>
+    <li><code>git diff --check -- main.py body/screen_vision_controller.py tests/test_screen_vision_controller_split.py docs/reports/2026-06-17-desktop-screen-vision-controller-split.html</code>: PASS.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_screen_vision_controller_split tests.test_main_runtime_env tests.test_screen_capture_payload -v</code>: PASS, 71 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>No remaining work for this split worker.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Main window review should inspect the focused diff and then continue with the next desktop-shell extraction.</p>
+</body>
+</html>

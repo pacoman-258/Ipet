@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Web Permissions Split Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 16px; margin-top: 22px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Web Permissions Split Report</h1>
+
+  <h2>Goal</h2>
+  <p>Move <code>DesktopPet</code> WebEngine feature permission policy handling out of <code>main.py</code> into a focused app module while preserving the existing audio/video capture behavior.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Desktop split worker handled this sub-window task. No extra subagents were used.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/desktop_web_permissions.py</code></li>
+    <li><code>tests/test_desktop_web_permissions.py</code></li>
+    <li><code>docs/reports/2026-07-07-desktop-web-permissions-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>DesktopWebPermissionsController</code> now owns PermissionPolicy lookup, file-origin detection, and capture feature grant/deny decisions. <code>DesktopPet.on_feature_permission_requested()</code> is a thin delegate through the controller cache.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. Broader desktop regression can be run after parallel workers settle their active changes.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>After the other desktop split workers finish, run the full desktop regression slice once from a stable worktree.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>.venv/bin/python -m unittest tests.test_desktop_web_permissions -v</code> failed before implementation because <code>app/desktop_web_permissions.py</code> was missing and <code>DesktopPet.on_feature_permission_requested()</code> was still 13 lines.</li>
+    <li>PASS: <code>.venv/bin/python -m py_compile main.py app/desktop_web_permissions.py tests/test_desktop_web_permissions.py</code>.</li>
+    <li>PASS: <code>.venv/bin/python -m unittest tests.test_desktop_web_permissions tests.test_main_runtime_env -v</code> ran 72 tests OK.</li>
+    <li>PASS: <code>git diff --check -- main.py app/desktop_web_permissions.py tests/test_desktop_web_permissions.py docs/reports/2026-07-07-desktop-web-permissions-split.html</code>.</li>
+  </ul>
+</body>
+</html>

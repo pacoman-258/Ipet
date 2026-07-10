@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend Pet App API Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 32px;
+      color: #1f2937;
+      line-height: 1.55;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 16px;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Pet App API Split</h1>
+
+  <h2>Goal</h2>
+  <p>
+    Move the <code>window.PET_APP</code> runtime API assembly out of
+    <code>frontend/app_bootstrap.js</code> while preserving the existing startup behavior.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>
+    Frontend split worker only. No subagent handoff. Main window role remains review-only per task direction.
+  </p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/pet_app_api.js</code>: new module exposing <code>createPetAppApi</code> and <code>installPetAppApi</code>.</li>
+    <li><code>frontend/app_bootstrap.js</code>: thin <code>installPetAppApi()</code> wrapper now delegates to the new module.</li>
+    <li><code>index.html</code>: loads <code>frontend/pet_app_api.js</code> before <code>frontend/app_bootstrap.js</code>.</li>
+    <li><code>tests/test_frontend_app_bootstrap_source.py</code>: source tests updated for the new module boundary and script order.</li>
+    <li><code>docs/reports/2026-07-07-frontend-pet-app-api-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>
+    <code>app_bootstrap</code> now owns startup flow and dependency collection only; the PET_APP method bodies live in
+    <code>pet_app_api.js</code>. Startup still calls <code>installPetAppApi()</code> before <code>init()</code>.
+    Review follow-up now preserves injected runtime window lookup for <code>IpetPetAppApi</code>, and
+    <code>playExpression</code> tolerates a missing <code>petSceneController.getCurrentModel</code>.
+  </p>
+
+  <h2>Remaining Work</h2>
+  <p>None for this split. Other unrelated worktree changes were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Continue the frontend decomposition by moving the next self-contained runtime API or bridge surface behind a
+    similarly small installer module.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>tests.test_frontend_app_bootstrap_source</code> red check failed before implementation as expected.</li>
+    <li><code>tests.test_frontend_app_bootstrap_source</code> review follow-up red check failed before implementation as expected.</li>
+    <li><code>node --check frontend/pet_app_api.js</code>: passed with exit 0.</li>
+    <li><code>node --check frontend/app_bootstrap.js</code>: passed with exit 0.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_frontend_app_bootstrap_source tests.test_chat_modes_ui -v</code>: passed, 22 tests.</li>
+    <li><code>git diff --check -- frontend/app_bootstrap.js frontend/pet_app_api.js index.html tests/test_frontend_app_bootstrap_source.py docs/reports/2026-07-07-frontend-pet-app-api-split.html</code>: passed with exit 0.</li>
+  </ul>
+</body>
+</html>

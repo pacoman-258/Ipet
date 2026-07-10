@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Active Vision macOS Discovery Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; line-height: 1.5; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 16px; margin-top: 24px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+    code { background: #f5f5f5; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Active Vision macOS Discovery Split</h1>
+  <p><strong>Date:</strong> 2026-06-17</p>
+
+  <h2>Goal</h2>
+  <p>Move macOS Active Vision discovery and parsing logic out of <code>body/active_vision.py</code> into a focused <code>body/active_vision_macos.py</code> module while preserving the existing public wrapper API.</p>
+
+  <h2>Worker Split</h2>
+  <p>This worker handled only the Body Active Vision macOS discovery split. The main window remains responsible for review and integration checks. No backend, frontend, settings, main runtime, or Human Ops files were edited.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>body/active_vision.py</code>: replaced macOS discovery, Dock enumeration, and running app discovery implementations with same-name wrappers that delegate to <code>_active_macos</code>.</li>
+    <li><code>body/active_vision_macos.py</code>: added macOS desktop target parsing/discovery, Dock item parsing/discovery, System Events running app parsing, AppKit enumeration, and process-path fallback helpers.</li>
+    <li><code>tests/test_active_vision_macos.py</code>: added focused tests for module import isolation, wrapper delegation, parsing behavior, and running app fallback ownership.</li>
+    <li><code>docs/reports/2026-06-17-active-vision-macos-discovery-split.html</code>: records this task round.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Created a Qt-free and main-free macOS discovery module for Active Vision.</li>
+    <li>Kept <code>active_vision.py</code> API compatibility through thin wrappers for existing callers, including <code>main.py</code> wrapper exports.</li>
+    <li>Moved low-risk running app discovery and fallback logic into the new macOS module along with desktop and Dock discovery.</li>
+    <li>Verified TDD RED first: the new test failed before implementation because <code>body.active_vision_macos</code> and <code>active_vision._active_macos</code> did not exist.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_active_vision_macos -v</code>: RED first, then PASS after implementation.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_active_vision_macos tests.test_active_vision_module tests.test_active_vision -v</code>: PASS, 22 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile body/active_vision.py body/active_vision_macos.py tests/test_active_vision_macos.py</code>: PASS.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>Focus interaction scripts and capture assembly remain in <code>body/active_vision.py</code> by design for this round. They can be split in separate worker tasks with focused tests.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main review window inspect the wrapper boundaries, then dispatch separate workers for focus interaction and capture assembly if further Active Vision slimming is desired.</p>
+</body>
+</html>

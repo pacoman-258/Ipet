@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-30 Backend ReAct Prompts Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2933; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Backend ReAct Prompts Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move ReAct automatic continuation, goal status, and prompt text helper logic out of <code>backend/app.py</code> into a focused backend module while preserving app-level wrapper names for existing flow dependency injection.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>brain</strong>: lead for ReAct decision, goal, and prompt contract extraction.</li>
+    <li><strong>qa-reports</strong>: focused regression tests and this task report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: added the <code>backend.react_prompts</code> helper import and kept same-name thin wrappers for the extracted helpers.</li>
+    <li><code>backend/react_prompts.py</code>: new pure helper module for ReAct prompt text, blocked decisions, goal status, and simple Human Ops action support.</li>
+    <li><code>tests/test_backend_react_prompts.py</code>: new focused tests for module boundaries, app wrappers, blocked goal status, followup prompt context, unsupported action prompt text, and simple action rules.</li>
+    <li><code>docs/reports/2026-06-30-backend-react-prompts-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend.app</code> no longer owns the long ReAct prompt/helper bodies in this slice; it delegates to <code>backend.react_prompts</code>.</li>
+    <li>The new module imports <code>BrainDecision</code> and <code>DecisionKind</code> directly and does not import <code>backend.app</code>.</li>
+    <li>Existing chat stream and approval flow dependency injection can continue using the app-layer wrapper function names.</li>
+    <li>Existing prompt wording for blocked goals, observe followup, unsupported simple actions, and click coordinate failures was preserved.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split slice. Broader <code>backend/app.py</code> thinning can continue in later owner-scoped tasks.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue with similarly focused backend splits only after choosing the next cohesive helper group and protecting the current dirty worktree boundaries.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_react_prompts -v</code> initially failed 6 tests because <code>backend/react_prompts.py</code> did not exist.</li>
+    <li>GREEN: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_react_prompts tests.test_neo_backend_contract tests.test_chat_stream_flow tests.test_human_ops_approval_flow -v</code> ran 87 tests and passed.</li>
+    <li>GREEN: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/react_prompts.py tests/test_backend_react_prompts.py</code> passed.</li>
+    <li>GREEN: <code>git diff --check -- backend/app.py backend/react_prompts.py tests/test_backend_react_prompts.py docs/reports/2026-06-30-backend-react-prompts-split.html</code> passed.</li>
+  </ul>
+</body>
+</html>

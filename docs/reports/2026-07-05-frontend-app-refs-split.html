@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Frontend App Refs Split</title>
+</head>
+<body>
+  <h1>Frontend App Refs Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the top-level DOM reference collection out of <code>frontend/index.js</code> into a focused frontend module while preserving existing controller ref injection semantics.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>frontend/body subwindow implemented the split directly in the current worktree. Main window remains responsible for review and cross-worker coordination.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/app_refs.js</code>: new <code>window.IpetAppRefs.collectAppRefs(document)</code> module.</li>
+    <li><code>frontend/index.js</code>: replaced inline DOM queries with app refs collection and same-name destructuring.</li>
+    <li><code>index.html</code>: loads <code>frontend/app_refs.js</code> after app state and before controllers/app.</li>
+    <li><code>tests/test_frontend_app_refs_source.py</code>: new source and Node/vm tests for the ref collector.</li>
+    <li><code>tests/test_chat_modes_ui.py</code>: updated source assertions so chat mode button collection is owned by app refs.</li>
+    <li><code>docs/reports/2026-07-05-frontend-app-refs-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>frontend/index.js</code> no longer calls <code>document.getElementById</code> or <code>document.querySelectorAll</code> directly. All previous DOM refs, including chat and memory mode button arrays, are collected in <code>frontend/app_refs.js</code> and passed onward with the original variable names.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. Broader frontend module extraction can continue in later worker rounds.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window review the scoped diff, then continue with the next narrow <code>frontend/index.js</code> responsibility extraction.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED check: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_app_refs_source -v</code> failed before implementation because <code>frontend/app_refs.js</code>, script order, and app refs usage were missing.</li>
+    <li><code>node --check frontend/app_refs.js</code>: passed.</li>
+    <li><code>node --check frontend/index.js</code>: passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_app_refs_source tests.test_frontend_app_state_source tests.test_frontend_app_bootstrap_source tests.test_frontend_app_config_source tests.test_chat_modes_ui -v</code>: 35 tests passed.</li>
+  </ul>
+</body>
+</html>

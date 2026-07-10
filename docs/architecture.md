@@ -71,9 +71,9 @@ Brain does not directly mutate files, settings, memory, UI, or processes. It ask
 
 LLM output is classified into `BrainDecision`. Providers are asked to return a compact JSON object such as `{"kind":"say","text":"..."}`. Plain text is accepted as `say` so chat remains usable. The current executable path is only `say`; `observe`, `act`, `remember`, `learn_skill`, and `stop` are reserved for the approval and execution loops.
 
-Brain calls a user-selected LLM provider through a narrow API boundary. The supported wire formats are OpenAI-compatible chat completions, Ollama chat, and Anthropic-compatible messages. Provider endpoint, model name, temperature, and optional API key are configured in the web settings page and saved only in local configuration.
+Brain calls a user-selected LLM provider through a narrow API boundary. The supported wire formats are OpenAI-compatible chat completions, Ollama chat, Anthropic-compatible messages, and Google AI Studio Gemini `generateContent`. Provider endpoint, model name, temperature, and optional API key are configured in the web settings page and saved only in local configuration. Google AI Studio uses the official Gemini API endpoint by default, so users only need to provide an API key for that provider.
 
-The settings page can pull a provider model list through `/api/brain/models` using the draft provider, endpoint, and optional key currently visible in the form. Returned model IDs can be filled into the model field with one click, and secrets are not echoed.
+The settings page can pull a provider model list through `/api/brain/models` using the draft provider, endpoint, and optional key currently visible in the form. Returned model IDs can be filled into the model field with one click, and secrets are not echoed. The same provider state is preserved by the desktop host when local config is saved, including the independent Human Ops observe model key.
 
 ## 5. Human Ops
 
@@ -119,15 +119,15 @@ The design intentionally avoids hidden long autonomous chains. If the next step 
 
 ## 8. Current Implementation Notes
 
-The repository is mid-transition:
+Root paths remain stable for desktop compatibility, with explicit entrypoint boundaries:
 
-- `main.py` remains the desktop host entrypoint.
-- `backend/` remains the active Python API surface.
-- `index.html` remains the pet UI entry at the root.
+- `main.py` composes the desktop host, Qt lifecycle, and compatibility wrappers; desktop feature behavior lives in `app/` and `body/`.
+- `backend/app.py` configures FastAPI, middleware, state, dependencies, router registration, and compatibility exports; routes and domain behavior live in backend route/helper/adapter modules or their product module.
+- `index.html` is the root pet UI document and script loader; `frontend/index.js` starts the controller graph, and UI behavior lives in focused `frontend/` modules.
 - `settings.html`, `settings.css`, and `settings.js` remain the settings UI at the root.
-- Target module directories are `body/`, `brain/`, `human_ops/`, `memory/`, `skills/`, `app/`, and `frontend/`.
+- Product and implementation module directories include `body/`, `brain/`, `human_ops/`, `memory/`, `skills/`, `app/`, `backend/`, and `frontend/`.
 
-New code should move toward the target module names when the implementation owner confirms the migration path. Documentation should describe the Neo module model even when code has not fully moved yet.
+New domain code must go to its owning module. Keep root entrypoints limited to composition, registration, loading, lifecycle, and compatibility delegates.
 
 ## 9. Development Rules
 
@@ -135,7 +135,7 @@ New code should move toward the target module names when the implementation owne
 - Keep Brain decisions single-step and inspectable.
 - Route risky effects through Human Ops.
 - Treat Memory & Skills as durable product data.
-- Preserve root UI files until loader paths move in the same task.
+- Preserve stable root UI paths until loader paths move in the same task, and keep `index.html` free of new interactive behavior.
 - Generate an HTML report after each file-changing task round.
 - Do not revert coworker changes outside your assigned slice.
 

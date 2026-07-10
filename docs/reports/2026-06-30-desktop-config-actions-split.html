@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Config Actions Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 2rem; max-width: 920px; }
+    h1 { font-size: 1.7rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.4rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Config Actions Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the body of <code>DesktopPet.apply_from_panel</code>, <code>save_config</code>, and <code>reset_to_default</code> out of <code>main.py</code> while preserving the old method names as compatibility wrappers.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This worker implemented the split directly in the shared worktree. The main window remains responsible for review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code>: imports and builds <code>DesktopConfigActions</code>; keeps the three legacy methods as thin delegates.</li>
+    <li><code>app/desktop_config_actions.py</code>: new injected action service for panel apply, config save, and default reset behavior.</li>
+    <li><code>tests/test_desktop_config_actions_split.py</code>: new split tests using fake owner and panel objects, without starting real Qt.</li>
+    <li><code>docs/reports/2026-06-30-desktop-config-actions-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The configuration action logic now lives outside <code>main.py</code> and does not import <code>main</code>. The new module receives JSON handling, config path, defaults, normalizers, screen provider, and geometry/application hooks through dependency injection. Existing <code>DesktopPet</code> entry points continue to exist and delegate to the extracted service.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this split. The repository was already dirty before this worker started, so unrelated modified and untracked files were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window inspect the diff for the new injected service boundary and decide whether subsequent DesktopPet actions should be split with the same pattern.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_config_actions_split tests.test_main_runtime_env tests.test_desktop_configuration -v</code>: passed, 73 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_config_actions.py tests/test_desktop_config_actions_split.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py tests/test_main_runtime_env.py</code>: passed with no output.</li>
+  </ul>
+</body>
+</html>

@@ -18,14 +18,17 @@ class ClickPreview:
     y: int
     label: str = ""
     kind: PreviewKind = PreviewKind.RED_DOT
+    size: int = 24
 
     def to_dict(self) -> dict[str, Any]:
+        size = max(10, min(48, int(self.size)))
         return {
             "kind": self.kind.value,
             "marker": "red_dot",
             "x": int(self.x),
             "y": int(self.y),
             "label": str(self.label or ""),
+            "size": size,
         }
 
 

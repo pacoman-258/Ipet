@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Frontend Chat Messages Split - 2026-06-28</title>
+  <style>
+    body {
+      margin: 32px;
+      color: #243447;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: #f7f9fc;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 28px;
+      border: 1px solid #d9e2ef;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 28px;
+      font-size: 18px;
+    }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #eef3f8;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: #0f5132;
+      background: #d1e7dd;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Frontend Chat Messages Split</h1>
+    <p><span class="status">GREEN</span> Worker report for the frontend/body chat message controller split.</p>
+
+    <h2>Goal</h2>
+    <p>
+      Move chat message DOM rendering and user edit/retry behavior out of <code>frontend/index.js</code>
+      into <code>window.IpetChatMessages.createChatMessagesController(deps)</code>, while preserving the
+      public wrapper functions consumed by ASR, speech, chat submit, sidebars, and worklog controllers.
+    </p>
+
+    <h2>Worker Split</h2>
+    <p>
+      This frontend/body worker completed the implementation. The coordinator/main window should only inspect
+      the result; no backend, main host, settings, body, or Human Ops files were changed in this round.
+    </p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>frontend/chat_messages.js</code>: added the chat messages controller and moved message DOM, edit/retry, truncation, text update, and tool-list rendering logic.</li>
+      <li><code>frontend/index.js</code>: added controller initialization with injected state getters/setters and retained thin wrapper functions.</li>
+      <li><code>index.html</code>: loaded <code>frontend/chat_messages.js</code> between <code>chat_submit.js</code> and <code>index.js</code>.</li>
+      <li><code>docs/reports/2026-06-28-frontend-chat-messages-split.html</code>: recorded this task round.</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li><code>findUserMessageById</code>, <code>clearPendingRetryEdit</code>, <code>beginUserMessageEditRetry</code>, <code>truncateChatAfterMessage</code>, <code>appendMessage</code>, <code>updateMessageText</code>, and <code>appendToolList</code> now live in <code>frontend/chat_messages.js</code>.</li>
+      <li><code>frontend/index.js</code> keeps the same wrapper API and delegates to <code>chatMessagesController</code>.</li>
+      <li><code>pendingRetryEdit</code>, <code>activeApprovalId</code>, <code>pendingApprovalInputTurnId</code>, and <code>chatMessageSequence</code> remain single state values in <code>index.js</code>, accessed by injected getters/setters.</li>
+      <li>Edit button text/class/ARIA behavior, user message dataset fields, assistant turn tracking, retry cleanup, timeline reset, click preview hiding, and chat scroll behavior were preserved.</li>
+    </ul>
+
+    <h2>Remaining Work</h2>
+    <p>
+      No remaining implementation work for this split. Manual desktop UI smoke testing was not run in this worker round.
+    </p>
+
+    <h2>Recommended Next Step</h2>
+    <p>
+      Coordinator should inspect the diff in the already-dirty worktree, then run a desktop chat smoke test if visual confirmation is desired.
+    </p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li>Initial RED reproduced: <code>.venv/bin/python -m unittest tests.test_frontend_chat_messages_source -v</code> failed 4 tests before implementation.</li>
+      <li>GREEN: <code>.venv/bin/python -m unittest tests.test_frontend_chat_messages_source -v</code> passed 4/4 tests.</li>
+      <li>GREEN: <code>node --check frontend/chat_messages.js</code> exited 0.</li>
+      <li>GREEN: <code>node --check frontend/index.js</code> exited 0.</li>
+      <li>GREEN: <code>.venv/bin/python -m unittest tests.test_frontend_chat_messages_source tests.test_chat_modes_ui tests.test_frontend_chat_submit_source tests.test_frontend_chat_worklog_source tests.test_frontend_chat_sidebars_source tests.test_frontend_speech_source -v</code> passed 31/31 tests.</li>
+      <li>GREEN: <code>git diff --check -- frontend/index.js frontend/chat_messages.js index.html tests/test_frontend_chat_messages_source.py tests/test_chat_modes_ui.py docs/reports/2026-06-28-frontend-chat-messages-split.html</code> exited 0.</li>
+    </ul>
+  </main>
+</body>
+</html>

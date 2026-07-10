@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>VLM 点击坐标反投自检修复报告</title>
+</head>
+<body>
+  <h1>VLM 点击坐标反投自检修复报告</h1>
+
+  <h2>goal</h2>
+  <p>修复 Human Ops 点击链路中 observe 语义描述正确、但返回的 macOS 点击坐标落到相邻 Dock 图标的问题。</p>
+
+  <h2>worker or subagent split</h2>
+  <p>body 继续提供截图像素尺寸、macOS 屏幕点尺寸和缩放比例；observe/VLM 负责基于截图定位目标并输出坐标；brain 负责后续决策；qa-reports 负责红绿测试、回归验证和本报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>backend/vision_analyzer.py</code></li>
+    <li><code>tests/test_vision_analyzer.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-03-vlm-click-coordinate-self-check.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>VLM click prompt 现在同时提供 image-to-screen 和 screen-to-image 比例。模型在返回点击坐标前会被要求把准备输出的 macOS 屏幕坐标反投回截图，确认落点位于目标图标或控件中心，而不是相邻图标、文字标签、窗口边缘或背景。Dock/App 图标任务也明确要求先找图标本身视觉中心，不能只按图标序号或相邻关系估算。</p>
+  <p>新增测试覆盖了这条契约：旧提示词缺少 screen-to-image 反算与目标图标自检约束时失败，补上后通过。</p>
+
+  <h2>remaining work</h2>
+  <p>本轮降低 VLM 给出自相矛盾坐标的概率，但没有在运行中的桌面应用里重新执行真实点击审批。若具体 VLM 仍输出错误坐标，下一层防线应考虑让 Brain 对“文字描述的邻居关系”和“数字坐标落点”做二次一致性追问。</p>
+
+  <h2>recommended next step</h2>
+  <p>重新让 Human Ops 点击 Dock 中的 Chrome；预期 observe 不再把 Chrome 描述为位于设置和 VS Code 之间却给出落在 Mail 附近的坐标。</p>
+</body>
+</html>

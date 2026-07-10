@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Enter Expected Text Inheritance Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Enter Expected Text Inheritance Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>增强微信回复连续动作的鲁棒性：当 Brain 在批准输入草稿后的下一步返回 <code>key_press enter</code> 但漏带 <code>expected_text</code> 时，backend 仍能把刚刚输入的草稿带到 Enter proposal 中，用于发送后验证。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 继续维持一轮只提出一个最小动作的决策边界。</li>
+    <li><strong>human-ops:</strong> 在审批链路中继承上一条已执行 <code>type_text</code> 的文本到下一条 Enter proposal。</li>
+    <li><strong>qa-reports:</strong> 用契约测试覆盖模型漏带 <code>expected_text</code> 的容错路径，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-enter-expected-text-inheritance.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Post-approval continuation now detects the pattern: previous approved action is <code>type_text</code>, next proposal is Enter, and Enter has no <code>expected_text</code>.</li>
+    <li>In that pattern, backend copies the executed or proposed draft text into the Enter proposal before emitting the next Human Ops approval request.</li>
+    <li>The Enter verification prompt can therefore still ask Observe to check whether the exact reply appears in WeChat chat history, even when the model omitted the field.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_continuation_observes_sent_message_then_done tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 273 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need real macOS + Ipet + WeChat end-to-end evidence that the visual observe model sees the drafted and sent message reliably.</li>
+    <li>Future hardening can persist richer continuation state across non-immediate steps, such as focus recovery or delayed send controls.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run a real desktop approval chain for WeChat reply: open app, locate contact, read context, type reply, approve Enter, and verify the sent message from the observed chat history.</p>
+</body>
+</html>

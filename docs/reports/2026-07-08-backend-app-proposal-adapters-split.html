@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>backend app proposal adapters split report</title>
+  </head>
+  <body>
+    <h1>backend app proposal adapters split report</h1>
+    <section>
+      <h2>Goal</h2>
+      <p>将 backend.app 中的 proposal-flow wrapper 迁移到新的 backend/app_proposal_adapters.py，并保留 backend.app 旧私有名可继续调用和被测试 patch。</p>
+    </section>
+    <section>
+      <h2>Worker / Subagent Split</h2>
+      <p>主窗口负责验收；本子窗口负责实际编辑与验证。本轮未再拆出其他子 agent。</p>
+    </section>
+    <section>
+      <h2>Files Changed</h2>
+      <ul>
+        <li>backend/app.py</li>
+        <li>backend/app_proposal_adapters.py</li>
+        <li>tests/test_backend_app_proposal_adapters.py</li>
+        <li>docs/reports/2026-07-08-backend-app-proposal-adapters-split.html</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Achieved Effect</h2>
+      <p>proposal-flow 相关 wrapper 逻辑已移到独立适配模块；backend.app 仅保留很薄的依赖装配与转发层，旧私有名仍可直接调用并继续支持测试 patch。</p>
+    </section>
+    <section>
+      <h2>Remaining Work</h2>
+      <p>当前范围内无已知未完成项。若后续还要继续拆分，可考虑把更多 human ops 相关薄适配统一到单独的 backend adapter 层。</p>
+    </section>
+    <section>
+      <h2>Recommended Next Step</h2>
+      <p>在主窗口做一次验收，确认 route registration 未变化、proposal-flow 回归测试稳定，然后再决定是否继续拆分相邻的 human ops glue。</p>
+    </section>
+    <section>
+      <h2>Verification</h2>
+      <ul>
+        <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_proposal_adapters.py tests/test_backend_app_proposal_adapters.py</code></li>
+        <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_proposal_adapters tests.test_backend_human_ops_proposal_flow tests.test_backend_route_split tests.test_neo_backend_contract -v</code></li>
+        <li><code>git diff --check -- backend/app.py backend/app_proposal_adapters.py tests/test_backend_app_proposal_adapters.py docs/reports/2026-07-08-backend-app-proposal-adapters-split.html</code></li>
+      </ul>
+    </section>
+  </body>
+</html>

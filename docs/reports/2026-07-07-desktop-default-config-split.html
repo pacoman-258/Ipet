@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-07-07 desktop default config split</title>
+</head>
+<body>
+  <h1>Desktop Default Config Split</h1>
+  <section>
+    <h2>Goal</h2>
+    <p>将 <code>main.py</code> 中 Neo 默认配置大字典的构建职责拆到独立模块，同时保持 <code>main.DEFAULT_CONFIG</code> 兼容且行为不变。</p>
+  </section>
+  <section>
+    <h2>Worker / Subagent Split</h2>
+    <p>本子窗口只处理 desktop-shell 的默认配置拆分：新增 <code>app/default_config.py</code>，调整 <code>main.py</code> 的导出方式，并补充回归测试与报告。未触碰 backend、frontend、<code>index.html</code> 或其它 worker 的报告。</p>
+  </section>
+  <section>
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>main.py</code></li>
+      <li><code>app/default_config.py</code></li>
+      <li><code>tests/test_desktop_default_config.py</code></li>
+      <li><code>docs/reports/2026-07-07-desktop-default-config-split.html</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Achieved Effect</h2>
+    <p>默认配置构建已集中到 <code>create_default_config(...)</code>，并通过 JSON 复制确保嵌套字典和列表不共享可变引用。<code>main.DEFAULT_CONFIG</code> 仍然可用，现有配置/运行时测试继续通过。</p>
+  </section>
+  <section>
+    <h2>Remaining Work</h2>
+    <p>当前无已知遗留项；仅需主窗口按常规检查合并。</p>
+  </section>
+  <section>
+    <h2>Recommended Next Step</h2>
+    <p>如需继续拆分，可把更多配置形状常量化到独立模块，但这不属于本次范围。</p>
+  </section>
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/default_config.py tests/test_desktop_default_config.py</code></li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_default_config tests.test_desktop_configuration tests.test_main_runtime_env -v</code></li>
+      <li><code>git diff --check -- main.py tests/test_main_runtime_env.py</code></li>
+      <li><code>rg -n "[ \\t]+$" app/default_config.py tests/test_desktop_default_config.py docs/reports/2026-07-07-desktop-default-config-split.html</code></li>
+    </ul>
+  </section>
+</body>
+</html>

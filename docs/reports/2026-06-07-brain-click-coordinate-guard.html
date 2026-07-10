@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Click Coordinate Guard Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Click Coordinate Guard Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>防止 Brain 在真实任务中返回缺少 <code>x/y</code> 的 <code>click</code> proposal，导致 Human Ops 给用户展示错误的红点审批。点击是简单人类动作，但它必须有完整、可解析的屏幕坐标。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 继续负责把目标推进到单步 <code>click</code> proposal。</li>
+    <li><strong>human-ops:</strong> backend 在审批前校验 <code>click</code> 参数，缺少完整坐标时无副作用纠正 Brain。</li>
+    <li><strong>qa-reports:</strong> 增加初始 chat stream 和 post-approval continuation 两个路径的缺坐标 click 合同测试。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-click-coordinate-guard.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>click</code> is now considered reviewable only when both <code>x</code> and <code>y</code> are explicitly present and numeric.</li>
+    <li>Initial Brain decisions with incomplete click coordinates are corrected before Human Ops emits an approval request.</li>
+    <li>Post-approval continuation applies the same guard, so a multi-step WeChat flow cannot leak an incomplete click after the first approved action.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_corrects_click_without_complete_coordinates_before_review tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_continuation_corrects_click_without_coordinates_before_next_review tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_corrects_unsupported_desktop_action_to_simple_human_action tests.test_neo_backend_contract.NeoBackendContractTests.test_wechat_reply_full_human_action_chain_observe_click_type_enter_done tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model -v</code>: passed, 5 tests.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code>: passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code>: passed, 280 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need real desktop verification that observe supplies stable macOS screen coordinates for Dock icons, contact rows, and chat inputs.</li>
+    <li>Future hardening can add bounds checks against active display rectangles before showing the red-dot preview.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run the real WeChat chain and inspect every red-dot approval: each click should carry complete macOS screen coordinates and visually align with the intended target.</p>
+</body>
+</html>

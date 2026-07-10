@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Frontend Pet State Notify Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #1f2937;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Pet State Notify Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move pet identity and pet state notification behavior out of <code>frontend/index.js</code> into a focused frontend controller.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Frontend worker implemented the file changes. Coordinator/main window remains responsible for review and integration.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/pet_state_notify.js</code>: new <code>window.IpetPetStateNotify</code> namespace and <code>createPetStateNotifyController</code> factory.</li>
+    <li><code>frontend/index.js</code>: replaced pet display name and state notification bodies with thin controller wrappers.</li>
+    <li><code>index.html</code>: loads <code>frontend/pet_state_notify.js</code> between pet scene and app config modules.</li>
+    <li><code>tests/test_frontend_pet_state_notify_source.py</code>: new source-boundary tests for the split module.</li>
+    <li><code>tests/test_index_helpers_source.py</code>: updated helper boundary assertions for the new controller ownership.</li>
+    <li><code>docs/reports/2026-07-03-frontend-pet-state-notify-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>frontend/pet_state_notify.js</code> now owns display-name sync from <code>system_prompt</code> / <code>state.chat.pet_display_name</code>.</li>
+    <li><code>speakerNameForRole(role)</code> uses the current pet display name through the new controller.</li>
+    <li><code>scheduleNotifyState</code> and <code>notifyStateNow</code> now keep their 80 ms timer and Qt bridge payload construction outside <code>frontend/index.js</code>.</li>
+    <li>The notification payload still contains <code>scale</code>, <code>offset_x</code>, <code>offset_y</code>, <code>rotation</code>, and <code>opacity</code>, with offsets rounded through the existing <code>roundInt</code> helper.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work inside the assigned frontend split. Runtime UI smoke testing was not requested or run in this worker pass.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Coordinator should review the small diff against the allowed file list, then include this split in the broader frontend decomposition check.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>node --check frontend/pet_state_notify.js</code>: passed.</li>
+    <li><code>node --check frontend/index.js</code>: passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_pet_state_notify_source tests.test_index_helpers_source -v</code>: failed before implementation, then passed after implementation.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_pet_state_notify_source tests.test_index_helpers_source tests.test_frontend_pet_scene_source tests.test_frontend_app_config_source -v</code>: 17 tests passed.</li>
+  </ul>
+</body>
+</html>

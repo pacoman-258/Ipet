@@ -9,6 +9,7 @@ This repository uses fixed ownership roles for day-to-day development. Neo Aspec
   - `main.py`
   - `index.html`
   - `backend/app.py`
+- All three high-conflict entrypoints are composition-only. Workers must place new domain behavior in the owning `app/`, `body/`, `backend/`, or `frontend/` module and leave only wiring, loading, registration, lifecycle, or compatibility delegates in the entrypoint.
 - Documentation-only workers may edit docs inside their assigned slice, but must not revert code owned by another worker.
 
 ## Fixed Roles
@@ -18,13 +19,14 @@ This repository uses fixed ownership roles for day-to-day development. Neo Aspec
 - `human-ops`: owns approvals, rejection flow, execution review, action ledgers, and safety tests.
 - `memory-skills`: owns local memory, summaries, preferences, built-in skills, learned skills, and skill tests.
 - `settings-console`: owns `settings.html`, `settings.css`, `settings.js`, and settings API contracts.
-- `desktop-shell`: owns `main.py`, startup/shutdown, Qt bridge behavior, and host-side process lifecycle.
+- `desktop-shell`: owns `main.py` composition/bootstrap, startup/shutdown, Qt bridge composition, host-side process lifecycle, and compatibility wrappers.
 - `qa-reports`: owns regression planning, contract checks, targeted test additions, documentation audits, and HTML reports.
 
 ## Dispatch Defaults
 
-- Desktop host, tray, window behavior, host bridge: `desktop-shell`
-- Pet expression, motion, chat bubble presentation, local observation, ASR/TTS: `body`
+- Desktop host, tray, window behavior, host bridge: `desktop-shell`; implementation goes to matching `app/desktop_*` modules unless it is entrypoint wiring or lifecycle.
+- Pet expression, motion, chat bubble presentation, local observation, ASR/TTS: `body`; frontend behavior goes to matching `frontend/` controllers, not `index.html`.
+- Backend API routes and domain helpers: the owning product role; `backend/app.py` changes are limited to composition, router registration, and compatibility exports.
 - Brain prompt, turn decision, model boundary, output schema: `brain`
 - Approval prompt, risky execution, user rejection, safety copy: `human-ops`
 - Memory write, summary layering, user preference, skill discovery or learning: `memory-skills`
@@ -33,6 +35,7 @@ This repository uses fixed ownership roles for day-to-day development. Neo Aspec
 
 ## Cross-Boundary Rules
 
+- Any change that would add domain logic to `main.py`, `backend/app.py`, or `index.html` must be split into an owner module in the same task. The assigned entrypoint owner only integrates the thin delegate, registration, or loader change.
 - `main.py` <-> `index.html` contract changes:
   - lead: `desktop-shell`
   - reviewer: `body`

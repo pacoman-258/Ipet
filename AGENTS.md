@@ -21,8 +21,8 @@ This file is the shortest safe entrypoint for coding agents working in this repo
 ## Quick Start
 
 - Product model: Ipet Neo Aspect has four current modules: Body, Brain, Human Ops, and Memory & Skills.
-- Current implementation shape: desktop pet host in `main.py`, Python API surface in `backend/`, root pet UI in `index.html`, settings UI in `settings.html`, `settings.css`, and `settings.js`.
-- Target module homes: `body/`, `brain/`, `human_ops/`, `memory/`, `skills/`, `app/`, `frontend/`, `docs/`, and `tests/`.
+- Current implementation shape: `main.py`, `backend/app.py`, and `index.html` are compatibility entrypoints for desktop composition, API composition, and root UI loading. Domain behavior lives in `app/`, `body/`, backend route/helper/adapter modules, and `frontend/` controllers.
+- Module homes: `body/`, `brain/`, `human_ops/`, `memory/`, `skills/`, `app/`, `frontend/`, `backend/`, `docs/`, and `tests/`.
 - Primary stack: Python, Qt WebEngine, FastAPI, local HTML/CSS/JS, LLM calls, speech I/O, local screen observation, and Live2D-style assets.
 - The currently verified dev runtime is the project `.venv` on Python 3.12.
 - Preferred local start command:
@@ -57,7 +57,7 @@ Useful stable facts:
 - Brain owns one-step LLM decision making for a user turn.
 - Human Ops owns approval prompts, rejection handling, execution records, and safety review.
 - Memory & Skills owns local memory, summaries, user preferences, skill definitions, and learned procedures.
-- Root UI files stay at repo root during the transition because the desktop host and backend currently load them from there.
+- Root UI entry files stay at the repository root because the desktop host and backend load those paths. Keep them as loading and document surfaces; put interactive behavior in `frontend/`.
 - Tests live under `tests/`.
 - Debug helpers live under `scripts/debug/`.
 - Fixed role prompts live under `docs/subagents/`.
@@ -65,7 +65,7 @@ Useful stable facts:
 
 ## Hot Files And Ownership
 
-These are high-conflict files. Only one implementation owner should lead changes to each in a task:
+These are high-conflict, composition-only files. Only one implementation owner should lead changes to each in a task:
 
 - `main.py`
 - `index.html`
@@ -73,7 +73,7 @@ These are high-conflict files. Only one implementation owner should lead changes
 
 Current ownership map:
 
-- `desktop-shell`: `main.py`, process lifecycle, Qt/WebEngine bridge, tray/menu behavior
+- `desktop-shell`: `main.py` composition/bootstrap, process lifecycle, Qt/WebEngine bridge composition, tray/menu behavior, compatibility wrappers
 - `body`: Body module code, observation behavior, voice I/O, presentation commands, Body tests
 - `brain`: Brain decision code, prompt contracts, model call boundaries, Brain tests
 - `human-ops`: approvals, action review, execution ledgers, user confirmation flows, safety tests
@@ -83,6 +83,7 @@ Current ownership map:
 
 Cross-boundary rules:
 
+- `main.py`, `backend/app.py`, and `index.html` must remain composition-only. New domain behavior belongs in the owning `app/`, `body/`, `backend/`, or `frontend/` module; leave only registration, dependency wiring, loading, or a compatibility delegate in the entrypoint.
 - `main.py` <-> `index.html`: lead `desktop-shell`, review by `body`.
 - `settings.js` <-> backend settings APIs: one side leads, the other reviews.
 - Brain decision event changes: lead `brain`, review by `body`, `human-ops`, and `qa-reports`.
@@ -96,8 +97,9 @@ Use this map before opening large files:
 
 | Task type | Read first | Minimum follow-up |
 | --- | --- | --- |
-| Desktop host, tray, Qt bridge, window behavior | `main.py` | `docs/SUBAGENTS.md` |
-| Pet UI, chat window, display state, TTS playback UX | `index.html` | related API route only if contract changed |
+| Desktop host, tray, Qt bridge, window behavior | matching `app/desktop_*` module | `main.py` only for composition, lifecycle, or compatibility wiring |
+| Pet UI, chat window, display state, TTS playback UX | matching `frontend/` controller | `index.html` only for document structure or script loading; related API route only if its contract changed |
+| Backend API route, dependency, or compatibility export | matching `backend/*_routes.py`, helper, or adapter module | `backend/app.py` only for middleware, dependency wiring, router registration, or compatibility export installation |
 | Body observation, screenshots, ASR/TTS, local command bridge | `docs/WORKFLOW.md` | `body/` or current matching `backend/vision*.py`, `backend/asr*.py` slice |
 | Brain turn decision, prompt contract, model call boundary | `docs/architecture.md` | `brain/` or current matching backend slice |
 | Human Ops approval and execution safety | `docs/WORKFLOW.md` | `human_ops/` or current approval/action route slice |
@@ -108,11 +110,17 @@ Use this map before opening large files:
 
 ## Token-Saving Rules
 
-- Prefer `rg` or `rg --files` to locate symbols, routes, tests, and feature names.
+- Prefer `rg` or `rg --files` to locate symbols, routes, tests, and feature names before opening files.
+- Inspect only the smallest useful slice: use line ranges, focused snippets, diffs, or summaries instead of full-file reads.
 - Do not read all of `index.html` or `main.py` unless the task truly lives there. Search first, then open the relevant block.
 - Do not open every test file. Pick the smallest matching regression slice from the matrix below.
-- Read model or request types before implementations when tracing behavior.
+- Read model, schema, or request types before implementations when tracing behavior.
 - When a task touches one subsystem, stay inside that subsystem until an interface boundary forces expansion.
+- For logs, JSON, CSV, HTML reports, and other large artifacts, create or inspect a compact summary first, then read only necessary raw slices.
+- Use `python scripts/context_summary.py` before exploring broad project context. Prefer targeted modes: `--repo`, `--reports`, `--data`, or `--logs`.
+- When investigating `docs/reports/`, local `data/`, or log directories, run the matching `scripts/context_summary.py` mode first and only open raw files that the summary makes relevant.
+- Default noisy paths to skip: `.venv/`, `.uv-cache/`, `__pycache__/`, `.service-logs/`, `.app-logs/`, `.cache/`, generated outputs, local app state under ignored `data/` paths, and large historical `docs/reports/` files unless the task is about them.
+- Cap unknown command output. Prefer focused commands such as `git status --short`, `git diff --name-only`, `rg PATTERN PATH`, and `sed -n 'START,ENDp' FILE`.
 - Use `git status --short` before cleanup. Treat unrelated modified/untracked files as user work and never revert them.
 - Deleting tracked files, ignored local app state, caches, or generated outputs is destructive. Explain why, what it affects, and ask for approval unless the user explicitly named the exact deletion target.
 

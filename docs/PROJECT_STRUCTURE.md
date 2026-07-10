@@ -9,9 +9,9 @@ Keep the Neo Aspect repository easy to scan by grouping product responsibilities
 - Human Ops
 - Memory & Skills
 
-The codebase is in transition, so this document describes both target homes and current transition-period locations.
+Root entry paths remain stable for desktop compatibility, while implementation responsibilities live in their owning modules.
 
-## Target Layout
+## Current Layout
 
 ```text
 Ipet/
@@ -20,19 +20,19 @@ Ipet/
 |-- human_ops/               # approvals, action review, execution records, safety prompts
 |-- memory/                  # durable memory, summaries, preferences, retention rules
 |-- skills/                  # built-in skills, learned skills, skill manifests and scripts
-|-- app/                     # composition layer connecting Body, Brain, Human Ops, Memory & Skills
-|-- frontend/                # future home for pet UI and settings UI
-|-- backend/                 # transition-period Python API surface, kept thin around Neo modules
+|-- app/                     # desktop composition and host support modules
+|-- frontend/                # pet UI controllers and behavior modules
+|-- backend/                 # FastAPI composition, routes, helpers, and adapters
 |-- docs/                    # architecture, workflow, ownership, reports, role playbooks
 |-- tests/                   # unit and regression tests
 |-- scripts/                 # diagnostics, smoke checks, and developer tools
 |-- model/                   # tracked demo/reference pet assets plus ignored local assets
 |-- prompts/                 # reusable prompt/persona assets during migration
-|-- index.html               # transition-period pet UI entry
-|-- settings.html            # transition-period settings UI entry
-|-- settings.css             # transition-period settings styles
-|-- settings.js              # transition-period settings behavior
-|-- main.py                  # transition-period desktop host entry
+|-- index.html               # root pet UI document and script loader
+|-- settings.html            # root settings UI entry
+|-- settings.css             # root settings styles
+|-- settings.js              # root settings behavior
+|-- main.py                  # desktop composition/bootstrap entry
 |-- pet_config.example.json  # safe example config
 |-- pyproject.toml           # project metadata and dependencies
 |-- uv.lock                  # locked dependency graph
@@ -49,16 +49,18 @@ Ipet/
 - **Human Ops** owns approval prompts, rejection handling, execution ledgers, and safety review for risky actions.
 - **Memory & Skills** owns conversation memory, summaries, user preferences, local skills, and learned procedures.
 - **Settings Console** owns settings UI files and settings API contracts.
-- **Desktop Shell** owns `main.py` while the root host remains the entrypoint.
+- **Desktop Shell** owns `main.py` composition/bootstrap, Qt lifecycle, host process lifecycle, and compatibility wrappers; desktop feature implementations belong in matching `app/` or `body/` modules.
+- **Frontend UI** owns controllers and behavior under `frontend/`; `index.html` only owns the root document structure and script loading order.
+- **Backend API** keeps `backend/app.py` limited to FastAPI setup, middleware, dependencies, router registration, and compatibility exports; routes and domain behavior belong in backend route/helper/adapter modules or their product module.
 - **QA Reports** owns regression planning, contract checks, and HTML reports.
 
-## Root UI Transition
+## Root UI Paths
 
-`index.html`, `settings.html`, `settings.css`, and `settings.js` intentionally remain at the repository root for now. The desktop host and Python API still load them from those paths. Move them only when the loading paths are changed in the same task and tests or smoke checks cover the new paths.
+`index.html`, `settings.html`, `settings.css`, and `settings.js` intentionally remain at the repository root because the desktop host and Python API load those paths. Move them only when the loading paths are changed in the same task and tests or smoke checks cover the new paths.
 
-Until then:
+While these paths remain stable:
 
-- do not duplicate root UI files into `frontend/`
+- keep `index.html` as a document and script loader; put interactive pet UI behavior in `frontend/`
 - do not create a second settings entrypoint
 - document UI path changes in `docs/WORKFLOW.md`
 - include path migration details in the task HTML report
@@ -69,7 +71,7 @@ Until then:
 - Do not add one-off generated text, hotspot reports, local scratch files, logs, caches, or personal app state at the root.
 - Use `scripts/debug/` for manual diagnostics and smoke scripts.
 - Use `docs/reports/` for long-form reports and post-task HTML summaries.
-- Use target module directories for new code when the implementation owner confirms the migration path.
+- Use the owning module directory for new domain code. Keep root entrypoints composition-only.
 
 ## Hygiene Rules
 

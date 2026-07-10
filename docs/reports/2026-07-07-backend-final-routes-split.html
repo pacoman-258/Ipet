@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Final Routes Split - 2026-07-07</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      max-width: 920px;
+      margin: 32px auto;
+      padding: 0 20px;
+      color: #202124;
+    }
+    h1 {
+      font-size: 26px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 24px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 4px;
+    }
+    code {
+      background: #f5f5f5;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #e6f4ea;
+      color: #137333;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <h1>Backend Final Routes Split</h1>
+  <p><span class="status">Completed</span> 2026-07-07</p>
+
+  <h2>Goal</h2>
+  <p>
+    Move the final app-level FastAPI route decorators out of <code>backend/app.py</code>
+    while preserving the existing health, chat stream, and Human Ops approval behavior.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>
+    Backend split worker handled the route extraction and verification in this task window.
+    Main-window responsibility remains review only. No staging or commits were performed.
+  </p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: replaced the remaining route decorators with dependency builders and route registration calls.</li>
+    <li><code>backend/health_routes.py</code>: added the <code>/api/health</code> router, payload helper, and registration API.</li>
+    <li><code>backend/chat_stream_routes.py</code>: added the <code>/api/chat/stream</code> router around <code>stream_chat_response</code>.</li>
+    <li><code>backend/human_ops_decision_routes.py</code>: added the Human Ops decision router around <code>stream_human_ops_proposal_decision</code>.</li>
+    <li><code>tests/test_backend_route_split.py</code>: added coverage for final route decorators, route module interfaces, delegation, 404 conversion, and per-request dependency resolution.</li>
+    <li><code>docs/reports/2026-07-07-backend-final-routes-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> no longer declares <code>@app.get</code>, <code>@app.post</code>, <code>@app.websocket</code>, or <code>@app.delete</code> routes.</li>
+    <li>The health payload keeps the same service fields, Neo Aspect flags, ASR/TTS flags, message, and <code>app.version</code> value.</li>
+    <li>Chat streaming still delegates to <code>stream_chat_response</code> with <code>ChatStreamFlowDependencies</code> and returns <code>text/event-stream</code>.</li>
+    <li>Human Ops decisions still delegate to <code>stream_human_ops_proposal_decision</code> with <code>HumanOpsApprovalFlowDependencies</code>, return <code>text/event-stream</code>, and convert <code>HumanOpsProposalNotFound</code> to HTTP 404.</li>
+    <li>Route dependencies are resolved per request so existing tests and runtime monkeypatching see current app-level functions, matching the old decorator implementation.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_route_split.BackendRouteSplitTests.test_final_split_routes_resolve_app_dependencies_per_request -v</code>: passed, 1 test.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_route_split tests.test_neo_backend_contract -v</code>: passed, 89 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/health_routes.py backend/chat_stream_routes.py backend/human_ops_decision_routes.py tests/test_backend_route_split.py</code>: passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    No known route-split work remains for the specified endpoints. Broader repository changes from other workers were left untouched.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Main window should review this focused diff together with other workers' splits before any staging or commit.
+  </p>
+</body>
+</html>

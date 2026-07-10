@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Action Wiring Split Report</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2933;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    code {
+      background: #eef2f7;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    section {
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Action Wiring Split Report</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>Move the desktop action compatibility entry creation and wiring out of <code>main.py</code> into <code>app/desktop_action_wiring.py</code>, while keeping the old <code>main</code> patch points available.</p>
+  </section>
+
+  <section>
+    <h2>Worker / Subagent Split</h2>
+    <p>Implementation worker handled the scoped split. The main window remains responsible for acceptance. No unrelated worker changes were reverted, reformatted, staged, committed, or cleaned.</p>
+  </section>
+
+  <section>
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>main.py</code>: imports <code>app.desktop_action_wiring</code> and installs the legacy desktop action names through wiring-generated exports.</li>
+      <li><code>app/desktop_action_wiring.py</code>: new wiring module for creating the bridge entry, compatibility wrappers, and export map without importing <code>main</code>.</li>
+      <li><code>tests/test_desktop_action_wiring.py</code>: new regression tests for import isolation, wrapper delegation, default clicker identity, and router dependency identity.</li>
+      <li><code>docs/reports/2026-07-09-desktop-action-wiring-split.html</code>: this report.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved Effect</h2>
+    <p><code>main.py</code> no longer owns the desktop action wrapper definitions. The old names still have <code>__module__ == "main"</code>, <code>DesktopCommandRouter</code> still receives the <code>main</code> function objects, and omitted click calls dynamically resolve the current <code>main._post_core_graphics_click</code> so tests can patch it.</p>
+  </section>
+
+  <section>
+    <h2>Remaining Work</h2>
+    <p>No remaining work for this scoped wiring split. The lower-level <code>app/desktop_action_bridge.py</code> and <code>human_ops/desktop_actions.py</code> behavior was intentionally left unchanged.</p>
+  </section>
+
+  <section>
+    <h2>Recommended Next Step</h2>
+    <p>Have the main window review the wiring boundary, then continue with the next planned <code>main.py</code> compatibility wrapper split if this patch surface looks acceptable.</p>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_wiring -q</code> initially failed because <code>app.desktop_action_wiring</code> did not exist and <code>main.execute_human_ops_click</code> still captured the old default clicker object.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_wiring -q</code>: 4 tests passed.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_action_wiring tests.test_desktop_action_bridge tests.test_main_runtime_env tests.test_desktop_command_wiring tests.test_desktop_command_router -q</code>: 82 tests passed, with existing Qt duplicate-class objc warnings.</li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_action_wiring.py tests/test_desktop_action_wiring.py tests/test_desktop_action_bridge.py</code>: exit code 0.</li>
+      <li><code>git diff --check -- main.py app/desktop_action_wiring.py tests/test_desktop_action_wiring.py docs/reports/2026-07-09-desktop-action-wiring-split.html</code>: exit code 0.</li>
+    </ul>
+  </section>
+</body>
+</html>

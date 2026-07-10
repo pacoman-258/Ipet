@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>2026-07-08 Desktop Bridge Wiring Split</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+        margin: 24px;
+        color: #1f2937;
+        background: #ffffff;
+      }
+      h1 {
+        font-size: 1.4rem;
+        margin-bottom: 0.25rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin-top: 1.25rem;
+        margin-bottom: 0.25rem;
+      }
+      ul {
+        margin-top: 0.25rem;
+      }
+      code {
+        background: #f3f4f6;
+        padding: 0.1rem 0.3rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Desktop Bridge Wiring Split</h1>
+    <p>Goal: extract PetBridge creation and signal wiring out of <code>main.py</code> without changing behavior.</p>
+
+    <h2>Worker / Subagent Split</h2>
+    <ul>
+      <li>Main window: acceptance only.</li>
+      <li>This subwindow: implemented the bridge wiring split, tests, and report.</li>
+    </ul>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>app/desktop_bridge_wiring.py</code></li>
+      <li><code>main.py</code></li>
+      <li><code>tests/test_desktop_bridge_wiring.py</code></li>
+      <li><code>docs/reports/2026-07-08-desktop-bridge-wiring-split.html</code></li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li>PetBridge construction now goes through <code>create_connected_pet_bridge(owner, bridge_factory)</code>.</li>
+      <li>The seven PetBridge signal connections live in a dedicated wiring module.</li>
+      <li><code>DesktopPet.__init__</code> no longer contains inline PetBridge wiring details.</li>
+      <li>Behavior remains unchanged for the connected handlers.</li>
+    </ul>
+
+    <h2>Remaining Work</h2>
+    <ul>
+      <li>No follow-up required for this split.</li>
+    </ul>
+
+    <h2>Recommended Next Step</h2>
+    <ul>
+      <li>Keep the same pattern for the next desktop bridge that still mixes creation with signal wiring.</li>
+    </ul>
+
+    <h2>Verification</h2>
+    <ul>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_bridge_wiring.py tests/test_desktop_bridge_wiring.py</code></li>
+      <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_bridge_wiring tests.test_desktop_pet_bridge tests.test_main_runtime_env -v</code></li>
+      <li><code>git diff --check -- main.py app/desktop_bridge_wiring.py tests/test_desktop_bridge_wiring.py docs/reports/2026-07-08-desktop-bridge-wiring-split.html</code></li>
+    </ul>
+  </body>
+</html>

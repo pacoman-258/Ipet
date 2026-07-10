@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-03 Real Observe And Click Chain Test</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px auto;
+      max-width: 920px;
+      color: #202124;
+    }
+    h1, h2 { line-height: 1.25; }
+    code {
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #d7dbe0;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f7f8fa; }
+  </style>
+</head>
+<body>
+  <h1>真实 Observe 与点击链路测试</h1>
+
+  <h2>目标</h2>
+  <p>对 Ipet 的真实屏幕观察、观察后点击 App、以及底层点击执行链路做分层测试，定位链路上实际失败的位置。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>本轮由 Codex 直接执行，按 Neo Aspect ownership 归入 <code>body</code>、<code>brain</code>、<code>human-ops</code> 和 <code>qa-reports</code> 的交叉验证；未启用独立子代理。</p>
+
+  <h2>测试步骤与结果</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>步骤</th>
+        <th>结果</th>
+        <th>定位结论</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>启动 Ipet 桌面主机</td>
+        <td>成功，Qt 输出 <code>QWebChannel ready</code>，心跳 PID 更新。</td>
+        <td>桌面主机可运行；旧心跳曾是 stale，未启动前命令无人消费。</td>
+      </tr>
+      <tr>
+        <td>直接发送 <code>active_vision_capture</code> 桌面命令</td>
+        <td>成功，<code>macos_screencapture</code> 捕获 1920x1249 截图，<code>active_observation.status=success</code>。</td>
+        <td>命令文件、Qt 轮询、截图、响应文件链路可用。</td>
+      </tr>
+      <tr>
+        <td>窗口与 App 目标发现</td>
+        <td><code>desktop_targets_count=0</code>；System Events 返回 <code>-10827</code>；AppKit 兜底不可用，报 <code>No module named 'AppKit'</code>。</td>
+        <td>自动目标枚举失败，Ipet 无法从本地元数据拿到窗口坐标或可靠 App 候选。</td>
+      </tr>
+      <tr>
+        <td>完整聊天 observe 请求</td>
+        <td>成功进入 <code>human_ops_observe</code>，Google observe 模型返回截图理解，Brain 汇总回复。</td>
+        <td>Brain -> Human Ops observe -> 截图 -> observe 模型 -> Brain 汇总链路可用。</td>
+      </tr>
+      <tr>
+        <td>完整聊天“观察并点击微信 App”请求</td>
+        <td>observe 模型识别到 Dock 微信图标，但只返回残缺坐标 <code>x=</code>；随后 Brain follow-up 返回 <code>OpenAI-compatible provider returned empty text</code>。</td>
+        <td>自然语言坐标抽取/模型输出稳健性不足，未生成 <code>propose_act</code>，所以 Human Ops 审批和点击没有进入。</td>
+      </tr>
+      <tr>
+        <td>手动提供微信 running-app 候选后执行 <code>focus_target</code></td>
+        <td>成功，<code>action_trace</code> 为 <code>activate_running_app</code>，<code>focus_result.status=success</code>。</td>
+        <td>轻交互激活分支可用；主要问题在自动候选发现。</td>
+      </tr>
+      <tr>
+        <td>直接发送 <code>human_ops_click</code> 到屏幕中心</td>
+        <td>成功，返回 <code>method=core_graphics</code>。</td>
+        <td>底层鼠标事件执行器可用；点击失败不是 CoreGraphics 发不出去。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>docs/reports/2026-06-03-real-observe-click-chain-test.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>已把 observe/click 链路拆成可验证层级，并确认截图、observe 模型、轻交互激活、底层 CoreGraphics 点击均能工作。</p>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>修复 macOS 目标发现：System Events <code>-10827</code> 权限/脚本失败，以及当前环境缺少 <code>AppKit</code> 兜底。</li>
+    <li>增强 observe 坐标输出约束：模型返回残缺坐标时，应触发再次 observe 或明确失败，而不是把残缺文本交给 Brain 碰运气。</li>
+    <li>增强 Brain follow-up 容错：外部 provider 返回 empty text 时，应保留 observation 事实并要求补充坐标，而不是直接结束点击链路。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>优先修复目标发现和坐标恢复路径：让 Ipet 在无法枚举窗口时，能基于截图进行第二次坐标询问，并且在 observe 未返回完整 x/y 时禁止生成点击 proposal。</p>
+</body>
+</html>

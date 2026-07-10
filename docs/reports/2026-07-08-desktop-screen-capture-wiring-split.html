@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>2026-07-08 desktop screen capture wiring split</title>
+</head>
+<body>
+  <h1>Desktop Screen Capture Wiring Split</h1>
+  <h2>Goal</h2>
+  <p>将 main.py 中屏幕捕获相关兼容 wrapper 的装配职责拆到专职模块，保留 main.py 旧函数名、行为和 patch 点。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>主窗口只验收；本子窗口负责实际编辑。实现上将 wiring 构建与 wrapper 执行集中到 app/desktop_screen_capture_wiring.py，main.py 仅保留薄转发入口。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/app/desktop_screen_capture_wiring.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/main.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/tests/test_desktop_screen_capture_wiring.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/docs/reports/2026-07-08-desktop-screen-capture-wiring-split.html</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>Qt deps 构建与 ScreenCaptureBridge 装配已移入专职模块；main.py 继续暴露原有函数名，并保持默认 provider 身份透传为 main.py 的旧函数对象，兼容现有 patch 型测试。</p>
+
+  <h2>Remaining Work</h2>
+  <p>当前拆分范围已完成。仓库中仍有其他既存未提交改动，本轮未触碰。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>如后续继续做桌面拆分，建议把同类 wrapper 再按模块边界继续抽离，并为每个新 wiring 模块补一份同样粒度的回归测试。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_bridge.py</li>
+    <li>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_screen_capture_wiring tests.test_desktop_screen_capture_bridge tests.test_main_runtime_env -v</li>
+    <li>git diff --check -- main.py app/desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_wiring.py tests/test_desktop_screen_capture_bridge.py docs/reports/2026-07-08-desktop-screen-capture-wiring-split.html</li>
+  </ul>
+</body>
+</html>

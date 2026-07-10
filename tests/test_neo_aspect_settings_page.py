@@ -7,12 +7,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_HTML = ROOT / "settings.html"
 SETTINGS_JS = ROOT / "settings.js"
+SETTINGS_FORM_JS = ROOT / "settings_form.js"
+SETTINGS_MODEL_PICKER_JS = ROOT / "settings_model_picker.js"
 
 
 class NeoAspectSettingsPageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.html = SETTINGS_HTML.read_text(encoding="utf-8")
         self.js = SETTINGS_JS.read_text(encoding="utf-8")
+        self.form_js = SETTINGS_FORM_JS.read_text(encoding="utf-8")
+        self.model_picker_js = SETTINGS_MODEL_PICKER_JS.read_text(encoding="utf-8")
 
     def test_page_keeps_existing_desktop_visual_shell(self) -> None:
         for token in (
@@ -42,19 +46,23 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
     def test_human_ops_click_preview_is_reviewable_and_visible(self) -> None:
         self.assertIn("click-preview-dot", self.html)
         self.assertIn("click-preview-dot", self.js)
+        self.assertIn("clickPreviewDot", self.form_js)
         self.assertIn("act 需要批准", self.html)
 
-    def test_brain_provider_selector_supports_three_api_formats(self) -> None:
+    def test_brain_provider_selector_supports_api_formats_including_google_aistudio(self) -> None:
         self.assertIn('id="brain-provider"', self.html)
-        for provider in ("openai_compatible", "ollama", "anthropic_compatible"):
+        combined_js = f"{self.js}\n{self.form_js}"
+        for provider in ("openai_compatible", "ollama", "anthropic_compatible", "google_aistudio"):
             with self.subTest(provider=provider):
                 self.assertIn(f'value="{provider}"', self.html)
-                self.assertIn(provider, self.js)
-        self.assertIn("brainProvider", self.js)
-        self.assertIn("provider:", self.js)
-        self.assertIn("model_endpoint: stringValue(els.brainModelEndpoint)", self.js)
-        self.assertNotIn("next.chat.backend_url = stringValue(els.brainModelEndpoint", self.js)
-        read_form = self.js.split("  function readForm() {", 1)[1].split("  async function loadSettings()", 1)[0]
+                self.assertIn(provider, combined_js)
+        self.assertIn("brainProvider", self.form_js)
+        self.assertIn("provider:", self.form_js)
+        self.assertIn("model_endpoint: isGoogleAistudio(brainProvider) ? \"\" : stringValue(els.brainModelEndpoint)", self.form_js)
+        self.assertIn("Google AI Studio 只需要 API Key", self.form_js)
+        self.assertIn('els.brainModelName.value.trim() === "gpt-5.4"', self.form_js)
+        self.assertNotIn("next.chat.backend_url = stringValue(els.brainModelEndpoint", self.form_js)
+        read_form = self.form_js.split("  function readForm() {", 1)[1].split("  return {", 1)[0]
         self.assertNotIn("backend_url", read_form)
 
     def test_brain_model_fetch_button_and_one_click_fill_exist(self) -> None:
@@ -62,9 +70,10 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn('id="brain-model-list"', self.html)
         self.assertIn('id="brain-model-status"', self.html)
         self.assertIn("brainFetchModelsBtn", self.js)
-        self.assertIn("/api/brain/models", self.js)
+        self.assertIn("/api/brain/models", self.model_picker_js)
         self.assertIn("renderBrainModelOptions", self.js)
-        self.assertIn("els.brainModelName.value = model.id", self.js)
+        self.assertIn("renderBrainModelOptions", self.model_picker_js)
+        self.assertIn("target.value = model.id", self.model_picker_js)
 
     def test_settings_js_still_uses_existing_config_endpoint(self) -> None:
         self.assertIn("/api/settings/config", self.js)
@@ -72,7 +81,7 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
 
     def test_settings_js_has_static_preview_fallback(self) -> None:
         self.assertIn("fallbackSettings", self.js)
-        self.assertIn("static_preview", self.js)
+        self.assertIn("static_preview", self.form_js)
 
 
 if __name__ == "__main__":

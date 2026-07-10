@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Click Preview Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2933;
+      background: #ffffff;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 18px;
+    }
+    code {
+      background: #f2f4f7;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Click Preview Split</h1>
+
+  <h2>Goal</h2>
+  <p>
+    Move desktop click preview payload normalization and overlay widget logic out of
+    <code>main.py</code> into <code>app/click_preview.py</code>, while preserving the existing
+    <code>DesktopPet.show_click_preview</code> behavior and public compatibility entries.
+  </p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>
+    This subwindow worker implemented the split directly in the shared worktree. The main
+    window remains responsible for later review and acceptance.
+  </p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/click_preview.py</code>: new module for normalization and Qt-injected overlay class creation.</li>
+    <li><code>main.py</code>: imports the new module, re-exports <code>normalize_click_preview_payload</code>, and builds <code>ClickPreviewOverlay</code> from injected Qt dependencies.</li>
+    <li><code>tests/test_desktop_click_preview_split.py</code>: new split coverage for module isolation, payload semantics, compatibility entries, and fake-widget overlay behavior.</li>
+    <li><code>tests/test_main_runtime_env.py</code>: updated the existing click preview overlay test to assert the new module-backed compatibility path.</li>
+    <li><code>docs/reports/2026-06-30-desktop-click-preview-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>
+    Click preview behavior now lives in <code>app.click_preview</code> without importing
+    <code>main.py</code>. Invalid payloads still hide the overlay, valid payloads still show a
+    red dot at the normalized screen coordinate, and labels still populate the tooltip.
+  </p>
+
+  <h2>Remaining Work</h2>
+  <p>
+    No known functional follow-up for this split. Broader cleanup of unrelated dirty files was
+    intentionally left untouched.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Main-window review should inspect only the click preview diff boundaries and then run the
+    same focused verification commands before accepting the worker result.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_click_preview_split -v</code>: passed, 5 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_click_preview_split tests.test_main_runtime_env -v</code>: passed, 70 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/click_preview.py tests/test_desktop_click_preview_split.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py</code>: passed with no output.</li>
+    <li><code>git diff --check --no-index -- /dev/null app/click_preview.py</code>: no whitespace-error output; exit 1 is the expected no-index difference result.</li>
+    <li><code>git diff --check --no-index -- /dev/null tests/test_desktop_click_preview_split.py</code>: no whitespace-error output; exit 1 is the expected no-index difference result.</li>
+  </ul>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>API 代理路径与 Observe 超时优化</title>
+</head>
+<body>
+  <h1>API 代理路径与 Observe 超时优化</h1>
+  <h2>Goal</h2>
+  <p>优化 Brain 和 Human Ops observe 的模型 API 网络路径：本地提供方和本地端点直连，远端提供方按可用 HTTP(S) 代理访问；同时放宽 observe 读图模型的超时限制，避免图片识别分析被过早中断。</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <p>Lead: brain 与 body/observe。QA: targeted regression tests and report.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li>brain/llm.py</li>
+    <li>backend/vision_analyzer.py</li>
+    <li>backend/vision.py</li>
+    <li>backend/app.py</li>
+    <li>main.py</li>
+    <li>settings.js</li>
+    <li>docs/WORKFLOW.md</li>
+    <li>tests/test_brain_llm_providers.py</li>
+    <li>tests/test_vision_analyzer.py</li>
+    <li>tests/test_neo_backend_contract.py</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Ollama and local OpenAI-compatible endpoints bypass environment proxy settings.</li>
+    <li>Remote OpenAI-compatible, Anthropic-compatible, and Google AI Studio Brain calls can use HTTP(S) proxy environment variables while keeping trust_env disabled.</li>
+    <li>Observe VLM calls keep local_vlm direct, including LAN endpoints, while remote VLM calls can use HTTP(S) proxies.</li>
+    <li>SOCKS-only ALL_PROXY is ignored for these model clients, avoiding failures when SOCKS support is unavailable.</li>
+    <li>Observe model timeout now defaults to 90 seconds and allows custom values up to 300 seconds.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <p>Ran: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_brain_llm_providers tests.test_vision_analyzer tests.test_neo_backend_contract -v</code>. Result: OK, 63 tests.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known blocker. A future settings UI pass could expose observe timeout as an editable numeric field instead of preserving it as backend-managed config.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Try one local Ollama observe model and one remote Google/OpenAI-compatible model from the settings page to confirm the machine-specific proxy environment behaves as expected.</p>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-16 Backend Route Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2933; }
+    h1 { margin-bottom: 0.25rem; }
+    h2 { margin-top: 1.5rem; border-bottom: 1px solid #d9e2ec; padding-bottom: 0.25rem; }
+    code { background: #f0f4f8; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 0.75rem; }
+    th, td { border: 1px solid #d9e2ec; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; }
+    .ok { color: #0f7b0f; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Backend Route Split</h1>
+  <p><strong>Date:</strong> 2026-06-16</p>
+
+  <h2>Goal</h2>
+  <p>
+    Continue slimming <code>backend/app.py</code> by extracting low-coupling backend route/support
+    logic while preserving the existing FastAPI paths and frontend/backend contracts.
+  </p>
+
+  <h2>Worker Split</h2>
+  <p>
+    Backend route split worker implemented this slice directly in the assigned workspace.
+    Main window responsibility remains review/check only. No frontend, desktop shell, body,
+    or settings-console files were edited.
+  </p>
+
+  <h2>Files Changed</h2>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Change</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>backend/app.py</code></td>
+        <td>Replaced inline <code>/api/brain/models</code>, <code>/api/tts</code>, and <code>/api/audio/{file_name}</code> logic with thin wrapper delegation.</td>
+      </tr>
+      <tr>
+        <td><code>backend/brain_models_route.py</code></td>
+        <td>Added dependency-injected handler and model serialization helper for <code>/api/brain/models</code>.</td>
+      </tr>
+      <tr>
+        <td><code>backend/audio_routes.py</code></td>
+        <td>Added dependency-injected TTS response handling plus safe audio file response helper.</td>
+      </tr>
+      <tr>
+        <td><code>tests/test_backend_route_split.py</code></td>
+        <td>Added focused wrapper delegation tests. Initial RED failed because the split modules were missing.</td>
+      </tr>
+      <tr>
+        <td><code>docs/reports/2026-06-16-backend-route-split.html</code></td>
+        <td>Added this task report.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Line Count Change</h2>
+  <p>
+    Measured from this worker round's observed pre-edit count, not from <code>git diff</code>
+    against HEAD because the worktree was already dirty.
+  </p>
+  <ul>
+    <li><code>backend/app.py</code>: 1324 lines before, 1243 after, net -81 lines.</li>
+    <li><code>backend/brain_models_route.py</code>: +78 lines.</li>
+    <li><code>backend/audio_routes.py</code>: +67 lines.</li>
+    <li><code>tests/test_backend_route_split.py</code>: +63 lines.</li>
+    <li>Net non-report source/test line change for this round: +127 lines, with route logic moved out of <code>backend/app.py</code>.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/app.py</code> now keeps the selected routes as thin wrappers and dependency assembly points.</li>
+    <li>New modules do not import <code>backend.app</code>.</li>
+    <li>Existing app-level patch points such as <code>backend_app.list_provider_models</code> and <code>backend_app.tts_available</code> remain compatible because wrappers pass them into dependencies.</li>
+    <li>External paths remain unchanged: <code>/api/brain/models</code>, <code>/api/tts</code>, and <code>/api/audio/{file_name}</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li class="ok"><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_route_split tests.test_neo_backend_contract -v</code>: 81 tests passed.</li>
+    <li class="ok"><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/brain_models_route.py backend/audio_routes.py tests/test_backend_route_split.py</code>: passed.</li>
+    <li class="ok"><code>git diff --check -- backend/app.py backend/brain_models_route.py backend/audio_routes.py tests/test_backend_route_split.py</code>: passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    The repository still has many unrelated dirty files from other workers. This round did not run
+    full regression and did not inspect or alter unrelated frontend, desktop shell, body, settings,
+    or human-ops changes.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Continue extracting similarly low-coupling backend routes, likely chat topic routes or ASR disabled
+    shell routes, after the coordinator checks current ownership and avoids overlapping active workers.
+  </p>
+</body>
+</html>

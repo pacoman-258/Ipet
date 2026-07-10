@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Simple Action Guard Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Simple Action Guard Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Ipet 坚持使用当前真实可执行的简单人类动作：观察、点击、输入、回车。真实模型如果返回 <code>launch_app</code>、<code>focus_window</code>、<code>hotkey</code> 等捷径，backend 不应把它交给用户审批后再失败。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 系统提示明确当前动作范围只包含 <code>click</code>、<code>type_text</code>、<code>key_press enter</code>。</li>
+    <li><strong>human-ops:</strong> backend 在生成审批前拦截不可执行动作，并无副作用地要求 Brain 改成简单人类动作。</li>
+    <li><strong>qa-reports:</strong> 增加模型返回 <code>launch_app</code> 时自动纠正到 <code>click</code> 的合同测试，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-simple-action-guard.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt now says not to return <code>launch_app</code>, <code>focus_window</code>, <code>hotkey</code>, <code>scroll</code>, <code>drag</code>, or <code>wait</code>.</li>
+    <li>Chat stream correction catches unsupported proposals before approval and asks Brain to use <code>observe</code>, <code>click</code>, <code>type_text</code>, or <code>key_press enter</code>.</li>
+    <li>Post-approval continuation uses the same guard, so a multi-step task cannot leak unsupported actions mid-chain.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_corrects_unsupported_desktop_action_to_simple_human_action tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model tests.test_neo_backend_contract.NeoBackendContractTests.test_wechat_reply_full_human_action_chain_observe_click_type_enter_done tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_send_defaults_continue_even_when_goal_points_to_verify_result tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 278 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need a real desktop run to confirm the model follows the simpler action vocabulary against live observations.</li>
+    <li>Future work can add explicit user-facing diagnostics if Brain exhausts its correction budget on unsupported actions.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run the real WeChat chain and inspect whether every approval proposal is one of <code>click</code>, <code>type_text</code>, or <code>key_press enter</code>.</p>
+</body>
+</html>

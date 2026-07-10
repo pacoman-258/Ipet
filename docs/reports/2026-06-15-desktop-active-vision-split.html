@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Active Vision Split - 2026-06-15</title>
+</head>
+<body>
+  <h1>Desktop Active Vision Split</h1>
+  <h2>Goal</h2>
+  <p>Move Active Vision target discovery, candidate handling, focus interaction, and active frame capture orchestration out of <code>main.py</code> into <code>body/active_vision.py</code> while keeping the existing <code>main.py</code> exports available.</p>
+
+  <h2>Worker Split</h2>
+  <p>This round was handled as the desktop-shell / Body Active Vision split worker. Main window classes were inspection-only except for preserving thin wrappers around the migrated Active Vision API.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>body/active_vision.py</code></li>
+    <li><code>main.py</code></li>
+    <li><code>tests/test_active_vision_module.py</code></li>
+    <li><code>docs/reports/2026-06-15-desktop-active-vision-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added <code>body.active_vision</code> as the implementation home for Active Vision constants, macOS desktop target discovery, Dock and running app candidates, candidate merge and target-hint boost, focus interaction, inline/detail frame preparation, and active capture payload orchestration.</li>
+    <li>Kept <code>main.py</code> exporting the same Active Vision constants and function names through thin wrappers, including a wrapper for <code>capture_active_vision_frame_payload</code> that injects <code>ScreenVisionController._payload_from_frame_payload</code> without importing <code>main.py</code> from the Body module.</li>
+    <li>Preserved the existing ScreenVisionController and DesktopPet classes in <code>main.py</code>; no Human Ops click/type/key execution or Qt window classes were changed.</li>
+    <li>Added focused module tests for candidate boost past the context cap and injected focus-runner behavior. RED was observed first as <code>ModuleNotFoundError: No module named 'body.active_vision'</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_active_vision_module -v</code> first failed with the expected missing-module RED, then passed after implementation.</li>
+    <li><code>.venv/bin/python -m py_compile body/active_vision.py main.py tests/test_active_vision_module.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_active_vision_module tests.test_screen_capture_payload tests.test_desktop_runtime tests.test_main_runtime_env -v</code> passed: 76 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known behavior gap in the targeted Active Vision split. The broader worktree still contains many unrelated modified and untracked files owned by other workers; this round did not revert or clean them.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Coordinator or qa-reports can run the larger integration slice once the parallel workers finish their current backend, frontend, and documentation splits.</p>
+</body>
+</html>

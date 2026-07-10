@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Active Vision Bridge Split - 2026-07-03</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 1px 4px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Active Vision Bridge Split</h1>
+  <p><strong>Date:</strong> 2026-07-03</p>
+
+  <h2>Goal</h2>
+  <p>Move active vision target discovery and capture orchestration provider unwrapping out of <code>main.py</code> into a Qt-free <code>app/active_vision_bridge.py</code>, while preserving the legacy <code>main.py</code> active vision export names for existing tests and callers.</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <ul>
+    <li><strong>desktop-shell:</strong> kept <code>main.py</code> as the compatibility surface and converted the two orchestration wrappers to bridge delegates.</li>
+    <li><strong>body:</strong> preserved behavior by delegating to existing <code>body.active_vision</code> implementations and the existing screen capture bridge unwrapping helpers.</li>
+    <li><strong>qa-reports:</strong> added focused bridge regression coverage and this HTML report.</li>
+    <li><strong>Subagents:</strong> none used in this round.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/active_vision_bridge.py</code>: new injected bridge for active vision default-provider identity unwrapping and orchestration delegation.</li>
+    <li><code>main.py</code>: added <code>_active_vision_bridge()</code> and slimmed <code>discover_active_vision_target_candidates</code> plus <code>capture_active_vision_frame_payload</code> into compatibility wrappers.</li>
+    <li><code>tests/test_desktop_active_vision_bridge.py</code>: new fake-module tests for import isolation, default-provider unwrapping, custom-provider passthrough, and <code>main.py</code> wrapper delegation.</li>
+    <li><code>docs/reports/2026-07-03-desktop-active-vision-bridge-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>app.active_vision_bridge</code> does not import <code>main</code> or Qt bindings at import time.</li>
+    <li>Default <code>main.py</code> discovery providers unwrap to <code>body.active_vision</code> providers before delegation.</li>
+    <li>Default capture and observation providers reuse <code>app.screen_capture_bridge</code> unwrapping, so legacy wrappers do not recurse.</li>
+    <li>Custom injected providers remain custom and are not replaced unless their identity exactly matches the supplied legacy default provider.</li>
+    <li>The existing <code>_active_vision_wrapper</code> alias group and public active vision names in <code>main.py</code> remain in place.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this slice. The broader working tree already contains many unrelated local changes, so future reviews should continue using focused path and symbol diffs around the active vision bridge surface.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue the desktop split by applying the same injected bridge pattern to the next small orchestration surface in <code>main.py</code>, with legacy wrappers retained until all call sites move.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_desktop_active_vision_bridge -v</code>: failed first as expected before implementation because <code>app.active_vision_bridge</code> and <code>main._active_vision_bridge</code> did not exist.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_desktop_active_vision_bridge -v</code>: passed after implementation, 5 tests.</li>
+    <li><code>.venv/bin/python -m unittest tests.test_desktop_active_vision_bridge tests.test_main_runtime_env tests.test_active_vision_module -v</code>: passed, 76 tests.</li>
+    <li><code>.venv/bin/python -m py_compile main.py app/active_vision_bridge.py tests/test_desktop_active_vision_bridge.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py app/active_vision_bridge.py tests/test_desktop_active_vision_bridge.py</code>: passed.</li>
+    <li><code>git diff --no-index --check /dev/null docs/reports/2026-07-03-desktop-active-vision-bridge-split.html</code>: no whitespace warnings. Git returned the normal no-index difference status for a new file.</li>
+  </ul>
+</body>
+</html>

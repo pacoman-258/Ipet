@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Frontend Human Ops Preview Split</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 32px;
+      color: #243447;
+      background: #f8fafc;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #d8e1ec;
+      border-radius: 8px;
+      padding: 28px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 24px;
+      font-size: 16px;
+    }
+    code {
+      background: #eef2f7;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    li {
+      margin: 6px 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Frontend Human Ops Preview Split</h1>
+
+    <h2>Goal</h2>
+    <p>
+      Move the Human Ops click preview DOM and Qt bridge logic out of
+      <code>frontend/index.js</code> into a dedicated preview controller while keeping
+      the legacy app-level function names as thin wrappers.
+    </p>
+
+    <h2>Worker/Subagent Split</h2>
+    <p>
+      Single frontend worker. No subagents were used. The work stayed inside the
+      requested frontend, test, and report files while parallel backend and desktop
+      edits were left untouched.
+    </p>
+
+    <h2>Files Changed</h2>
+    <ul>
+      <li><code>frontend/human_ops_preview.js</code> - new controller module.</li>
+      <li><code>frontend/index.js</code> - delegated preview wrappers to the controller.</li>
+      <li><code>index.html</code> - loaded the new module before <code>frontend/index.js</code>.</li>
+      <li><code>tests/test_frontend_human_ops_preview_source.py</code> - new source tests for the split.</li>
+      <li><code>tests/test_chat_modes_ui.py</code> - minimal source-test alignment for the new module.</li>
+      <li><code>docs/reports/2026-07-03-frontend-human-ops-preview-split.html</code> - this report.</li>
+    </ul>
+
+    <h2>Achieved Effect</h2>
+    <ul>
+      <li>
+        Added <code>window.IpetHumanOpsPreview.createHumanOpsPreviewController(...)</code>
+        with private preview element state.
+      </li>
+      <li>
+        Injected <code>getQtBridge</code>, <code>window</code>, and <code>document</code>
+        so the new module does not depend on the global <code>qtBridge</code>.
+      </li>
+      <li>
+        Kept <code>showHumanOpsClickPreview(preview)</code> and
+        <code>hideHumanOpsClickPreview()</code> in <code>frontend/index.js</code> as
+        one-line wrappers.
+      </li>
+      <li>
+        Preserved red-dot validation, viewport bounds checks, DOM marker creation,
+        and Qt <code>showClickPreview</code>/<code>hideClickPreview</code> calls in the new module.
+      </li>
+    </ul>
+
+    <h2>Remaining Work</h2>
+    <p>
+      None for this split. Broader frontend extraction can continue in later waves.
+    </p>
+
+    <h2>Recommended Next Step</h2>
+    <p>
+      Continue the next frontend split by targeting another small ownership island
+      in <code>frontend/index.js</code>, keeping the same controller plus source-test pattern.
+    </p>
+
+    <h2>Verification</h2>
+    <ul>
+      <li><code>node --check frontend/human_ops_preview.js</code> - passed.</li>
+      <li><code>node --check frontend/index.js</code> - passed.</li>
+      <li>
+        <code>.venv/bin/python -m unittest tests.test_frontend_human_ops_preview_source tests.test_chat_modes_ui -v</code>
+        - passed, 21 tests.
+      </li>
+      <li>
+        <code>git diff --check -- frontend/index.js frontend/human_ops_preview.js index.html tests/test_frontend_human_ops_preview_source.py tests/test_chat_modes_ui.py</code>
+        - passed for tracked diffs.
+      </li>
+      <li>
+        <code>git diff --check --no-index -- /dev/null ...</code> for
+        <code>frontend/human_ops_preview.js</code>,
+        <code>tests/test_frontend_human_ops_preview_source.py</code>, and this report
+        - no whitespace diagnostics.
+      </li>
+    </ul>
+  </main>
+</body>
+</html>

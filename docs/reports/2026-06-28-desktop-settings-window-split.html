@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Settings Window Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #1f2933; }
+    h1 { margin-bottom: 0.25rem; }
+    h2 { margin-top: 1.5rem; border-bottom: 1px solid #d9e2ec; padding-bottom: 0.25rem; }
+    code { background: #f0f4f8; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Settings Window Split</h1>
+  <p><strong>Date:</strong> 2026-06-28</p>
+
+  <h2>Goal</h2>
+  <p>Move DesktopPet settings window behavior out of <code>main.py</code> into a focused app-layer module while preserving existing DesktopPet wrapper method names and test patch points.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>desktop-shell:</strong> extracted host-side settings window controller wiring from <code>main.py</code>.</li>
+    <li><strong>qa-reports:</strong> added focused regression coverage and this HTML report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/settings_window.py</code></li>
+    <li><code>tests/test_desktop_settings_window_split.py</code></li>
+    <li><code>docs/reports/2026-06-28-desktop-settings-window-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added <code>SettingsWindowController</code> without importing <code>main</code>.</li>
+    <li>Kept <code>DesktopPet.open_settings_page</code>, <code>_settings_page_url</code>, <code>_clear_settings_window</code>, <code>_create_settings_window</code>, <code>_settings_window_is_usable</code>, <code>_navigate_settings_window</code>, and <code>_show_or_focus_settings_window</code> as compatibility wrappers.</li>
+    <li>Preserved existing fake-host patch points by letting the controller call the owner wrapper methods for window creation and destroyed cleanup.</li>
+    <li>Injected Qt dependencies from <code>main.py</code> so the new module has no reverse dependency on the desktop entrypoint.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. The broader <code>main.py</code> slimming effort still has unrelated existing diffs outside this task.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue extracting another cohesive DesktopPet responsibility only after assigning a single owner for the next high-conflict <code>main.py</code> slice.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><strong>RED:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_settings_window_split -v</code> failed before implementation with <code>ImportError: cannot import name 'settings_window' from 'app'</code>.</li>
+    <li><strong>GREEN:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_settings_window_split tests.test_main_runtime_env -v</code> passed: 68 tests, OK.</li>
+    <li><strong>Compile:</strong> <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/settings_window.py tests/test_desktop_settings_window_split.py</code> exited 0.</li>
+    <li><strong>Diff check:</strong> <code>git diff --check -- main.py app/settings_window.py tests/test_desktop_settings_window_split.py docs/reports/2026-06-28-desktop-settings-window-split.html</code> exited 0.</li>
+  </ul>
+</body>
+</html>

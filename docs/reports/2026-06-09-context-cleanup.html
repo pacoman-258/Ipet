@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Context Discipline And Cache Cleanup - 2026-06-09</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      max-width: 900px;
+      color: #1f2933;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Context Discipline And Cache Cleanup</h1>
+
+  <h2>Goal</h2>
+  <p>Apply project-level token-saving habits and remove obvious ignored cache files from the Ipet workspace.</p>
+
+  <h2>Worker Split</h2>
+  <p>Single Codex worker. No subagents were used.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>AGENTS.md</code>: expanded the existing Token-Saving Rules with project-specific guidance for focused file reads, large artifacts, noisy paths, and capped command output.</li>
+    <li><code>docs/reports/2026-06-09-context-cleanup.html</code>: added this report.</li>
+  </ul>
+
+  <h2>Cleanup Performed</h2>
+  <p>Removed ignored local cache/system artifacts: root and package <code>__pycache__/</code> directories, <code>.uv-cache/</code>, empty <code>.service-logs/</code>, and root <code>.DS_Store</code>. The project <code>.venv/</code> was intentionally kept because it is the verified local runtime.</p>
+
+  <h2>Achieved Effect</h2>
+  <p>The project guide now gives agents clearer defaults for avoiding large context reads, and the repository no longer carries obvious ignored cache clutter in the working tree.</p>
+
+  <h2>Remaining Work</h2>
+  <p>The repository still has many unrelated modified files and untracked historical HTML reports. They were left untouched because they may be active user work or task history.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Create a short <code>HANDOFF.md</code> only if future multi-session work needs a live project brain. Keep it under 1,000 tokens and update it at the end of each long task round.</p>
+</body>
+</html>

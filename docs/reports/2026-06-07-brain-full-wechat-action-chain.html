@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Full WeChat Action Chain Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Full WeChat Action Chain Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>进一步验证并加固 Ipet 用简单人类动作完成复杂微信回复任务的闭环：从观察 Dock 微信图标开始，连续经过点击打开、点击联系人、点击输入框、输入回复、按 Enter 发送，并在发送后观察验证完成。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 通过 stage/goal 引导完整动作链，仍保持每次只提出一个最小动作。</li>
+    <li><strong>human-ops:</strong> 对聊天发送 Enter 动作默认开启发送后观察验证，即使 Brain 把 goal 写到 <code>verify_result</code>。</li>
+    <li><strong>qa-reports:</strong> 增加完整 mocked WeChat 动作链合同测试，并记录本报告。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-full-wechat-action-chain.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Enter/Return chat send proposals with <code>expected_text</code> or a send label now default to <code>continue_after_approval</code>, even when Brain says the next stage is verification.</li>
+    <li>The new contract test covers the whole mocked sequence: observe, click Dock WeChat, click contact, click input, type reply, press Enter, observe sent message, and finish with <code>goal.status=done</code>.</li>
+    <li>The test also covers inherited <code>expected_text</code> on Enter when the model omits it after typing.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_send_defaults_continue_even_when_goal_points_to_verify_result tests.test_neo_backend_contract.NeoBackendContractTests.test_wechat_reply_full_human_action_chain_observe_click_type_enter_done tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_continuation_observes_sent_message_then_done tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_complex_goal_defaults_continue_after_approval_when_missing tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 277 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need a real macOS + Ipet + WeChat run to prove the same chain against live screenshots and actual app behavior.</li>
+    <li>Future hardening should compare real observe outputs with the mocked structured context used by this contract test.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Run the real desktop task with WeChat visible in the Dock and inspect each approval step, especially whether observe returns stable coordinates, chat context, input focus, draft text, and sent-message evidence.</p>
+</body>
+</html>

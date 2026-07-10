@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Control Panel Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2933; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Control Panel Split</h1>
+  <p><strong>Date:</strong> 2026-06-16</p>
+
+  <h2>Goal</h2>
+  <p>Continue slimming <code>main.py</code> by moving the desktop control panel widget into <code>app/control_panel.py</code> while keeping the desktop host responsible for <code>DesktopPet</code>, screen vision, and Qt app startup.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>desktop-shell worker:</strong> moved <code>ControlPanel</code> and its panel-only helpers/imports out of <code>main.py</code>.</li>
+    <li><strong>qa-reports slice:</strong> added a focused source/import regression test and recorded this HTML report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/control_panel.py</code></li>
+    <li><code>tests/test_control_panel_split.py</code></li>
+    <li><code>docs/reports/2026-06-16-desktop-control-panel-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>main.py</code> now imports <code>ControlPanel</code> from <code>app.control_panel</code> instead of defining the widget inline.</li>
+    <li><code>app/control_panel.py</code> owns the control panel UI, panel-only Qt widget imports, TTS preset fill helper usage, model browse normalization, and backend health test helper path.</li>
+    <li>The new test checks that <code>ControlPanel</code> is not defined in <code>main.py</code> and that <code>app.control_panel</code> does not import <code>main</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_control_panel_split tests.test_main_runtime_env tests.test_desktop_configuration -v</code> passed.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/control_panel.py tests/test_control_panel_split.py</code> passed.</li>
+    <li><code>git diff --check -- main.py app/control_panel.py tests/test_control_panel_split.py docs/reports/2026-06-16-desktop-control-panel-split.html</code> passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known follow-up is required for this split. Other existing uncommitted changes in the shared worktree were not touched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Keep future desktop-shell splits similarly narrow: move one widget or controller at a time, with a source-level guard that prevents accidental re-growth in <code>main.py</code>.</p>
+</body>
+</html>

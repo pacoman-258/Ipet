@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>2026-06-30 frontend pet scene split</title>
+  <style>
+    body {
+      max-width: 880px;
+      margin: 32px auto;
+      padding: 0 20px 40px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #243044;
+      line-height: 1.65;
+      background: #fbfcff;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 18px;
+    }
+    h2 {
+      font-size: 17px;
+      margin-top: 24px;
+      border-bottom: 1px solid #d8e0ee;
+      padding-bottom: 6px;
+    }
+    code {
+      background: #eef3fb;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .pass {
+      color: #217245;
+      font-weight: 700;
+    }
+    .fail {
+      color: #9a3412;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <h1>Frontend Pet Scene Split</h1>
+
+  <h2>Goal</h2>
+  <p>Continue slimming <code>frontend/index.js</code> by moving Live2D/PIXI scene and model control into a dedicated frontend controller while preserving old entrypoint functions as thin delegation wrappers.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Single implementation subwindow. Frontend/body presentation ownership handled the scene split; QA report duties were handled in the same worker with focused source tests and command verification.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>frontend/pet_scene.js</code>: new <code>window.IpetPetScene.createPetSceneController(deps)</code> module.</li>
+    <li><code>frontend/index.js</code>: delegates model transform, interaction binding, stage interaction, renderer readiness, motion playback, and model loading to the controller.</li>
+    <li><code>index.html</code>: loads <code>frontend/pet_scene.js</code> after helper/chat modules and before <code>frontend/index.js</code>.</li>
+    <li><code>tests/test_frontend_pet_scene_source.py</code>: new focused source tests for namespace, load order, wrapper delegation, and scene ownership.</li>
+    <li><code>tests/test_chat_modes_ui.py</code>: updates split asset order/source aggregation to include the new pet scene module.</li>
+    <li><code>docs/reports/2026-06-30-frontend-pet-scene-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Live2D model state, pending model URL, model cleanup, scale/opacity/rotation clamp, bottom-center placement, edit-mode drag, wheel zoom, hit/tap motion routing, and motion-manager fallback now live in <code>frontend/pet_scene.js</code>.</li>
+    <li><code>frontend/index.js</code> keeps compatibility wrappers for <code>applyModelTransform</code>, <code>bindModelInteraction</code>, <code>setupStageInteraction</code>, <code>isRendererReady</code>, <code>playMotionCompat</code>, and <code>loadModel</code>.</li>
+    <li><code>applyConfig</code> remains the coordinator for chat, ASR, sidebar, background, and model config, but model load/transform decisions call through the pet scene controller.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>PIXI application construction and follow-mouse ticker setup still remain in <code>frontend/index.js</code>; they can be moved later if the next frontend split wants the scene controller to own app creation fully.</li>
+    <li>No browser/runtime Live2D smoke test was run in this round; validation is source-level plus JavaScript syntax checks.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>For the next small frontend split, either move PIXI app creation/follow-mouse focus into the pet scene controller or add a lightweight browser smoke test around model load and edit-mode interaction.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><span class="fail">RED</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_pet_scene_source -v</code> initially failed with 4 expected source-test failures before the module and load order existed.</li>
+    <li><span class="pass">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_pet_scene_source -v</code> passed 4 tests after extraction.</li>
+    <li><span class="pass">PASS</span>: <code>node --check frontend/pet_scene.js</code>.</li>
+    <li><span class="pass">PASS</span>: <code>node --check frontend/index.js</code>.</li>
+    <li><span class="pass">PASS</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_frontend_pet_scene_source tests.test_chat_modes_ui tests.test_frontend_chat_panel_source tests.test_frontend_chat_submit_source -v</code> passed 26 tests.</li>
+    <li><span class="pass">PASS</span>: <code>git diff --check -- index.html frontend/index.js frontend/pet_scene.js tests/test_frontend_pet_scene_source.py tests/test_chat_modes_ui.py docs/reports/2026-06-30-frontend-pet-scene-split.html</code> exited 0 with no output. Note: Git does not include untracked files in normal diff output in this dirty worktree.</li>
+  </ul>
+</body>
+</html>

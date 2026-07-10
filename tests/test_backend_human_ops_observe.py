@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+import unittest
+from unittest import mock
+
+from brain.decisions import BrainDecision
+from backend import app as backend_app
+from backend.human_ops_observe import HumanOpsObserveDependencies, perform_human_ops_observe
+
+
+def _deps(**overrides):
+    async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
+        raise AssertionError("send_desktop_command should not be called")
+
+    defaults = {
+        "send_desktop_command": send_desktop_command,
+        "observe_target_hint_from_decision": lambda _decision, fallback="screen": fallback,
+        "frame_with_observe_prompt": lambda frame, _decision, _user_text: dict(frame),
+        "observe_coordinate_context_from_frame": lambda _frame: "coordinate context",
+        "observe_model_analyzer_config": lambda _config: {"enabled": False},
+        "looks_like_click_request": lambda _text: False,
+        "infer_computer_use_context": lambda _text, _frame=None, _target_hint="": {
+            "surface": {"kind": "unknown"},
+            "affordances": [],
+        },
+        "enrich_observation_frame_with_model": lambda frame, _config: dict(frame),
+        "observation_text_from_result": lambda result: str(result.get("frame", {}).get("observe_answer") or ""),
+        "observe_decision_requests_click": lambda _decision: False,
+        "observe_click_coordinate_status": lambda _text, *, require_coordinates=False: {},
+        "goal_requests_click_coordinate_followup": lambda _decision: False,
+        "click_coordinate_observe_failure_text": lambda text: text,
+    }
+    defaults.update(overrides)
+    return HumanOpsObserveDependencies(**defaults)
+
+
+class HumanOpsObserveSplitTests(unittest.TestCase):
+    def test_module_does_not_import_backend_app(self) -> None:
+        import backend.human_ops_observe as observe_module
+
+        source = inspect.getsource(observe_module)
+        self.assertNotIn("backend.app", source)
+        self.assertNotIn("from . import app", source)
+
+    def test_observe_screen_disabled_returns_permission_message_without_capture(self) -> None:
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("screen"),
+                {"observe_screen": False},
+                deps=_deps(),
+            )
+        )
+
+        self.assertIn("观察权限", result["text"])
+        self.assertEqual(result["observations"], [])
+        self.assertIn("observe_screen disabled", result["unknowns"])
+
+    def test_sends_active_vision_capture_with_target_hint_and_long_timeout(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_screencapture",
+                    "observations": [{"claim": "captured", "source": "test"}],
+                },
+                "trace": {"capture": "ok"},
+            }
+        )
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("打开微信"),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(
+                    send_desktop_command=send_mock,
+                    observe_target_hint_from_decision=lambda _decision, fallback="screen": "Dock 微信",
+                ),
+            )
+        )
+
+        send_mock.assert_awaited_once_with(
+            "active_vision_capture",
+            {"mode": "desktop_survey", "target_hint": "Dock 微信", "target": "Dock 微信"},
+            timeout_sec=14,
+        )
+        self.assertEqual(result["trace"], {"capture": "ok"})
+
+    def test_observe_model_disabled_reports_model_requirement(self) -> None:
+        async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
+            return {
+                "frame": {
+                    "capture_backend": "macos_screencapture",
+                    "active_observation": {"target_hint": "点击 Dock 栏里的设置"},
+                }
+            }
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("点击 Dock 栏里的设置"),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(
+                    send_desktop_command=send_desktop_command,
+                    observe_target_hint_from_decision=lambda _decision, fallback="screen": "点击 Dock 栏里的设置",
+                    looks_like_click_request=lambda text: "点击" in text,
+                ),
+            )
+        )
+
+        self.assertIn("需要配置 Human Ops observe 模型", result["text"])
+        self.assertIn("observe_model disabled", result["unknowns"])
+
+    def test_enabled_observe_marks_incomplete_coordinate_unknowns(self) -> None:
+        async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
+            return {"frame": {"unknowns": ["preexisting"], "observations": [{"claim": "微信可见", "source": "fake"}]}}
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "screen",
+                    goal={
+                        "objective": "打开微信",
+                        "status": "in_progress",
+                        "missing": "微信图标的中心点坐标",
+                    },
+                ),
+                {"observe_screen": True, "observe_model": {"enabled": True}},
+                deps=_deps(
+                    send_desktop_command=send_desktop_command,
+                    observe_model_analyzer_config=lambda _config: {"enabled": True},
+                    enrich_observation_frame_with_model=lambda frame, _config: {
+                        **frame,
+                        "observe_answer": "Dock 中可见微信图标，但没有完整坐标。",
+                    },
+                    observe_decision_requests_click=lambda _decision: True,
+                    observe_click_coordinate_status=lambda _text, *, require_coordinates=False: {
+                        "status": "incomplete",
+                        "reason": "missing x/y",
+                    },
+                    goal_requests_click_coordinate_followup=lambda _decision: True,
+                    click_coordinate_observe_failure_text=lambda text: f"{text}\n缺少完整 x 和 y。",
+                ),
+            )
+        )
+
+        self.assertEqual(result["coordinate_status"]["status"], "incomplete")
+        self.assertIn("observe_coordinate_incomplete", result["unknowns"])
+        self.assertIn("preexisting", result["unknowns"])
+        self.assertIn("缺少完整 x 和 y", result["text"])
+
+    def test_app_wrapper_uses_patched_app_level_send_desktop_command(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_screencapture",
+                    "observations": [],
+                }
+            }
+        )
+
+        with mock.patch.object(backend_app, "_send_desktop_command", new=send_mock):
+            result = asyncio.run(
+                backend_app._perform_human_ops_observe(
+                    BrainDecision.observe("打开微信"),
+                    {"observe_screen": True, "observe_model": {"enabled": False}},
+                )
+            )
+
+        send_mock.assert_awaited_once()
+        self.assertEqual(send_mock.await_args.args[0], "active_vision_capture")
+        self.assertEqual(send_mock.await_args.kwargs["timeout_sec"], 14)
+        self.assertIn("observe_model disabled", result["unknowns"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Backend Chat Stream Flow Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Backend Chat Stream Flow Split</h1>
+  <p><strong>Date:</strong> 2026-06-15</p>
+
+  <h2>Goal</h2>
+  <p>Move the large <code>/api/chat/stream</code> orchestration out of <code>backend/app.py</code> into a focused <code>backend/chat_stream_flow.py</code> module while preserving SSE events, Brain/Human Ops behavior, topic writes, and retry truncation.</p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <p>This round was the backend chat stream split worker. The main window remains responsible for review/checking. Existing concurrent splits such as <code>human_ops/approval_flow.py</code>, <code>human_ops/proposals.py</code>, <code>backend/computer_use_context.py</code>, and <code>backend/observe_context.py</code> were preserved.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: converted <code>chat_stream</code> into a thin dependency assembly wrapper returning <code>StreamingResponse</code>.</li>
+    <li><code>backend/chat_stream_flow.py</code>: added injected chat stream flow orchestration.</li>
+    <li><code>tests/test_chat_stream_flow.py</code>: added focused module test for placeholder SSE, topic append, and retry truncate behavior.</li>
+    <li><code>docs/reports/2026-06-15-backend-chat-stream-flow-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>backend/chat_stream_flow.py</code> does not import <code>backend.app</code>; app helpers remain injected through <code>ChatStreamFlowDependencies</code>.</li>
+    <li>The route keeps existing monkeypatch points such as <code>run_brain_turn</code>, <code>_decision_from_completion</code>, <code>_perform_human_ops_observe</code>, <code>_create_human_ops_act_proposal</code>, <code>_proposal_event_payload</code>, and <code>_react_followup_prompt</code>.</li>
+    <li>SSE event names remain <code>meta</code>, <code>phase</code>, <code>token</code>, <code>segment</code>, <code>display_segment</code>, <code>approval_required</code>, and <code>done</code>.</li>
+    <li>Focused test RED phenomenon: before implementation, <code>tests.test_chat_stream_flow</code> failed with <code>ModuleNotFoundError: No module named 'backend.chat_stream_flow'</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_chat_stream_flow -v</code>: passed, 1 test.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_chat_stream_flow tests.test_human_ops_approval_flow tests.test_neo_backend_contract tests.test_brain_structured_replies tests.test_brain_llm_providers -v</code>: passed, 107 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/chat_stream_flow.py tests/test_chat_stream_flow.py</code>: passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up for this split. The workspace still contains many unrelated modified and untracked files from parallel workers, so integration review should consider the combined diff.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window review the dependency surface and run any broader integration checks it owns after other split workers finish.</p>
+</body>
+</html>

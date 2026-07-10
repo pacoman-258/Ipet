@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Focus Input Before Type Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Focus Input Before Type Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让微信回复链路更像真实人类操作：聊天输入框只是可见时不能直接 <code>type_text</code>，Brain 需要先确认键盘焦点；没有聚焦或光标证据时，应先提出点击输入框的 <code>focus_input</code> 动作。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 在系统提示中明确可见输入框和可直接输入的区别。</li>
+    <li><strong>human-ops:</strong> 在结构化 <code>chat_context</code> 中区分 <code>input_ready</code> 和 <code>input_focused</code>，并把聊天输入框标为可点击入口。</li>
+    <li><strong>qa-reports:</strong> 增加 prompt、affordance、chat context、post-approval observe prompt 的契约测试。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-focus-input-before-type.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Brain prompt now says: if the input box is visible but not focused, first click it in <code>focus_input</code>.</li>
+    <li>Structured context now carries <code>input_focused</code>, so Brain can distinguish visible input from current keyboard target.</li>
+    <li>Chat input affordances now include <code>click</code>, matching the human action of focusing the text box before typing.</li>
+    <li>Post-approval observe prompts now ask whether the chat input is focused or has a cursor.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_contact_and_input_affordances_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_from_observe_text tests.test_neo_backend_contract.NeoBackendContractTests.test_infers_wechat_chat_context_marks_focused_input_from_cursor_text tests.test_neo_backend_contract.NeoBackendContractTests.test_post_approval_observe_prompt_for_wechat_reply_reads_chat_context tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_type_text_continuation_observes_draft_then_requests_enter tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_enter_continuation_observes_sent_message_then_done -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed with 274 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Still need real WeChat end-to-end evidence that visual observe reliably reports cursor/focus state.</li>
+    <li>If focus evidence is visually weak in real screenshots, the next hardening step is to let Brain use a conservative click-to-focus even when the input is likely focused.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Exercise the full approval sequence on a real WeChat chat: observe input visibility, click the input field if focus is unknown, type the draft, press Enter, and verify the sent message.</p>
+</body>
+</html>

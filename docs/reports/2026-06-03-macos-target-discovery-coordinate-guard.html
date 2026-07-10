@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>2026-06-03 macOS Target Discovery And Coordinate Guard</title>
+  <style>
+    body {
+      color: #202124;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 32px auto;
+      max-width: 920px;
+    }
+    h1, h2 { line-height: 1.25; }
+    code {
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #d7dbe0;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f7f8fa; }
+  </style>
+</head>
+<body>
+  <h1>macOS 目标发现与坐标守门修复</h1>
+
+  <h2>Goal</h2>
+  <p>修复 Ipet 在真实 observe/click 链路中暴露的三个问题：macOS 目标发现因 System Events <code>-10827</code> 和 AppKit 缺失退化失败、observe 返回残缺坐标时继续交给 Brain 猜、Brain follow-up 空返回时丢失观察事实。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>施工面</th>
+        <th>责任</th>
+        <th>结果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>子窗口 A / Body</td>
+        <td><code>main.py</code> macOS active vision target discovery。</td>
+        <td>窗口枚举失败后继续走 running app / <code>ps</code> 兜底；过滤 PrivateFrameworks 伪 app 和后台进程，保留 WeChat、Chrome、Codex 等可 focus GUI app 候选。</td>
+      </tr>
+      <tr>
+        <td>子窗口 B / Human Ops + Brain</td>
+        <td><code>backend/app.py</code> observe 坐标守门和 Brain follow-up 容错。</td>
+        <td>点击 observe 缺少完整 x/y 时返回明确补坐标提示；follow-up provider empty text 时保留 observation，不再直接显示 provider error。</td>
+      </tr>
+      <tr>
+        <td>主窗口 / QA Reports</td>
+        <td>集成验收、回归、报告。</td>
+        <td>复跑新增红灯测试、相关完整测试和语法编译，确认全部通过。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/reports/2026-06-03-macos-target-discovery-coordinate-guard.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>System Events 窗口枚举失败时，active vision 不再只剩无用后台进程或空目标；可通过真实 <code>.app</code> bundle 路径得到 app-level focus 候选。</li>
+    <li>缺少 AppKit 时，仍可通过 System Events running app 和 <code>/bin/ps -axo comm=</code> 提取 GUI app 候选。</li>
+    <li>observe 返回 <code>x=</code>、只有 x、只有 y、或提到可点击中心但没有完整坐标时，Human Ops 明确标记 <code>observe_coordinate_incomplete</code>。</li>
+    <li>聊天流在残缺坐标时不生成 Human Ops click proposal，也不把残缺坐标交给 Brain 猜测。</li>
+    <li>Brain follow-up 空文本或 provider empty-text error 时，保留 observe 事实并提示补完整 x/y。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>python -m unittest tests.test_main_runtime_env.MainDesktopEnvTests.test_running_app_ps_fallback_filters_private_system_app_bundles tests.test_neo_backend_contract.NeoBackendContractTests.test_click_observe_marks_incomplete_coordinate_answer tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_preserves_observation_when_followup_brain_returns_empty_text -v</code>：3 tests OK。</li>
+    <li><code>python -m unittest tests.test_main_runtime_env -v</code>：57 tests OK。</li>
+    <li><code>python -m unittest tests.test_neo_backend_contract -v</code>：41 tests OK。</li>
+    <li><code>python -m unittest tests.test_active_vision tests.test_main_runtime_env tests.test_neo_backend_contract -v</code>：110 tests OK。</li>
+    <li><code>python -m py_compile main.py backend/app.py tests/test_main_runtime_env.py tests/test_neo_backend_contract.py</code>：通过。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>真实点击坐标仍依赖 observe 模型给出完整、可信的 x/y；本轮修复保证坐标残缺时不会继续误点。</li>
+    <li>System Events <code>-10827</code> 的系统权限根因可能仍存在；当前修复是可用兜底和错误不中断。</li>
+    <li>后续可加入真实 GUI smoke：启动 Ipet 后让它观察并 focus 一个安全 app，确认 running-app 候选进入实际链路。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>在用户允许外部 observe 模型读取截图时，复跑一次真实“观察并点击 Dock 上某个安全 App”链路，确认新守门能在残缺坐标时停住，并在完整坐标时进入 Human Ops 红点审批。</p>
+</body>
+</html>

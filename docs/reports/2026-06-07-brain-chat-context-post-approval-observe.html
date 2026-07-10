@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Chat Context Post-Approval Observe Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Chat Context Post-Approval Observe Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Ipet 在微信回复类复杂任务中，点击进入联系人或会话后能观察并读取最近聊天内容，而不是只泛泛确认界面变化。这样 Brain 才能根据聊天信息草拟回复，再继续提出输入和回车审批。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 保持当前 stage 链路，依赖更具体的 post-approval observation 输入来推进 <code>read_context</code> 和 <code>draft_reply</code>。</li>
+    <li><strong>human-ops:</strong> 为审批后观察增加任务感知 prompt，微信回复任务会要求目标联系人、最近聊天内容、聊天输入框和发送入口。</li>
+    <li><strong>qa-reports:</strong> 增加回归测试，确保批准点击张三聊天条目后，observe prompt 包含聊天上下文读取要求。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-chat-context-post-approval-observe.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>新增 <code>_post_approval_observe_prompt</code>，审批后观察会携带原始用户目标和刚才获批动作。</li>
+    <li>微信聊天回复任务的审批后观察会明确要求读取最近聊天内容、确认目标联系人/会话、聊天输入框和发送入口。</li>
+    <li>新增回归覆盖“点击张三聊天条目后，observe prompt 必须包含张三、最近聊天内容、聊天输入框、发送入口”。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>真实微信端到端演练仍然是完成目标所需证据：需要验证 observe 模型能稳定读取聊天内容并让 Brain 草拟合适回复。</li>
+    <li>后续可进一步结构化 recent messages，例如把 observe 文本派生成 <code>chat_context</code> 字段，减少 Brain 从自然语言里抽取对话的负担。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>继续补“输入回复后自动观察并提出 Enter 发送审批”的真实链路测试，随后进行一次 macOS 真实微信审批演练。</p>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Human Ops 点击修复报告</title>
+</head>
+<body>
+  <h1>Human Ops 点击修复报告</h1>
+  <h2>目标</h2>
+  <p>修复 Human Ops 点击链路，让用户能看到红点预览，并在批准后执行真实点击。</p>
+
+  <h2>worker / subagent split</h2>
+  <p>human-ops 负责批准与点击执行链路；body / desktop-shell 边界由 <code>main.py</code> 的桌面命令承接；qa-reports 负责回归测试和本报告。</p>
+
+  <h2>files changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>human_ops/previews.py</code></li>
+    <li><code>index.html</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>tests/test_neo_aspect_core.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-01-human-ops-click-fix.html</code></li>
+  </ul>
+
+  <h2>achieved effect</h2>
+  <p>批准后的 macOS 点击现在优先使用 CoreGraphics 鼠标事件，避免只依赖容易返回 <code>-25212</code> 的 System Events；CoreGraphics 不可用时仍保留 System Events 备用路径。红点预览 payload 增加稳定尺寸，前端和 Qt 覆盖层都能显示更醒目的目标点。</p>
+
+  <h2>remaining work</h2>
+  <p>真实桌面点击仍依赖 macOS 辅助功能 / 事件投递权限。若系统未授权 Python 或当前宿主进程，执行器会继续返回权限相关失败，需要用户在系统设置中授权。</p>
+
+  <h2>recommended next step</h2>
+  <p>在桌面应用中重新发起一次点击任务：确认红点落在目标上，再批准；若失败，记录新的错误文本和目标坐标。</p>
+</body>
+</html>

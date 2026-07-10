@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import textwrap
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -25,7 +26,7 @@ from .vision import (
 DEFAULT_ANALYZER_CONFIG: dict[str, Any] = {
     "enabled": False,
     "provider": "none",
-    "timeout_sec": 15.0,
+    "timeout_sec": 90.0,
     "max_text_chars": 600,
     "max_image_bytes": 3_000_000,
     "api_key": "",
@@ -36,7 +37,9 @@ DEFAULT_ANALYZER_CONFIG: dict[str, Any] = {
     "max_observations": 4,
 }
 
-ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm"}
+GOOGLE_AISTUDIO_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
+GOOGLE_AISTUDIO_DEFAULT_MODEL = "gemini-3.5-flash"
+ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm", "google_aistudio_vlm"}
 ANALYZER_IMAGE_DETAILS = {"low", "high", "auto"}
 ANALYZER_STATUS_KEYS = {"enabled", "provider", "status", "last_error", "observations_added", "unknowns_added"}
 DATA_URL_PREFIX = "data:"
@@ -92,6 +95,11 @@ def normalize_analyzer_config(config: Any) -> dict[str, Any]:
             normalized["api_key_env"] = ""
     elif provider == "openai_compatible_vlm" and not normalized["base_url"]:
         normalized["base_url"] = "https://api.openai.com/v1"
+    elif provider == "google_aistudio_vlm":
+        if not normalized["base_url"]:
+            normalized["base_url"] = GOOGLE_AISTUDIO_DEFAULT_ENDPOINT
+        if not normalized["model"]:
+            normalized["model"] = GOOGLE_AISTUDIO_DEFAULT_MODEL
     return normalized
 
 
@@ -161,6 +169,8 @@ class VisionAnalyzer:
             analysis = self._analyze_with_macos_vision_ocr(payload)
         elif self.config["provider"] in {"openai_compatible_vlm", "local_vlm"}:
             analysis = self._analyze_with_openai_compatible_vlm(payload)
+        elif self.config["provider"] == "google_aistudio_vlm":
+            analysis = self._analyze_with_google_aistudio_vlm(payload)
         else:
             analysis = {
                 "observations": [],
@@ -275,7 +285,10 @@ class VisionAnalyzer:
                                 max_observations=int(self.config["max_observations"]),
                                 target_hint=active.get("target_hint"),
                                 observe_prompt=active.get("observe_prompt"),
+                                image_resolution=active.get("image_resolution"),
                                 screen_resolution=active.get("screen_resolution"),
+                                screen_bounds=active.get("screen_bounds"),
+                                coordinate_scale=active.get("coordinate_scale"),
                             ),
                         },
                         {
@@ -293,8 +306,7 @@ class VisionAnalyzer:
         }
         try:
             with self._http_client_factory(
-                timeout=float(self.config["timeout_sec"]),
-                trust_env=False,
+                **_vlm_client_kwargs(base_url, self.config["timeout_sec"], provider=self.config["provider"])
             ) as client:
                 response = client.post(_chat_completions_endpoint(base_url), json=request_body, headers=headers)
                 response.raise_for_status()
@@ -305,6 +317,68 @@ class VisionAnalyzer:
 
         try:
             content = openai_message_content(data)
+            return normalize_vlm_text_analysis(content, source=_vlm_source_name(self.config["provider"]))
+        except Exception as exc:
+            message = f"VLM analyzer returned invalid response: {exc}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+
+    def _analyze_with_google_aistudio_vlm(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            mime_type, image_bytes = _decode_frame_data_url(payload, max_bytes=int(self.config["max_image_bytes"]))
+        except Exception as exc:
+            message = f"VLM input invalid: {exc}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+
+        model = _clean_text(self.config.get("model"), max_length=120) or GOOGLE_AISTUDIO_DEFAULT_MODEL
+        base_url = _clean_text(self.config.get("base_url"), max_length=300).rstrip("/") or GOOGLE_AISTUDIO_DEFAULT_ENDPOINT
+        api_key = _resolved_api_key(self.config.get("api_key"), self.config.get("api_key_env"))
+        if not api_key:
+            message = "Google AI Studio VLM API key is not configured"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+
+        active = payload.get("active_observation") if isinstance(payload.get("active_observation"), dict) else {}
+        request_body = {
+            "system_instruction": {"parts": [{"text": _VLM_SYSTEM_PROMPT}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": build_vlm_user_prompt(
+                                max_observations=int(self.config["max_observations"]),
+                                target_hint=active.get("target_hint"),
+                                observe_prompt=active.get("observe_prompt"),
+                                image_resolution=active.get("image_resolution"),
+                                screen_resolution=active.get("screen_resolution"),
+                                screen_bounds=active.get("screen_bounds"),
+                                coordinate_scale=active.get("coordinate_scale"),
+                            ),
+                        },
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64.b64encode(image_bytes).decode("ascii"),
+                            },
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 700},
+        }
+        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+        try:
+            with self._http_client_factory(
+                **_vlm_client_kwargs(base_url, self.config["timeout_sec"], provider=self.config["provider"])
+            ) as client:
+                response = client.post(_google_generate_content_endpoint(base_url, model), json=request_body, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+        except Exception as exc:
+            message = f"VLM analyzer failed: {exc}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+
+        try:
+            content = google_content_text(data)
             return normalize_vlm_text_analysis(content, source=_vlm_source_name(self.config["provider"]))
         except Exception as exc:
             message = f"VLM analyzer returned invalid response: {exc}"
@@ -408,28 +482,96 @@ def build_vlm_user_prompt(
     max_observations: int,
     target_hint: str = "",
     observe_prompt: Any = "",
+    image_resolution: Any = None,
     screen_resolution: Any = None,
+    screen_bounds: Any = None,
+    coordinate_scale: Any = None,
 ) -> str:
     hint = _clean_text(target_hint, max_length=220)
     question = _clean_text(observe_prompt or hint or "请描述当前截图中可见的主要内容。", max_length=700)
+    image = image_resolution if isinstance(image_resolution, dict) else {}
     resolution = screen_resolution if isinstance(screen_resolution, dict) else {}
+    bounds = screen_bounds if isinstance(screen_bounds, dict) else {}
+    scale = coordinate_scale if isinstance(coordinate_scale, dict) else {}
+    try:
+        image_width = int(image.get("width") or 0)
+        image_height = int(image.get("height") or 0)
+    except Exception:
+        image_width = 0
+        image_height = 0
     try:
         width = int(resolution.get("width") or 0)
         height = int(resolution.get("height") or 0)
     except Exception:
         width = 0
         height = 0
+    try:
+        origin_x = int(bounds.get("x") or 0)
+        origin_y = int(bounds.get("y") or 0)
+        bounds_width = int(bounds.get("width") or width or 0)
+        bounds_height = int(bounds.get("height") or height or 0)
+    except Exception:
+        origin_x = 0
+        origin_y = 0
+        bounds_width = width
+        bounds_height = height
+    try:
+        image_to_screen_x = float(scale.get("image_to_screen_x") or 0.0)
+        image_to_screen_y = float(scale.get("image_to_screen_y") or 0.0)
+    except Exception:
+        image_to_screen_x = 0.0
+        image_to_screen_y = 0.0
+    try:
+        screen_to_image_x = float(scale.get("screen_to_image_x") or 0.0)
+        screen_to_image_y = float(scale.get("screen_to_image_y") or 0.0)
+    except Exception:
+        screen_to_image_x = 0.0
+        screen_to_image_y = 0.0
+    if image_to_screen_x <= 0 and image_width > 0 and bounds_width > 0:
+        image_to_screen_x = bounds_width / image_width
+    if image_to_screen_y <= 0 and image_height > 0 and bounds_height > 0:
+        image_to_screen_y = bounds_height / image_height
+    if screen_to_image_x <= 0 and image_to_screen_x > 0:
+        screen_to_image_x = 1.0 / image_to_screen_x
+    if screen_to_image_y <= 0 and image_to_screen_y > 0:
+        screen_to_image_y = 1.0 / image_to_screen_y
+    def format_scale(value: float) -> str:
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+
+    image_text = f"{image_width}x{image_height}" if image_width > 0 and image_height > 0 else "unknown"
     resolution_text = f"{width}x{height}" if width > 0 and height > 0 else "unknown"
+    bounds_text = f"origin=({origin_x}, {origin_y}), size={bounds_width}x{bounds_height} points" if bounds_width > 0 and bounds_height > 0 else "origin unknown, size unknown"
+    transform_text = ""
+    if image_to_screen_x > 0 and image_to_screen_y > 0:
+        transform_text = (
+            f"Coordinate transform: screen_x = {origin_x} + image_x * {format_scale(image_to_screen_x)}; "
+            f"screen_y = {origin_y} + image_y * {format_scale(image_to_screen_y)}; "
+            f"image-to-screen scale: x={format_scale(image_to_screen_x)}, y={format_scale(image_to_screen_y)}."
+        )
+        if screen_to_image_x > 0 and screen_to_image_y > 0:
+            transform_text += (
+                f" Inverse transform: image_x = (screen_x - {origin_x}) * {format_scale(screen_to_image_x)}; "
+                f"image_y = (screen_y - {origin_y}) * {format_scale(screen_to_image_y)}; "
+                f"screen-to-image scale: x={format_scale(screen_to_image_x)}, y={format_scale(screen_to_image_y)}."
+            )
     task_lines = [
         f"Brain asks: {question}",
-        f"Screen coordinate space: {resolution_text}. If you mention coordinates, use this absolute screen coordinate space, not cropped image pixels.",
+        f"Attached image pixel size: {image_text}.",
+        f"macOS screen coordinate space: {bounds_text}. Screen point size: {resolution_text}.",
+        "If you mention coordinates, use macOS screen coordinates, not screenshot pixel coordinates or cropped image pixels.",
     ]
+    if transform_text:
+        task_lines.append(transform_text)
     if hint:
         task_lines.append(f"Target hint: {hint}.")
     return (
         "你是 Ipet 的视觉观察助手。请只根据这张截图回答 Brain 的问题。"
         "用自然语言回答，不要输出 JSON、Markdown 代码块或固定 schema。"
-        "如果问题要求找位置或点击目标，请用自然语言说明可见依据，并给出绝对屏幕坐标，例如 x=123, y=456。"
+        "如果问题要求找位置或点击目标，请用自然语言说明可见依据，并给出 macOS 屏幕坐标，例如 x=123, y=456。"
+        "Return macOS screen coordinates for click points, not screenshot pixel coordinates. "
+        "返回点击坐标前，请把你准备给出的 macOS 坐标用 screen-to-image scale 反投回截图，确认该点确实落在目标图标或目标控件中心，而不是落在相邻图标、文字标签、窗口边缘或背景上。"
+        "Dock/App 图标任务中，先找图标本身的视觉中心；不要只根据 Dock 图标序号或相邻关系估算。"
+        "如果坐标落到相邻图标，必须修正坐标；如果无法确认，就说明不确定，不要编造坐标。"
         "如果看不到或不确定，就直接说明不确定以及原因。"
         f"回答尽量简洁，最多列出 {max_observations} 个关键可见点。"
         + " "
@@ -487,6 +629,24 @@ def openai_message_content(data: Any) -> str:
     raise ValueError("missing message content")
 
 
+def google_content_text(data: Any) -> str:
+    if not isinstance(data, dict):
+        raise ValueError("response is not an object")
+    candidates = data.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
+        parts = content.get("parts") if isinstance(content, dict) else None
+        if isinstance(parts, list):
+            text = "\n".join(str(item.get("text") or "") for item in parts if isinstance(item, dict)).strip()
+            if text:
+                return text
+    for key in ("text", "answer"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    raise ValueError("missing message content")
+
+
 def _chat_completions_endpoint(base_url: str) -> str:
     base = str(base_url or "").strip().rstrip("/")
     if base.endswith("/chat/completions"):
@@ -494,6 +654,44 @@ def _chat_completions_endpoint(base_url: str) -> str:
     if base.endswith("/v1"):
         return f"{base}/chat/completions"
     return f"{base}/v1/chat/completions"
+
+
+def _vlm_client_kwargs(base_url: str, timeout_sec: Any, *, provider: str = "") -> dict[str, Any]:
+    try:
+        read_timeout = float(timeout_sec)
+    except Exception:
+        read_timeout = float(DEFAULT_ANALYZER_CONFIG["timeout_sec"])
+    kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(connect=8.0, read=max(1.0, read_timeout), write=20.0, pool=8.0),
+        "trust_env": False,
+    }
+    proxy = None if provider == "local_vlm" else _http_proxy_for_remote_url(base_url)
+    if proxy:
+        kwargs["proxy"] = proxy
+    return kwargs
+
+
+def _http_proxy_for_remote_url(base_url: str) -> str | None:
+    parsed = urlsplit(str(base_url or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    if host.startswith("127.") or host.endswith(".local"):
+        return None
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = str(os.environ.get(name) or "").strip()
+        if value.lower().startswith(("http://", "https://")):
+            return value
+    return None
+
+
+def _google_generate_content_endpoint(base_url: str, model: str) -> str:
+    base = str(base_url or "").strip().rstrip("/") or GOOGLE_AISTUDIO_DEFAULT_ENDPOINT
+    model_name = str(model or GOOGLE_AISTUDIO_DEFAULT_MODEL).strip() or GOOGLE_AISTUDIO_DEFAULT_MODEL
+    resource = model_name if model_name.startswith("models/") else f"models/{model_name}"
+    return f"{base}/{resource}:generateContent"
 
 
 def _resolved_api_key(api_key: Any, api_key_env: Any = "") -> str:
@@ -507,7 +705,11 @@ def _resolved_api_key(api_key: Any, api_key_env: Any = "") -> str:
 
 
 def _vlm_source_name(provider: str) -> str:
-    return "local-vlm" if provider == "local_vlm" else "openai-compatible-vlm"
+    if provider == "local_vlm":
+        return "local-vlm"
+    if provider == "google_aistudio_vlm":
+        return "google-aistudio-vlm"
+    return "openai-compatible-vlm"
 
 
 def _swift_module_cache_dir() -> Path:

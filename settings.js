@@ -81,10 +81,6 @@
   let settingsPayload = null;
   let lastLoadedAt = "";
 
-  function clone(value) {
-    return JSON.parse(JSON.stringify(value || {}));
-  }
-
   function setStatus(message) {
     if (els.statusBanner) {
       els.statusBanner.textContent = String(message || "");
@@ -113,141 +109,71 @@
     return data;
   }
 
+  const formFactory = window.IpetSettingsForm?.createSettingsFormController;
+  if (typeof formFactory !== "function") {
+    throw new Error("settings_form.js must load before settings.js");
+  }
+  const formController = formFactory({
+    els,
+    getSettingsPayload: () => settingsPayload,
+    renderSummary,
+    renderDiagnostics,
+  });
+
+  function clone(value) {
+    return formController.clone(value);
+  }
+
   function numberValue(input, fallback) {
-    const value = Number(input?.value);
-    return Number.isFinite(value) ? value : fallback;
+    return formController.numberValue(input, fallback);
   }
 
   function intValue(input, fallback) {
-    const value = Number.parseInt(input?.value, 10);
-    return Number.isFinite(value) ? value : fallback;
+    return formController.intValue(input, fallback);
   }
 
   function stringValue(input, fallback = "") {
-    const value = String(input?.value ?? "").trim();
-    return value || fallback;
+    return formController.stringValue(input, fallback);
   }
 
   function linesValue(input) {
-    return String(input?.value || "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+    return formController.linesValue(input);
   }
 
   function textFromLines(lines) {
-    return Array.isArray(lines) ? lines.filter(Boolean).join("\n") : "";
+    return formController.textFromLines(lines);
   }
 
   function neoDefaults() {
-    return {
-      brain: {
-        provider: "openai_compatible",
-        model_endpoint: "",
-        model_name: "gpt-5.4",
-        max_output_tokens: 1024,
-        persona: "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。",
-        self_state: "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
-        response_style: "lively",
-        decision_temperature: 0.4,
-      },
-      human_ops: {
-        observe_screen: true,
-        accessibility: true,
-        require_act_review: true,
-        require_memory_review: true,
-        require_skill_review: true,
-        clipboard_write_review: true,
-        click_preview: { x: 160, y: 54, label: "目标位置", size: 16 },
-        observe_model: {
-          enabled: false,
-          provider: "openai_compatible",
-          model_endpoint: "",
-          model_name: "",
-          max_output_tokens: 512,
-        },
-      },
-      memory: {
-        conversation_saving: true,
-        long_term_enabled: true,
-        preferences_enabled: true,
-        relationship_enabled: true,
-        retention_days: 365,
-        review_limit: 20,
-        review_queue: [],
-      },
-      skills: {
-        recipes_enabled: true,
-        auto_propose: true,
-        review_required: true,
-        recipes: [],
-        proposal_queue: [],
-      },
-    };
+    return formController.neoDefaults();
   }
 
   function mergedNeo(config) {
-    const defaults = neoDefaults();
-    return {
-      brain: { ...defaults.brain, ...(config.brain || {}) },
-      human_ops: {
-        ...defaults.human_ops,
-        ...(config.human_ops || {}),
-        click_preview: {
-          ...defaults.human_ops.click_preview,
-          ...((config.human_ops || {}).click_preview || {}),
-        },
-        observe_model: {
-          ...defaults.human_ops.observe_model,
-          ...((config.human_ops || {}).observe_model || {}),
-        },
-      },
-      memory: { ...defaults.memory, ...(config.memory || {}) },
-      skills: { ...defaults.skills, ...(config.skills || {}) },
-    };
+    return formController.mergedNeo(config);
   }
 
   function fallbackSettings() {
-    return {
-      static_preview: true,
-      config: {
-        model_path: "",
-        chat: {
-          voice: "zh-CN-XiaoxiaoNeural",
-          tts_provider: "edge_tts",
-          rate_pct: 0,
-          model: "gpt-5.4",
-          backend_url: "",
-          system_prompt: neoDefaults().brain.persona,
-          asr: { enabled: true, push_to_talk_key: "Alt" },
-        },
-        pet: {
-          scale: 0.3,
-          opacity: 1,
-          offset_x: 0,
-          offset_y: 40,
-          rotation: 0,
-          background_image: "",
-          edit_mode: false,
-          follow_mouse: true,
-          background_enabled: false,
-        },
-        window: { x: 120, y: 80, width: 420, height: 640, locked: false },
-        ...neoDefaults(),
-      },
-    };
+    return formController.fallbackSettings();
   }
 
-  function setChecked(input, value) {
-    if (input) {
-      input.checked = !!value;
-    }
+  function populateForm(config) {
+    return formController.populateForm(config);
   }
 
-  function setValue(input, value) {
-    if (input) {
-      input.value = value ?? "";
-    }
+  function readForm() {
+    return formController.readForm();
+  }
+
+  function updateClickPreview() {
+    return formController.updateClickPreview();
+  }
+
+  function syncProviderControls() {
+    return formController.syncProviderControls();
+  }
+
+  function isGoogleAistudio(value) {
+    return formController.isGoogleAistudio(value);
   }
 
   function setActiveSection(sectionId) {
@@ -354,356 +280,49 @@
     if (provider === "anthropic_compatible") {
       return "Anthropic";
     }
+    if (isGoogleAistudio(provider)) {
+      return "Google AI Studio";
+    }
     return "OpenAI";
   }
 
+  const modelPickerFactory = window.IpetSettingsModelPicker?.createSettingsModelPickerController;
+  if (typeof modelPickerFactory !== "function") {
+    throw new Error("settings_model_picker.js must load before settings.js");
+  }
+  const modelPickerController = modelPickerFactory({
+    els,
+    fetchJson,
+    stringValue,
+    isGoogleAistudio,
+    getSettingsPayload: () => settingsPayload,
+    renderSummary,
+    readForm,
+    showToast,
+  });
+
   function setBrainModelStatus(message) {
-    if (els.brainModelStatus) {
-      els.brainModelStatus.textContent = String(message || "");
-    }
+    modelPickerController.setBrainModelStatus(message);
   }
 
   function renderBrainModelOptions(models) {
-    if (!els.brainModelList) {
-      return;
-    }
-    els.brainModelList.innerHTML = "";
-    const items = Array.isArray(models) ? models : [];
-    if (!items.length) {
-      setBrainModelStatus("没有发现可填入的模型");
-      return;
-    }
-    items.forEach((item) => {
-      const model = {
-        id: String(item?.id || item?.name || item || "").trim(),
-        label: String(item?.label || item?.id || item?.name || item || "").trim(),
-      };
-      if (!model.id) {
-        return;
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "model-option-button";
-      button.textContent = model.label || model.id;
-      button.title = `填入 ${model.id}`;
-      button.addEventListener("click", () => {
-        els.brainModelName.value = model.id;
-        setBrainModelStatus(`已填入 ${model.id}`);
-        renderSummary(readForm());
-      });
-      els.brainModelList.appendChild(button);
-    });
-    setBrainModelStatus(`发现 ${els.brainModelList.children.length} 个模型，点击即可填入`);
+    modelPickerController.renderBrainModelOptions(models);
   }
 
   async function fetchBrainModels() {
-    const endpoint = stringValue(els.brainModelEndpoint);
-    if (!endpoint) {
-      setBrainModelStatus("请先填写模型端点");
-      return;
-    }
-    if (settingsPayload?.static_preview) {
-      setBrainModelStatus("静态预览无法连接后端拉取模型");
-      return;
-    }
-    if (els.brainFetchModelsBtn) {
-      els.brainFetchModelsBtn.disabled = true;
-    }
-    setBrainModelStatus("正在拉取模型...");
-    try {
-      const payload = {
-        provider: stringValue(els.brainProvider, "openai_compatible"),
-        model_endpoint: endpoint,
-      };
-      if (els.brainApiKey?.value) {
-        payload.api_key = els.brainApiKey.value;
-      }
-      const result = await fetchJson("/api/brain/models", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      renderBrainModelOptions(result.models || []);
-      showToast("模型列表已更新");
-    } catch (error) {
-      setBrainModelStatus(`拉取失败：${error.message || String(error)}`);
-    } finally {
-      if (els.brainFetchModelsBtn) {
-        els.brainFetchModelsBtn.disabled = false;
-      }
-    }
+    return modelPickerController.fetchBrainModels();
   }
 
   function setObserveModelStatus(message) {
-    if (els.opsObserveModelStatus) {
-      els.opsObserveModelStatus.textContent = String(message || "");
-    }
+    modelPickerController.setObserveModelStatus(message);
   }
 
   function renderObserveModelOptions(models) {
-    if (!els.opsObserveModelList) {
-      return;
-    }
-    els.opsObserveModelList.innerHTML = "";
-    const items = Array.isArray(models) ? models : [];
-    if (!items.length) {
-      setObserveModelStatus("没有发现可填入的 observe 模型");
-      return;
-    }
-    items.forEach((item) => {
-      const model = {
-        id: String(item?.id || item?.name || item || "").trim(),
-        label: String(item?.label || item?.id || item?.name || item || "").trim(),
-      };
-      if (!model.id) {
-        return;
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "model-option-button";
-      button.textContent = model.label || model.id;
-      button.title = `填入 ${model.id}`;
-      button.addEventListener("click", () => {
-        els.opsObserveModelName.value = model.id;
-        setObserveModelStatus(`已填入 ${model.id}`);
-        renderSummary(readForm());
-      });
-      els.opsObserveModelList.appendChild(button);
-    });
-    setObserveModelStatus(`发现 ${els.opsObserveModelList.children.length} 个模型，点击即可填入`);
+    modelPickerController.renderObserveModelOptions(models);
   }
 
   async function fetchObserveModels() {
-    const endpoint = stringValue(els.opsObserveModelEndpoint);
-    if (!endpoint) {
-      setObserveModelStatus("请先填写 observe 模型端点");
-      return;
-    }
-    if (settingsPayload?.static_preview) {
-      setObserveModelStatus("静态预览无法连接后端拉取模型");
-      return;
-    }
-    if (els.opsObserveFetchModelsBtn) {
-      els.opsObserveFetchModelsBtn.disabled = true;
-    }
-    setObserveModelStatus("正在拉取 observe 模型...");
-    try {
-      const payload = {
-        scope: "observe",
-        provider: stringValue(els.opsObserveModelProvider, "openai_compatible"),
-        model_endpoint: endpoint,
-      };
-      if (els.opsObserveApiKey?.value) {
-        payload.api_key = els.opsObserveApiKey.value;
-      }
-      const result = await fetchJson("/api/brain/models", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      renderObserveModelOptions(result.models || []);
-      showToast("observe 模型列表已更新");
-    } catch (error) {
-      setObserveModelStatus(`拉取失败：${error.message || String(error)}`);
-    } finally {
-      if (els.opsObserveFetchModelsBtn) {
-        els.opsObserveFetchModelsBtn.disabled = false;
-      }
-    }
-  }
-
-  function updateClickPreview() {
-    const x = intValue(els.clickPreviewX, 160);
-    const y = intValue(els.clickPreviewY, 54);
-    const size = Math.max(8, Math.min(36, intValue(els.clickPreviewSize, 16)));
-    const label = stringValue(els.clickPreviewLabel, "目标位置");
-    if (els.clickPreviewDot) {
-      els.clickPreviewDot.style.left = `${Math.max(0, Math.min(100, x / 3.2))}%`;
-      els.clickPreviewDot.style.top = `${Math.max(0, Math.min(100, y / 1.92))}%`;
-      els.clickPreviewDot.style.width = `${size}px`;
-      els.clickPreviewDot.style.height = `${size}px`;
-    }
-    if (els.clickPreviewCaption) {
-      els.clickPreviewCaption.textContent = `我想点击这里：${label}`;
-    }
-  }
-
-  function populateForm(config) {
-    const source = config || {};
-    const neo = mergedNeo(source);
-    const chat = source.chat || {};
-    const asr = chat.asr || {};
-    const pet = source.pet || {};
-    const win = source.window || {};
-
-    setValue(els.modelPath, source.model_path || "");
-    setValue(els.chatVoice, chat.voice || "zh-CN-XiaoxiaoNeural");
-    setValue(els.chatTtsProvider, chat.tts_provider || "edge_tts");
-    setValue(els.chatRatePct, Number(chat.rate_pct || 0));
-    setChecked(els.chatAsrEnabled, asr.enabled !== false);
-    setValue(els.chatAsrPushToTalkKey, asr.push_to_talk_key || "Alt");
-
-    setValue(els.petScale, Number(pet.scale ?? 0.3));
-    setValue(els.petOpacity, Number(pet.opacity ?? 1));
-    setValue(els.petOffsetX, Number(pet.offset_x || 0));
-    setValue(els.petOffsetY, Number(pet.offset_y ?? 40));
-    setValue(els.petRotation, Number(pet.rotation || 0));
-    setValue(els.petBackgroundImage, pet.background_image || "");
-    setChecked(els.petEditMode, pet.edit_mode);
-    setChecked(els.petFollowMouse, pet.follow_mouse !== false);
-    setChecked(els.petBackgroundEnabled, pet.background_enabled);
-
-    setValue(els.windowX, Number(win.x || 0));
-    setValue(els.windowY, Number(win.y || 0));
-    setValue(els.windowWidth, Number(win.width || 420));
-    setValue(els.windowHeight, Number(win.height || 640));
-    setChecked(els.windowLocked, win.locked);
-
-    setValue(els.brainProvider, neo.brain.provider || "openai_compatible");
-    setValue(els.brainModelEndpoint, neo.brain.model_endpoint || "");
-    setValue(els.brainModelName, neo.brain.model_name || chat.model || "gpt-5.4");
-    setValue(els.brainApiKey, "");
-    setChecked(els.brainApiKeyClear, false);
-    setValue(els.brainPersona, neo.brain.persona || chat.system_prompt || "");
-    setValue(els.brainSelfState, neo.brain.self_state || "");
-    setValue(els.brainResponseStyle, neo.brain.response_style || "lively");
-    setValue(els.brainDecisionTemperature, Number(neo.brain.decision_temperature ?? 0.4));
-
-    setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
-    setChecked(els.opsAccessibility, neo.human_ops.accessibility);
-    setChecked(els.opsRequireActReview, neo.human_ops.require_act_review);
-    setChecked(els.opsRequireMemoryReview, neo.human_ops.require_memory_review);
-    setChecked(els.opsRequireSkillReview, neo.human_ops.require_skill_review);
-    setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
-    setChecked(els.opsObserveModelEnabled, neo.human_ops.observe_model.enabled);
-    setValue(els.opsObserveModelProvider, neo.human_ops.observe_model.provider || "openai_compatible");
-    setValue(els.opsObserveModelEndpoint, neo.human_ops.observe_model.model_endpoint || "");
-    setValue(els.opsObserveModelName, neo.human_ops.observe_model.model_name || "");
-    setValue(els.opsObserveApiKey, "");
-    setChecked(els.opsObserveApiKeyClear, false);
-    setValue(els.clickPreviewX, Number(neo.human_ops.click_preview.x || 160));
-    setValue(els.clickPreviewY, Number(neo.human_ops.click_preview.y || 54));
-    setValue(els.clickPreviewLabel, neo.human_ops.click_preview.label || "目标位置");
-    setValue(els.clickPreviewSize, Number(neo.human_ops.click_preview.size || 16));
-
-    setChecked(els.memoryConversationSaving, neo.memory.conversation_saving);
-    setChecked(els.memoryLongTermEnabled, neo.memory.long_term_enabled);
-    setChecked(els.memoryPreferencesEnabled, neo.memory.preferences_enabled);
-    setChecked(els.memoryRelationshipEnabled, neo.memory.relationship_enabled);
-    setValue(els.memoryRetentionDays, Number(neo.memory.retention_days || 365));
-    setValue(els.memoryReviewLimit, Number(neo.memory.review_limit || 20));
-    setValue(els.memoryReviewQueue, textFromLines(neo.memory.review_queue));
-
-    setChecked(els.skillsRecipesEnabled, neo.skills.recipes_enabled);
-    setChecked(els.skillsAutoPropose, neo.skills.auto_propose);
-    setChecked(els.skillsReviewRequired, neo.skills.review_required);
-    setValue(els.skillsRecipeList, textFromLines(neo.skills.recipes));
-    setValue(els.skillsProposalQueue, textFromLines(neo.skills.proposal_queue));
-
-    updateClickPreview();
-    renderSummary(source);
-    renderDiagnostics(source);
-  }
-
-  function readForm() {
-    const next = clone(settingsPayload?.config || {});
-    next.model_path = stringValue(els.modelPath);
-    next.chat = { ...(next.chat || {}) };
-    next.chat.voice = stringValue(els.chatVoice, "zh-CN-XiaoxiaoNeural");
-    next.chat.tts_provider = stringValue(els.chatTtsProvider, "edge_tts");
-    next.chat.rate_pct = intValue(els.chatRatePct, 0);
-    next.chat.model = stringValue(els.brainModelName, "gpt-5.4");
-    next.chat.system_prompt = stringValue(els.brainPersona);
-    next.chat.asr = {
-      ...(next.chat.asr || {}),
-      enabled: !!els.chatAsrEnabled?.checked,
-      push_to_talk_key: stringValue(els.chatAsrPushToTalkKey, "Alt"),
-    };
-
-    next.pet = {
-      ...(next.pet || {}),
-      scale: numberValue(els.petScale, 0.3),
-      opacity: numberValue(els.petOpacity, 1),
-      offset_x: intValue(els.petOffsetX, 0),
-      offset_y: intValue(els.petOffsetY, 40),
-      rotation: numberValue(els.petRotation, 0),
-      background_image: stringValue(els.petBackgroundImage),
-      edit_mode: !!els.petEditMode?.checked,
-      follow_mouse: !!els.petFollowMouse?.checked,
-      background_enabled: !!els.petBackgroundEnabled?.checked,
-    };
-
-    next.window = {
-      ...(next.window || {}),
-      x: intValue(els.windowX, 0),
-      y: intValue(els.windowY, 0),
-      width: intValue(els.windowWidth, 420),
-      height: intValue(els.windowHeight, 640),
-      locked: !!els.windowLocked?.checked,
-    };
-
-    next.brain = {
-      ...(next.brain || {}),
-      provider: stringValue(els.brainProvider, "openai_compatible"),
-      model_endpoint: stringValue(els.brainModelEndpoint),
-      model_name: stringValue(els.brainModelName, "gpt-5.4"),
-      persona: stringValue(els.brainPersona),
-      self_state: stringValue(els.brainSelfState),
-      response_style: stringValue(els.brainResponseStyle, "lively"),
-      decision_temperature: numberValue(els.brainDecisionTemperature, 0.4),
-    };
-    if (els.brainApiKey?.value) {
-      next.brain.api_key = els.brainApiKey.value;
-    }
-    next.brain.api_key_clear = !!els.brainApiKeyClear?.checked;
-
-    next.human_ops = {
-      ...(next.human_ops || {}),
-      observe_screen: !!els.opsObserveScreen?.checked,
-      accessibility: !!els.opsAccessibility?.checked,
-      require_act_review: !!els.opsRequireActReview?.checked,
-      require_memory_review: !!els.opsRequireMemoryReview?.checked,
-      require_skill_review: !!els.opsRequireSkillReview?.checked,
-      clipboard_write_review: !!els.opsClipboardReview?.checked,
-      observe_model: {
-        ...((next.human_ops || {}).observe_model || {}),
-        enabled: !!els.opsObserveModelEnabled?.checked,
-        provider: stringValue(els.opsObserveModelProvider, "openai_compatible"),
-        model_endpoint: stringValue(els.opsObserveModelEndpoint),
-        model_name: stringValue(els.opsObserveModelName),
-        max_output_tokens: 512,
-      },
-      click_preview: {
-        x: intValue(els.clickPreviewX, 160),
-        y: intValue(els.clickPreviewY, 54),
-        label: stringValue(els.clickPreviewLabel, "目标位置"),
-        size: intValue(els.clickPreviewSize, 16),
-      },
-    };
-    if (els.opsObserveApiKey?.value) {
-      next.human_ops.observe_model.api_key = els.opsObserveApiKey.value;
-    }
-    next.human_ops.observe_model.api_key_clear = !!els.opsObserveApiKeyClear?.checked;
-
-    next.memory = {
-      ...(next.memory || {}),
-      conversation_saving: !!els.memoryConversationSaving?.checked,
-      long_term_enabled: !!els.memoryLongTermEnabled?.checked,
-      preferences_enabled: !!els.memoryPreferencesEnabled?.checked,
-      relationship_enabled: !!els.memoryRelationshipEnabled?.checked,
-      retention_days: intValue(els.memoryRetentionDays, 365),
-      review_limit: intValue(els.memoryReviewLimit, 20),
-      review_queue: linesValue(els.memoryReviewQueue),
-    };
-
-    next.skills = {
-      ...(next.skills || {}),
-      recipes_enabled: !!els.skillsRecipesEnabled?.checked,
-      auto_propose: !!els.skillsAutoPropose?.checked,
-      review_required: !!els.skillsReviewRequired?.checked,
-      recipes: linesValue(els.skillsRecipeList),
-      proposal_queue: linesValue(els.skillsProposalQueue),
-    };
-
-    return next;
+    return modelPickerController.fetchObserveModels();
   }
 
   async function loadSettings() {
@@ -771,6 +390,8 @@
     els.resetFormBtn?.addEventListener("click", resetForm);
     els.brainFetchModelsBtn?.addEventListener("click", () => wrap(fetchBrainModels));
     els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
+    els.brainProvider?.addEventListener("change", syncProviderControls);
+    els.opsObserveModelProvider?.addEventListener("change", syncProviderControls);
     [els.clickPreviewX, els.clickPreviewY, els.clickPreviewLabel, els.clickPreviewSize].forEach((input) => {
       input?.addEventListener("input", updateClickPreview);
     });

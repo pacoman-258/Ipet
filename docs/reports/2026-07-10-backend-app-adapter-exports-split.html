@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backend App Adapter Compat Exports Split</title>
+  <style>
+    body { max-width: 900px; margin: 32px auto; padding: 0 20px; color: #1f2933; font: 16px/1.6 system-ui, sans-serif; }
+    h1, h2 { color: #102a43; }
+    code { padding: 2px 5px; background: #eef2f6; }
+    .ok { color: #137333; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Backend App Adapter Compat Exports Split</h1>
+
+  <h2>Goal</h2>
+  <p>把 <code>backend/app.py</code> 维护的 adapter 兼容符号清单迁移到
+    <code>backend/app_adapters.py</code>，同时保留旧 patch points、函数身份和路由对
+    <code>globals()</code> 的动态读取契约。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>实现由本子窗口完成，包括兼容导出拆分、契约测试、定向回归与本报告；主窗口负责独立审查、集成验收与全量回归。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: 用一次 compat installer 调用替代 57 个逐名导入。</li>
+    <li><code>backend/app_adapters.py</code>: 新增明确的 <code>APP_COMPAT_EXPORTS</code> 和最小 installer。</li>
+    <li><code>tests/test_backend_app_adapter_exports.py</code>: 新增导出集合、对象身份、installer 边界和动态 patch 契约测试。</li>
+    <li><code>docs/reports/2026-07-10-backend-app-adapter-exports-split.html</code>: 本轮报告。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p><code>backend/app.py</code> 不再维护巨大兼容导入块。57 个历史符号由 adapter 模块集中声明并原对象安装，入口上的旧访问路径与 patch 行为保持不变，领域逻辑未改动。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>先新增契约测试；旧结构按预期失败于缺少 export map/installer 和逐名导入仍存在。</li>
+    <li><code>py_compile</code>: <span class="ok">PASS</span>，覆盖两个实现文件和新增测试。</li>
+    <li>定向 unittest: <span class="ok">PASS</span>，138 tests，覆盖 backend route、app adapters、observe 与 Neo backend contract。</li>
+    <li>未运行全量回归，按任务要求交由主窗口执行。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>本轮范围内无剩余实现项。全量回归和跨工作者集成状态仍需由主窗口确认。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>主窗口合并其他并行改动后运行全量 unittest；后续新增 adapter 兼容入口时，只更新集中 export map 和对应契约测试。</p>
+</body>
+</html>

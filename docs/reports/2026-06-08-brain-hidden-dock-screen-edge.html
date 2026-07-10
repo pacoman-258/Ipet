@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Hidden Dock Screen Edge Affordance</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 1px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Hidden Dock Screen Edge Affordance</h1>
+  <p><strong>Date:</strong> 2026-06-08</p>
+
+  <h2>Goal</h2>
+  <p>
+    Improve Brain so a complex desktop task can progress through simple human actions:
+    observe, click, type text, and press Enter. This round focused on the live blocker
+    where macOS Dock was hidden, the visual observer timed out, or the observer saw
+    the WeChat Dock icon without returning coordinates, leaving Brain with no
+    reviewable click target after repeated observes.
+  </p>
+
+  <h2>Worker Or Subagent Split</h2>
+  <ul>
+    <li><strong>Brain owner:</strong> added prompt guidance for a one-time hidden-Dock reveal step.</li>
+    <li><strong>Body/backend owner:</strong> derived a screen-edge affordance from negative Dock visibility and screen bounds.</li>
+    <li><strong>QA owner:</strong> added targeted contract tests and ran full unittest regression.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code>: exposes <code>screen_edge</code> with <code>purpose=reveal_hidden_dock</code> when Dock is hidden, or when the VLM times out after a screen capture and screen bounds are known.</li>
+    <li><code>backend/app.py</code>: rewrites goal-driven coordinate follow-up observes into narrow prompts that ask only for the target center x/y.</li>
+    <li><code>backend/app.py</code>: preserves the goal objective as the active observe target hint when Brain asks to observe the generic <code>screen</code> surface.</li>
+    <li><code>backend/app.py</code>: lets ReAct continue when an otherwise coordinate-incomplete observation already contains a reviewable click affordance with numeric x/y.</li>
+    <li><code>main.py</code>: adds macOS Dock accessibility candidates with bounds and focus points for visible Dock items.</li>
+    <li><code>backend/app.py</code>: uses Dock item candidates to attach x/y to Dock <code>app_icon</code> affordances when VLM text omits coordinates, and prefers those coordinates over conflicting VLM icon coordinates.</li>
+    <li><code>backend/app.py</code>: increases active vision capture timeout so Dock metadata collection and screenshot capture can complete before VLM analysis.</li>
+    <li><code>tests/test_main_runtime_env.py</code>: covers Dock candidate parsing and target-hint boosting.</li>
+    <li><code>brain/llm.py</code>: instructs Brain to propose one click on that affordance, then observe again and continue with the real Dock app icon.</li>
+    <li><code>tests/test_neo_backend_contract.py</code>: covers context extraction and chat-stream approval generation for hidden-Dock reveal.</li>
+    <li><code>tests/test_brain_structured_replies.py</code>: asserts the turn prompt contains the new affordance rule.</li>
+    <li><code>docs/WORKFLOW.md</code>: documents the hidden-Dock reveal rule as a normal click affordance, not a new action type.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>
+    When observation says Dock or the WeChat icon is not visible, Brain still cannot
+    fabricate a Dock app icon. If the VLM times out but the screenshot was captured,
+    Brain also does not get a fake icon. Instead, when screen bounds are available,
+    the backend provides a concrete bottom-edge click affordance. Brain can turn that
+    into a Human Ops approval request with coordinates and
+    <code>continue_after_approval=true</code>, then observe again before searching for
+    the actual WeChat icon.
+  </p>
+  <p>
+    A second live blocker was also handled: when Brain already knows the Dock icon is
+    visible but still lacks its center coordinates, a generic <code>Observe screen</code>
+    no longer asks the VLM to describe the whole screen. The backend uses Brain's
+    goal state to ask only for the target center x/y, and marks
+    <code>observe_coordinate_incomplete</code> if that still fails.
+  </p>
+  <p>
+    Follow-up observes now keep the original objective as the active target hint when
+    Brain says <code>screen</code>, so VLM timeouts and fallback extraction still know the
+    task is about WeChat. Coordinate-incomplete observations also no longer short-circuit
+    the ReAct loop when they already contain a concrete reviewable click affordance.
+  </p>
+  <p>
+    Body now reads visible Dock item names and positions from macOS accessibility as
+    observation candidates. When the VLM says the WeChat Dock icon is visible but omits
+    coordinates, the structured context can still provide the Dock icon center point
+    for Human Ops review. When both sources exist, the Dock accessibility center point
+    is preferred for Dock app icons because it comes from the actual visible Dock UI.
+  </p>
+  <p>
+    Human Ops also now allows a longer active vision capture window so macOS window
+    discovery, Dock item discovery, and screenshot capture do not time out before the
+    separate VLM call.
+  </p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_main_runtime_env.MainDesktopEnvTests.test_dock_item_candidates_parse_accessibility_positions tests.test_main_runtime_env.MainDesktopEnvTests.test_active_vision_discovery_boosts_matching_dock_item_from_target_hint tests.test_neo_backend_contract.NeoBackendContractTests.test_dock_item_target_candidate_supplies_app_icon_location_when_vlm_omits_coordinates tests.test_neo_backend_contract.NeoBackendContractTests.test_goal_objective_stays_target_hint_for_screen_observe_fallbacks tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_does_not_block_coordinate_incomplete_when_screen_edge_is_reviewable tests.test_neo_backend_contract.NeoBackendContractTests.test_observe_prompt_uses_goal_missing_coordinates_for_narrow_click_followup tests.test_neo_backend_contract.NeoBackendContractTests.test_human_ops_observe_sends_narrow_goal_coordinate_prompt_to_vlm tests.test_neo_backend_contract.NeoBackendContractTests.test_hidden_dock_observe_exposes_screen_edge_reveal_affordance tests.test_neo_backend_contract.NeoBackendContractTests.test_vlm_timeout_still_exposes_screen_edge_reveal_affordance_for_app_launch tests.test_neo_backend_contract.NeoBackendContractTests.test_chat_stream_can_review_hidden_dock_reveal_click_from_screen_edge_affordance tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_contains_human_computer_use_model -v</code> passed.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code> passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code> passed: 296 tests.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>
+    Live validation still needs to confirm the full chain against the real desktop:
+    hidden Dock reveal approval, Dock WeChat icon approval, contact search or chat
+    selection approval, context reading, input focus, draft typing, Enter send, and
+    final visible verification.
+  </p>
+
+  <h2>Recommended Next Step</h2>
+  <p>
+    Restart Ipet and rerun the WeChat reply task without approving destructive or
+    message-sending actions during validation. The expected next live improvement is
+    an <code>approval_required</code> event for clicking the bottom screen edge when
+    Dock is hidden, instead of repeated observe or <code>need_more_evidence</code>.
+  </p>
+</body>
+</html>

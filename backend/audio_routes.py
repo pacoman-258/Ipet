@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import mimetypes
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+from .models import TTSRequest
+
+
+@dataclass(frozen=True)
+class AudioRouteDependencies:
+    audio_cache_dir: Path
+    tts_available: Callable[[str | None, str | None], bool]
+    cleanup_old_audio: Callable[[Path], None]
+    synthesize_to_audio: Callable[..., Awaitable[Any]]
+
+
+def safe_audio_path(file_name: str, *, audio_cache_dir: Path) -> Path:
+    candidate = Path(file_name)
+    if candidate.name != file_name:
+        raise HTTPException(status_code=404, detail="Audio file not found.")
+    path = audio_cache_dir / candidate.name
+    try:
+        path.relative_to(audio_cache_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Audio file not found.") from exc
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found.")
+    return path
+
+
+async def synthesize_tts_response(request: TTSRequest, *, deps: AudioRouteDependencies) -> dict[str, Any]:
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="text is required.")
+    if not deps.tts_available(request.provider, request.provider_url):
+        raise HTTPException(status_code=503, detail=f"TTS provider is unavailable: {request.provider}")
+    try:
+        deps.cleanup_old_audio(deps.audio_cache_dir)
+        result = await deps.synthesize_to_audio(
+            text=request.text,
+            cache_dir=deps.audio_cache_dir,
+            voice=request.voice,
+            rate=request.rate,
+            volume=request.volume,
+            provider=request.provider,
+            provider_url=request.provider_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"TTS synthesis failed: {exc}") from exc
+    return {
+        "ok": True,
+        "file_id": result.file_id,
+        "url": f"/api/audio/{result.path.name}",
+        "audio_url": f"/api/audio/{result.path.name}",
+        "duration_ms": result.duration_ms,
+        "media_type": result.media_type,
+    }
+
+
+def audio_response(file_name: str, *, audio_cache_dir: Path) -> FileResponse:
+    path = safe_audio_path(file_name, audio_cache_dir=audio_cache_dir)
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type)
+
+
+def create_audio_router(deps: AudioRouteDependencies) -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/api/tts")
+    async def tts_route(request: TTSRequest) -> dict[str, Any]:
+        return await synthesize_tts_response(request, deps=deps)
+
+    @router.get("/api/audio/{file_name}")
+    async def audio_route(file_name: str) -> FileResponse:
+        return audio_response(file_name, audio_cache_dir=deps.audio_cache_dir)
+
+    return router
+
+
+def register_audio_routes(app: FastAPI, deps: AudioRouteDependencies) -> None:
+    app.include_router(create_audio_router(deps))

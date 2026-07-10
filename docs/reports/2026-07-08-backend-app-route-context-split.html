@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend App Route Context Split - 2026-07-08</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 32px; color: #202124; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 16px; margin-top: 24px; }
+    code { background: #f1f3f4; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Backend App Route Context Split</h1>
+  <p><strong>Date:</strong> 2026-07-08</p>
+
+  <h2>Goal</h2>
+  <p>Move the long <code>backend.app._route_dependency_context()</code> route dependency assembly into a focused helper module while preserving existing backend.app patch points.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>Implementation was handled in a child/subwindow worker, including this follow-up source-test boundary repair. Main-window ownership is acceptance and regression review.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>backend/app_route_context.py</code></li>
+    <li><code>tests/test_backend_app_route_context.py</code></li>
+    <li><code>tests/test_settings_form_source.py</code></li>
+    <li><code>tests/test_settings_model_picker_source.py</code></li>
+    <li><code>docs/reports/2026-07-08-backend-app-route-context-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added <code>backend.app_route_context.create_route_dependency_context(...)</code> as the new centralized route dependency context assembly point.</li>
+    <li>Reduced <code>backend.app._route_dependency_context()</code> to a thin forwarding wrapper that passes app state, live globals, pending proposals, topic store, and audio cache path.</li>
+    <li>Kept <code>backend.app</code> patch points live for settings, brain turns, audio synthesis, and Human Ops action execution.</li>
+    <li>Added tests proving the new module does not import <code>backend.app</code>, the app wrapper is thin, and context creation still honors later backend.app patches.</li>
+    <li>Updated settings asset source tests so route ownership stays in <code>backend/settings_routes.py</code> and asset response wiring is verified in <code>backend/app_route_context.py</code>, while <code>backend/app.py</code> remains free of direct settings asset routes.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known remaining work for this split. Further cleanup can continue by moving adjacent app composition concerns out of <code>backend/app.py</code> in separate scoped rounds.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue with small, owner-scoped backend app composition extractions only after the current route context split is accepted.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile backend/app.py backend/app_route_context.py tests/test_backend_app_route_context.py tests/test_backend_app_route_dependencies.py</code>: PASS</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_backend_app_route_context tests.test_backend_app_route_dependencies tests.test_backend_route_split tests.test_neo_backend_contract -q</code>: PASS, 98 tests</li>
+    <li><code>git diff --check -- backend/app.py backend/app_route_context.py tests/test_backend_app_route_context.py tests/test_backend_app_route_dependencies.py docs/reports/2026-07-08-backend-app-route-context-split.html</code>: PASS</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile tests/test_settings_form_source.py tests/test_settings_model_picker_source.py</code>: PASS</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_settings_form_source tests.test_settings_model_picker_source tests.test_backend_app_route_context tests.test_backend_app_route_dependencies -q</code>: PASS</li>
+    <li><code>git diff --check -- tests/test_settings_form_source.py tests/test_settings_model_picker_source.py docs/reports/2026-07-08-backend-app-route-context-split.html</code>: PASS</li>
+  </ul>
+</body>
+</html>

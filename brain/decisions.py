@@ -7,6 +7,7 @@ from typing import Any
 
 class DecisionKind(str, Enum):
     SAY = "say"
+    THINK = "think"
     OBSERVE = "observe"
     PROPOSE_ACT = "propose_act"
     PROPOSE_REMEMBER = "propose_remember"
@@ -49,29 +50,62 @@ class BrainDecision:
         }
 
     @classmethod
-    def say(cls, text: str) -> "BrainDecision":
-        return cls(DecisionKind.SAY, text, {"text": str(text or "")})
+    def say(cls, text: str, *, goal: dict[str, Any] | None = None) -> "BrainDecision":
+        payload: dict[str, Any] = {"text": str(text or "")}
+        if isinstance(goal, dict):
+            payload["goal"] = dict(goal)
+        return cls(DecisionKind.SAY, text, payload)
+
+    @classmethod
+    def think(
+        cls,
+        thought: str,
+        *,
+        goal: dict[str, Any] | None = None,
+        next_kind: str = "",
+    ) -> "BrainDecision":
+        thought_text = str(thought or "").strip()
+        payload: dict[str, Any] = {"thought": thought_text}
+        if isinstance(goal, dict):
+            payload["goal"] = dict(goal)
+        next_text = str(next_kind or "").strip()
+        if next_text:
+            payload["next_kind"] = next_text
+        return cls(DecisionKind.THINK, thought_text or "Think", payload)
 
     @classmethod
     def observe(
         cls,
         target: str = "screen",
         observe_prompt: str = "",
+        *,
+        goal: dict[str, Any] | None = None,
     ) -> "BrainDecision":
         target_text = str(target or "screen").strip() or "screen"
         payload: dict[str, Any] = {"target": target_text}
         prompt_text = str(observe_prompt or "").strip()
         if prompt_text:
             payload["observe_prompt"] = prompt_text
+        if isinstance(goal, dict):
+            payload["goal"] = dict(goal)
         return cls(DecisionKind.OBSERVE, f"Observe {target_text}", payload)
 
     @classmethod
-    def propose_act(cls, action_type: str, arguments: dict[str, Any]) -> "BrainDecision":
+    def propose_act(
+        cls,
+        action_type: str,
+        arguments: dict[str, Any],
+        *,
+        goal: dict[str, Any] | None = None,
+    ) -> "BrainDecision":
         action = str(action_type or "").strip()
+        payload: dict[str, Any] = {"action_type": action, "arguments": dict(arguments or {})}
+        if isinstance(goal, dict):
+            payload["goal"] = dict(goal)
         return cls(
             DecisionKind.PROPOSE_ACT,
             f"Propose action: {action}",
-            {"action_type": action, "arguments": dict(arguments or {})},
+            payload,
         )
 
     @classmethod
@@ -95,6 +129,9 @@ class BrainDecision:
         )
 
     @classmethod
-    def stop(cls, summary: str = "") -> "BrainDecision":
+    def stop(cls, summary: str = "", *, goal: dict[str, Any] | None = None) -> "BrainDecision":
         summary_text = str(summary or "Stop turn").strip() or "Stop turn"
-        return cls(DecisionKind.STOP, summary_text, {"summary": summary_text})
+        payload: dict[str, Any] = {"summary": summary_text}
+        if isinstance(goal, dict):
+            payload["goal"] = dict(goal)
+        return cls(DecisionKind.STOP, summary_text, payload)

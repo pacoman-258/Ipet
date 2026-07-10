@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Command Router Split - 2026-06-28</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; max-width: 920px; margin: 32px auto; padding: 0 20px; color: #202124; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 26px; }
+    code { background: #f2f4f7; padding: 2px 5px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #e6f4ea; color: #137333; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Command Router Split</h1>
+  <p><span class="status">GREEN</span> 2026-06-28 desktop-shell worker report</p>
+
+  <h2>Goal</h2>
+  <p>Move the desktop command routing logic out of <code>main.py</code> into <code>app.desktop_command_router.DesktopCommandRouter</code> while keeping <code>DesktopPet</code> compatibility wrappers and existing command behavior stable.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li>Lead worker: <code>desktop-shell</code>.</li>
+    <li>Scope kept to the desktop host command bridge and its focused regression tests.</li>
+    <li>No backend, frontend, Body, Human Ops, settings, staging, commit, cleanup, or revert work was performed.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code>: imports and constructs <code>DesktopCommandRouter</code>, then keeps command methods as thin compatibility wrappers.</li>
+    <li><code>app/desktop_command_router.py</code>: new pure Python router for mtime polling, heartbeat writing, response writing, and desktop command execution.</li>
+    <li><code>docs/reports/2026-06-28-desktop-command-router-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li><code>DesktopPet._desktop_command_mtime_token</code>, <code>_write_desktop_host_heartbeat</code>, <code>_response_path_for_command</code>, <code>_write_desktop_command_response</code>, <code>on_desktop_command_poll</code>, and <code>process_desktop_command</code> now delegate to the router.</li>
+    <li>The router preserves command semantics for model loading, motion and expression playback, file pickers, Human Ops click/text/key actions, and active vision capture.</li>
+    <li>The response shape remains <code>nonce</code>, <code>type</code>, <code>status</code>, <code>ok</code>, <code>result</code>, and <code>timestamp_ns</code>.</li>
+    <li>The router does not import <code>main</code>; Qt, Human Ops, path, clock, and active vision dependencies are injected by <code>main.py</code>.</li>
+    <li>Legacy tests that call <code>main.DesktopPet.process_desktop_command(host, command)</code> with a fake host remain supported through lazy router construction.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>RED: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_command_router -v</code> failed before implementation with 7 failures because <code>app.desktop_command_router</code> was missing and <code>main.py</code> did not construct or delegate to the router.</li>
+    <li>GREEN: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_command_router -v</code> passed after extraction: 7 tests.</li>
+    <li>Regression: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_command_router tests.test_main_runtime_env tests.test_desktop_actions -v</code> passed: 81 tests.</li>
+    <li>Compile: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/desktop_command_router.py tests/test_desktop_command_router.py</code> passed.</li>
+    <li>Whitespace: <code>git diff --check -- main.py app/desktop_command_router.py tests/test_desktop_command_router.py tests/test_main_runtime_env.py docs/reports/2026-06-28-desktop-command-router-split.html</code> passed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known router split work remains in this worker scope. The broader <code>main.py</code> desktop shell still owns unrelated Qt window, bridge, and UI lifecycle responsibilities for future splits.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main coordinator review the desktop command boundary, then choose the next independent <code>main.py</code> responsibility for a separate desktop-shell worker.</p>
+</body>
+</html>

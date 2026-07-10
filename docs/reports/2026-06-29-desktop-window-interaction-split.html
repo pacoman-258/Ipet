@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Desktop Window Interaction Split - 2026-06-29</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      margin: 32px;
+      color: #1f2937;
+      background: #ffffff;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 17px;
+      margin-top: 24px;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    .status {
+      font-weight: 700;
+      color: #047857;
+    }
+    .pending {
+      font-weight: 700;
+      color: #92400e;
+    }
+  </style>
+</head>
+<body>
+  <h1>Desktop Window Interaction Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move the long <code>DesktopPet.eventFilter</code> window drag, resize, hit-test, cursor, and browser-related handling into <code>app/window_interaction.py</code> while keeping the public <code>DesktopPet.eventFilter(host, watched, event)</code> patch point thin and behavior-compatible.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <ul>
+    <li><strong>desktop-shell</strong>: extracted event-filter interaction logic and kept <code>main.py</code> as the Qt host wrapper.</li>
+    <li><strong>qa-reports</strong>: added focused split tests and this task report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>main.py</code></li>
+    <li><code>app/window_interaction.py</code></li>
+    <li><code>tests/test_desktop_window_interaction.py</code></li>
+    <li><code>docs/reports/2026-06-29-desktop-window-interaction-split.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added <code>WindowInteractionController</code> with Qt dependencies injected by <code>main.py</code>, so the new module does not import <code>main</code>.</li>
+    <li>Reduced <code>DesktopPet.eventFilter</code> to controller delegation plus <code>super().eventFilter</code> fallback when the controller returns <code>None</code>.</li>
+    <li>Preserved edit-mode title drag, edge resize, cursor updates, window config synchronization, <code>sync_panel()</code>, Alt-drag movement, browser-related hit testing, and direct unbound test calls to <code>DesktopPet.eventFilter(host, ...)</code>.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p>No known functional follow-up inside this split. Broader manual GUI smoke testing can still be useful because Qt cursor and WebEngine child-object behavior depends on the live desktop runtime.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Continue shrinking <code>main.py</code> along existing ownership boundaries, preferably one desktop-shell responsibility per split with focused source and behavior tests.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><span class="status">RED observed</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_window_interaction -v</code> failed before implementation because <code>app.window_interaction</code> did not exist and <code>DesktopPet.eventFilter</code> was still inline.</li>
+    <li><span class="status">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_window_interaction tests.test_main_runtime_env -v</code> passed 69 tests.</li>
+    <li><span class="status">GREEN</span>: <code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/window_interaction.py tests/test_desktop_window_interaction.py</code> exited 0.</li>
+    <li><span class="status">GREEN</span>: <code>git diff --check -- main.py app/window_interaction.py tests/test_desktop_window_interaction.py docs/reports/2026-06-29-desktop-window-interaction-split.html</code> exited 0 for the tracked diff slice.</li>
+    <li><span class="status">GREEN</span>: <code>git diff --check --no-index -- /dev/null app/window_interaction.py</code>, <code>git diff --check --no-index -- /dev/null tests/test_desktop_window_interaction.py</code>, and <code>git diff --check --no-index -- /dev/null docs/reports/2026-06-29-desktop-window-interaction-split.html</code> produced no whitespace-error output for the new untracked files; no-index returned 1 only because each file differs from <code>/dev/null</code>.</li>
+  </ul>
+</body>
+</html>

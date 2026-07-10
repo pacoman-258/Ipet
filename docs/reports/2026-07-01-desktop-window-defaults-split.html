@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Window Defaults Split</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 2rem; max-width: 920px; }
+    h1 { font-size: 1.7rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.4rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Desktop Window Defaults Split</h1>
+
+  <h2>Goal</h2>
+  <p>Move desktop window flags, translucency, and background color defaults out of <code>main.py</code> into a Qt-neutral helper module while preserving the old public helper names.</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>This worker implemented the split directly in the shared worktree. The main window remains responsible for review and acceptance.</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>app/window_defaults.py</code>: new Qt-free policy helpers for window flags and background/translucency defaults.</li>
+    <li><code>main.py</code>: imports <code>app.window_defaults</code> and keeps compatibility wrappers for the previous helper names.</li>
+    <li><code>tests/test_desktop_window_defaults.py</code>: new fake-flag tests for the helper module plus AST/source checks for thin wrappers.</li>
+    <li><code>docs/reports/2026-07-01-desktop-window-defaults-split.html</code>: this report.</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <p>The platform policy for macOS vs non-macOS flags and transparent vs opaque background is now isolated from Qt imports. <code>main.py</code> still owns Qt binding objects and environment constants, then delegates the pure decision making to <code>app.window_defaults</code>.</p>
+
+  <h2>Remaining Work</h2>
+  <p>No known follow-up for this split. The repository was already dirty before this worker started, so unrelated files were left untouched.</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>Have the main window inspect the wrapper boundary and keep future desktop default policy changes in <code>app/window_defaults.py</code> rather than growing <code>main.py</code>.</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m unittest tests.test_desktop_window_defaults tests.test_main_runtime_env -v</code>: passed, 69 tests.</li>
+    <li><code>/Users/lyj/lyj/third_round/Ipet/Ipet/.venv/bin/python -m py_compile main.py app/window_defaults.py tests/test_desktop_window_defaults.py</code>: passed.</li>
+    <li><code>git diff --check -- main.py app/window_defaults.py tests/test_desktop_window_defaults.py</code>: passed with no output.</li>
+  </ul>
+</body>
+</html>

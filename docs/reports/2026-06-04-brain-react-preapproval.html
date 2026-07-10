@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain ReAct Pre-Approval Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain ReAct Pre-Approval Report</h1>
+  <p><strong>Date:</strong> 2026-06-04</p>
+
+  <h2>Goal</h2>
+  <p>Implement the first phase of bounded Brain ReAct handling for desktop operation goals before Human Ops approval, based on <code>docs/superpowers/specs/2026-06-04-brain-react-preapproval-design.md</code>.</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain lead:</strong> decision kind, parser, structured prompt, goal metadata.</li>
+    <li><strong>human-ops reviewer:</strong> approval handoff remains the stop point for <code>propose_act</code>.</li>
+    <li><strong>qa-reports:</strong> regression tests and this HTML report.</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/decisions.py</code></li>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_neo_aspect_core.py</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/reports/2026-06-04-brain-react-preapproval.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>Added non-reviewable <code>think</code> Brain decisions.</li>
+    <li>Preserved lightweight <code>goal</code> metadata on parsed <code>say</code>, <code>think</code>, <code>observe</code>, <code>propose_act</code>, and <code>stop</code> decisions.</li>
+    <li>Documented prompt rules for bounded ReAct, <code>goal.status</code>, unfinished operation goals, coordinate evidence, and Human Ops handoff.</li>
+    <li>Added a chat stream ReAct loop that auto-continues only <code>think</code>, <code>observe</code>, and one unfinished-goal correction before approval.</li>
+    <li>Kept <code>propose_act</code> as the hard stop that emits <code>approval_required</code> with the existing red-dot preview and never executes the click automatically.</li>
+    <li>Added a fixed ReAct budget so repeated <code>think</code> or observation loops end with a blocked user-facing summary.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Post-approval verification after Body executes an approved action remains out of scope.</li>
+    <li>Multi-action desktop tasks still require a separate design.</li>
+    <li>The frontend timeline continues to reuse existing phase and display events.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Design and test the post-approval verification phase using the same <code>goal</code> field and ReAct trace after Body reports an execution result.</p>
+</body>
+</html>

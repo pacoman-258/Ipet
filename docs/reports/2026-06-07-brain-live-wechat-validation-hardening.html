@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Live WeChat Validation Hardening Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Live WeChat Validation Hardening Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>用真实 Ipet 本地后端验证“打开微信并根据张三聊天信息回复张三”的第一段链路，并修正真实运行暴露出的 Brain/Body 入口建模问题。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 给旧 GUI-only persona 增加兼容性覆盖条款，防止本地配置把 prompt 拉回只会 GUI 的思维。</li>
+    <li><strong>body:</strong> 修正可见性解析和 running app fallback 排序，避免伪造不可见 Dock 图标，并让 WeChat 这类用户 app 不被系统 app 挤出候选。</li>
+    <li><strong>qa-reports:</strong> 增加旧 persona、否定可见性、ps fallback 候选截断三个回归测试，并记录真实 live 验证结果。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code></li>
+    <li><code>backend/app.py</code></li>
+    <li><code>main.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>tests/test_brain_structured_replies.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>tests/test_main_runtime_env.py</code></li>
+    <li><code>docs/reports/2026-06-07-brain-live-wechat-validation-hardening.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>The final system prompt now explicitly overrides legacy persona text that says not to think about terminal/TUI surfaces.</li>
+    <li>Observation text with negative visibility, such as no Dock or no WeChat icon, no longer creates fake Dock/app-icon affordances.</li>
+    <li>macOS ps fallback now keeps user app bundles such as WeChat after many lower-value system app bundles, so WeChat appears in live <code>target_candidates</code>.</li>
+    <li>Live request #2 confirmed the structured context no longer reported a fake Dock app icon; it reported the current visible surface as a browser page with no click affordance.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>.venv/bin/python -m unittest tests.test_brain_structured_replies.BrainStructuredReplyTests.test_turn_prompt_overrides_legacy_gui_only_persona tests.test_neo_backend_contract.NeoBackendContractTests.test_observe_result_does_not_fabricate_dock_icon_from_negative_visibility tests.test_neo_backend_contract.NeoBackendContractTests.test_observe_result_extracts_surface_and_affordance_for_dock_app_icon tests.test_main_runtime_env.MainDesktopEnvTests.test_running_app_ps_fallback_keeps_user_apps_after_many_system_apps tests.test_main_runtime_env.MainDesktopEnvTests.test_active_vision_discovery_uses_gui_app_fallback_after_window_enumeration_10827 -v</code>: passed, 5 tests.</li>
+    <li><code>.venv/bin/python -m py_compile brain/llm.py backend/app.py human_ops/approvals.py main.py</code>: passed.</li>
+    <li><code>.venv/bin/python -m unittest discover -s tests -p "test*.py" -v</code>: passed, 284 tests.</li>
+    <li><code>curl --max-time 240 ... /api/chat/stream</code>: live Ipet request reached Brain/Observe and returned blocked because the screenshot showed a full-screen browser page with no visible Dock or WeChat icon; no action was approved or executed.</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>Run the same live task when Dock or another coordinate-bearing WeChat entry is actually visible; current simple action set cannot click an invisible app icon.</li>
+    <li>Decide whether to extend the allowed action set beyond <code>click</code>, <code>type_text</code>, and <code>key_press enter</code> for hidden-Dock cases, or keep those cases blocked until a visible entry appears.</li>
+    <li>After the first visible click is approved, continue the live chain through contact lookup, chat reading, input focus, typing, Enter, and visible send verification.</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>Expose the Dock or a visible WeChat entry and rerun the live request. The expected next result is an <code>approval_required</code> event for a coordinate-bearing <code>click</code> on the visible WeChat entry.</p>
+</body>
+</html>

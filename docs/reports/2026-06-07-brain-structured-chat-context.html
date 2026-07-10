@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Brain Structured Chat Context Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #1f2937; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <h1>Brain Structured Chat Context Report</h1>
+  <p><strong>Date:</strong> 2026-06-07</p>
+
+  <h2>Goal</h2>
+  <p>让 Ipet 在微信回复类复杂任务里，不只知道当前 surface 和可操作入口，还能把 observe 看到的联系人和最近聊天内容整理成结构化上下文，帮助 Brain 稳定进入草拟、输入和发送阶段。</p>
+
+  <h2>Worker Split</h2>
+  <ul>
+    <li><strong>brain:</strong> 接收更稳定的 <code>Structured computer-use context</code>，其中包含 <code>chat_context</code>。</li>
+    <li><strong>human-ops:</strong> 从 observe 文本派生联系人、最近消息、输入就绪、发送就绪等聊天上下文字段。</li>
+    <li><strong>qa-reports:</strong> 增加 chat context 抽取和 follow-up 文本包含性的回归测试。</li>
+  </ul>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/app.py</code></li>
+    <li><code>tests/test_neo_backend_contract.py</code></li>
+    <li><code>docs/WORKFLOW.md</code></li>
+    <li><code>docs/reports/2026-06-07-brain-structured-chat-context.html</code></li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>新增 <code>chat_context</code> 派生，当前支持从“最近聊天内容：张三：...；我：...”这类 observe 文本中提取最近消息。</li>
+    <li><code>chat_context</code> 可包含联系人、最近消息、输入框是否可用、发送或回车发送是否可用。</li>
+    <li><code>_computer_use_context_text</code> 会把 <code>chat_context</code> 一起注入 Brain follow-up，减少 Brain 重新解析自然语言观察的负担。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <ul>
+    <li>当前消息抽取是轻量规则，不覆盖所有微信可见文本格式；真实端到端演练后应按 observe 模型实际输出补格式。</li>
+    <li>下一步仍需要验证输入后继续观察并提出 Enter 发送审批的真实链路。</li>
+  </ul>
+
+  <h2>Recommended Next Step</h2>
+  <p>补“输入回复后，审批后观察确认草稿在输入框中，再提出 key_press enter 审批”的回归和真实桌面演练。</p>
+</body>
+</html>
