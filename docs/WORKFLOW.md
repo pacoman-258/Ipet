@@ -95,6 +95,14 @@ Body gathers only the context needed for the turn:
 
 Body may immediately say or render small status updates such as listening, thinking, or waiting for approval. These updates are presentation state, not hidden autonomous work.
 
+The chat input bar shows the provider-reported token usage for the completed Brain turn: input, output, and total tokens. It does not estimate from characters. Codex supplies this data through `thread/tokenUsage/updated` in streaming mode and the CLI JSONL completion usage in non-streaming mode; providers that do not return usage leave the previous counter unchanged.
+
+## Conversation Memory
+
+Persistent conversations inject bounded history from `TopicStore`: conversation summaries use at most 4,000 characters, the recent tail keeps at most 10 complete user/assistant exchanges, and the combined history uses at most 12,000 characters. Temporary conversations keep only process-local history, bounded to 64 sessions and 10 exchanges per session, and never read or write `TopicStore`. The backend also forces temporary behavior when `memory.conversation_saving` is false, including the topic-creation endpoint, and returns the effective `memory_mode` in both `meta` and `done` events. Switching memory mode or starting a new conversation creates a new session ID so temporary and persistent histories cannot merge accidentally; the UI rejects those switches while a response or approval flow is active so an older stream cannot write into a newer conversation.
+
+Long-term memory still requires a dedicated Human Ops approval chain, and automatic mini/major summary generation is not wired into the turn flow. Neither capability may write durable memory or otherwise bypass Human Ops until its review path is implemented and verified.
+
 ## Brain Decision
 
 Brain receives a compact turn packet from Body plus allowed Memory & Skills context. Brain must return one next step:
@@ -141,12 +149,19 @@ The active Brain provider is configured in the web settings page. The current AP
 - Ollama chat
 - Anthropic-compatible messages
 - Google AI Studio Gemini `generateContent`
+- local Codex CLI using the current machine's Codex login
 
-The provider endpoint, model name, temperature, and optional API key live under the local Brain settings. Google AI Studio uses the official Gemini API endpoint by default, so the settings page does not require a custom endpoint for that provider. The API key is stored locally and redacted from settings responses.
+The provider endpoint, model name, temperature, and optional API key live under the local Brain settings. Google AI Studio uses the official Gemini API endpoint by default, so the settings page does not require a custom endpoint for that provider. The API key is stored locally and redacted from settings responses. Codex also requires no endpoint or API key: model discovery runs `codex login status` with the user's resolved `CODEX_HOME`, trusts its exit status rather than localized stdout/stderr text, then queries a short-lived Codex app-server `model/list` connection. The response supplies concrete account model IDs, the actual default model, and model-specific supported/default reasoning efforts. If the field still contains `default`, the settings page replaces it with the returned default model ID; clicking another model also refreshes its reasoning-effort choices.
+
+Brain settings include optional streaming-output and model-built-in-web-search switches. Codex streaming starts a short-lived app-server thread and forwards `item/agentMessage/delta` text through the existing chat SSE connection; only the visible `text` of structured `say` decisions is exposed, so JSON decision envelopes are not rendered to the user. When built-in search is enabled and supported, native Codex `webSearch` items are forwarded into the same worklog as live “searching”, “opening page”, and “finding in page” phases. Non-streaming Codex uses the same app-server path without forwarding deltas or live search phases. If app-server fails before any visible delta, Brain retries through the compatibility CLI path. Other providers currently use their existing non-streaming paths.
+
+Codex app-server threads replace the default Codex agent instructions with a narrow text-backend instruction and disable Codex shell, multi-agent, apps, plugins, browser, computer-use, image, goals, hooks, and workspace-dependency tools. Built-in web search is enabled alone when requested and when `modelProvider/capabilities/read` reports support; otherwise the turn continues without search and the final `say` explicitly states that no web search occurred. Ipet remains responsible for ReAct, observation, Human Ops review, action execution, memory, and skills. A selected Codex reasoning effort is normalized and passed unchanged; an empty value follows that model's advertised default, and an explicit model ID is also passed unchanged.
+
+Codex subprocesses run from the system temporary directory with read-only sandboxing and no approval escalation. App-server threads are ephemeral. The compatibility `codex exec` fallback ignores user config and project rules and uses JSONL output. Ipet does not read or copy Codex credentials. Brain uses the narrow text-decision bridge; Human Ops may independently select Codex for screenshot analysis.
 
 The settings page can ask the backend to discover available models from the currently entered provider and endpoint. This uses `/api/brain/models`, supports draft values that have not been saved yet, and never echoes API keys back to the browser.
 
-Human Ops observe can use the same provider set for its independent visual model. Google AI Studio observe calls use Gemini `generateContent` with inline image data and the saved local API key. The desktop host keeps the Brain and observe provider/key fields in `pet_config.json` when it reloads or saves local state, so reopening the app preserves the previous API configuration.
+Human Ops observe supports OpenAI-compatible, Ollama, Google AI Studio, and Codex visual providers. Google AI Studio uses Gemini `generateContent` with inline image data and the saved local API key. Codex needs no endpoint or key: model discovery keeps only models whose catalog advertises image input, and analysis writes the bounded screenshot to a temporary PNG/JPEG, attaches it with `codex exec --image`, runs ephemerally with read-only sandboxing and no approval escalation, then deletes the temporary image. The desktop host keeps the Brain and observe provider/key fields in `pet_config.json` when it reloads or saves local state, so reopening the app preserves the previous API configuration.
 
 Brain and observe HTTP clients do not trust ambient proxy variables automatically. Local providers and local endpoints such as Ollama, loopback, and `.local` hosts connect directly. Remote OpenAI-compatible, Anthropic-compatible, and Google AI Studio calls may use the first HTTP(S) proxy from `HTTPS_PROXY` / `HTTP_PROXY`; SOCKS-only `ALL_PROXY` is ignored so missing SOCKS extras do not break local model paths. Human Ops observe model analysis defaults to a 90 second read timeout and accepts custom values up to 300 seconds because image reasoning can take materially longer than text-only chat.
 

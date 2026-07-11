@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 流式输出与 Token Usage 修正</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Codex 流式输出与 Token Usage 修正</h1>
+  <p><strong>日期：</strong>2026-07-11</p>
+  <h2>Goal</h2>
+  <p>为 Brain 增加可选流式输出，优先实现 Codex，并把错误的字符 token 估算替换为 provider 返回的实际 usage。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p>Brain provider、聊天 SSE 流、设置默认值与设置页、对话栏 token 展示、相关测试、架构与工作流文档。</p>
+  <h2>Achieved effect</h2>
+  <p>Codex 可通过短生命周期 app-server 转发 <code>item/agentMessage/delta</code>；不支持或首个 delta 前失败时回退到非流式 <code>codex exec</code>。对话栏改为显示实际输入、输出和总 token，不再按字符猜测。</p>
+  <h2>Verification</h2>
+  <p>4 个 Python 文件通过编译检查，7 个相关前端脚本通过语法检查，Brain、聊天 SSE、设置页和前端控制器共 182 项相关回归测试通过；真实 Codex 探针收到增量文本 <code>OK</code>，并返回 input 14250、output 5、total 14255 的实际 usage。</p>
+  <h2>Remaining work</h2>
+  <p>其他 provider 暂时回退非流式；后续可按各自原生 SSE 协议逐个接入。</p>
+  <h2>Recommended next step</h2>
+  <p>在设置页勾选 Brain 流式输出，重启 Ipet 后用 Codex 发起普通聊天，确认逐段显示与回复完成后的精确 token 数。</p>
+</body>
+</html>

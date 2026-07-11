@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 视觉模型提供方</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Codex 视觉模型提供方</h1>
+  <p><strong>日期：</strong>2026-07-11</p>
+  <h2>Goal</h2>
+  <p>在 Human Ops observe 视觉模型设置中加入 Codex，并复用本机 Codex 登录与额度。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p>视觉分析器、observe 配置适配、Codex 模型元数据与模型路由、设置页及对应测试和文档。</p>
+  <h2>Achieved effect</h2>
+  <p>observe 可选择 Codex，无需端点和 API Key；拉取模型只显示声明支持 image 输入的 Codex 模型。截图通过临时文件附加到只读、短生命周期的 <code>codex exec --image</code>，调用结束后删除。</p>
+  <h2>Verification</h2>
+  <p>4 个 Python 文件通过编译检查，3 个设置页脚本通过语法检查，视觉命令、临时图片清理、设置保存、模型能力过滤等 139 项相关回归测试通过；真实账户目录接口返回 200，当前 6 个 Codex 模型均声明支持 text 与 image。</p>
+  <h2>Remaining work</h2>
+  <p>未运行真实图片推理，避免额外消耗 Codex 额度；命令参数和结果解析已通过模拟进程测试。</p>
+  <h2>Recommended next step</h2>
+  <p>在设置页启用独立 observe 模型，选择 Codex，拉取并填入模型后执行一次“看屏幕”任务。</p>
+</body>
+</html>

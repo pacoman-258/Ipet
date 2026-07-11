@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 登录状态误判修复</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Codex 登录状态误判修复</h1>
+  <p><strong>日期：</strong>2026-07-10</p>
+  <h2>Goal</h2>
+  <p>修复已登录 Codex 账户在 Ipet 模型列表中被误报为未登录的问题。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。对照了 OpenClaw 与 Hermes Agent 的公开源码。</p>
+  <h2>Files changed</h2>
+  <p><code>brain/llm.py</code>、<code>tests/test_brain_llm_providers.py</code>、<code>docs/WORKFLOW.md</code> 和本报告。</p>
+  <h2>Achieved effect</h2>
+  <p>Ipet 显式解析用户 <code>CODEX_HOME</code>，并以 <code>codex login status</code> 退出码判断登录，不再依赖英文文本位于 stdout。已复现的 stderr 输出路径现在会被正确接受。</p>
+  <h2>Evidence and verification</h2>
+  <p>修复前已精确复现：同一已登录账户通过 PIPE 调用时，stdout 为空，登录文本位于 stderr。修复后真实模型发现返回 <code>Codex 账户默认模型</code>；Python 编译与 117 项相关回归通过。</p>
+  <p>OpenClaw 的 Codex auth bridge 显式解析 <code>CODEX_HOME</code>/<code>HOME</code> 并桥接 app-server 账户；Hermes Agent 同样从 <code>CODEX_HOME/auth.json</code> 恢复凭据并把 <code>CODEX_HOME</code> 传给 app-server。Ipet 采用与当前临时 CLI 架构相符的最小子集。</p>
+  <h2>Remaining work</h2>
+  <p>当前继续使用每轮临时 <code>codex exec</code>；没有引入 OpenClaw/Hermes 的常驻 app-server，因为本次问题只在登录探测。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet 后在设置页重新点击“拉取模型”。</p>
+</body>
+</html>

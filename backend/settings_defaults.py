@@ -55,6 +55,9 @@ NEO_DEFAULTS: dict[str, Any] = {
         "self_state": "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
         "response_style": "lively",
         "decision_temperature": 0.4,
+        "reasoning_effort": "",
+        "streaming_enabled": False,
+        "web_search_enabled": False,
     },
     "human_ops": {
         "observe_screen": True,

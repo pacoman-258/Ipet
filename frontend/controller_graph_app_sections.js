@@ -47,6 +47,7 @@
       setReceivedStructuredSegment: (value) => {
         graphState.receivedStructuredSegment = !!value;
       },
+      setChatTokenUsage: facade.setChatTokenUsage,
     });
     controllerRegistry.chatStream = chatStreamController;
     graphState.chatSubmitController = runtimeWindow.IpetChatSubmit.createChatSubmitController({
@@ -188,9 +189,7 @@
       toggleChatHistoryDrawer: facade.toggleChatHistoryDrawer,
       toggleChatSkillsDrawer: facade.toggleChatSkillsDrawer,
       getCurrentMemoryMode: facade.getCurrentMemoryMode,
-      clearPendingDeleteTopic: facade.clearPendingDeleteTopic,
-      replaceChatMessages: facade.replaceChatMessages,
-      renderTopicHistoryList: facade.renderTopicHistoryList,
+      getChatState: () => graphState.chatState,
       updateShellButtons: facade.updateShellButtons,
       createNewTopic: facade.createNewTopic,
       setChatMode: facade.setChatMode,

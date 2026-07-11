@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -16,11 +20,24 @@ PROVIDER_OPENAI = "openai_compatible"
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_ANTHROPIC = "anthropic_compatible"
 PROVIDER_GOOGLE_AISTUDIO = "google_aistudio"
+PROVIDER_CODEX = "codex"
 GOOGLE_AISTUDIO_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
 GOOGLE_AISTUDIO_DEFAULT_MODEL = "gemini-3.5-flash"
 GOOGLE_AISTUDIO_LIST_PAGE_SIZE = 1000
-SUPPORTED_PROVIDERS = {PROVIDER_OPENAI, PROVIDER_OLLAMA, PROVIDER_ANTHROPIC, PROVIDER_GOOGLE_AISTUDIO}
+SUPPORTED_PROVIDERS = {
+    PROVIDER_OPENAI,
+    PROVIDER_OLLAMA,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_GOOGLE_AISTUDIO,
+    PROVIDER_CODEX,
+}
+ENDPOINTLESS_PROVIDERS = frozenset({PROVIDER_GOOGLE_AISTUDIO, PROVIDER_CODEX})
 _GOOGLE_API_VERSION_RE = re.compile(r"^v\d+(?:alpha|beta)?(?:\d+)?$", re.IGNORECASE)
+_CODEX_REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_CODEX_BASE_INSTRUCTIONS = (
+    "You are a text-only inference backend for Ipet. Follow the supplied messages and return one final response. "
+    "Do not call tools, inspect the environment, or perform agent work; Ipet owns those responsibilities."
+)
 STRUCTURED_REPLY_INSTRUCTIONS = """
 你每次只能返回一个下一步决定。请优先返回一个 JSON 对象，不要使用 Markdown 代码块：
 {"kind":"say","text":"给用户看的回复"}
@@ -99,6 +116,9 @@ class BrainProviderConfig:
     temperature: float = 0.4
     max_tokens: int = 1024
     timeout_sec: float = 60.0
+    reasoning_effort: str = ""
+    streaming_enabled: bool = False
+    web_search_enabled: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BrainProviderConfig":
@@ -124,6 +144,9 @@ class BrainProviderConfig:
             api_key=str(source.get("api_key") or "").strip(),
             temperature=max(0.0, min(2.0, temperature)),
             max_tokens=max(1, min(32000, max_tokens)),
+            reasoning_effort=normalize_reasoning_effort(source.get("reasoning_effort")),
+            streaming_enabled=source.get("streaming_enabled") is True,
+            web_search_enabled=source.get("web_search_enabled") is True,
         )
 
 
@@ -134,15 +157,33 @@ class BrainCompletion:
     model: str
     decision: BrainDecision | None = None
     raw_text: str = ""
+    usage: dict[str, int] | None = None
+    web_search_unavailable: bool = False
 
 
 @dataclass(frozen=True)
 class BrainModel:
     id: str
     label: str = ""
+    reasoning_efforts: tuple[tuple[str, str], ...] = ()
+    default_reasoning_effort: str = ""
+    is_default: bool = False
+    input_modalities: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
-        return {"id": self.id, "label": self.label or self.id}
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"id": self.id, "label": self.label or self.id}
+        if self.reasoning_efforts:
+            result["reasoning_efforts"] = [
+                {"value": value, "description": description}
+                for value, description in self.reasoning_efforts
+            ]
+        if self.default_reasoning_effort:
+            result["default_reasoning_effort"] = self.default_reasoning_effort
+        if self.is_default:
+            result["is_default"] = True
+        if self.input_modalities:
+            result["input_modalities"] = list(self.input_modalities)
+        return result
 
 
 def google_aistudio_recommended_models() -> list[BrainModel]:
@@ -160,12 +201,20 @@ def normalize_provider(value: Any) -> str:
         "google_ai_studio": PROVIDER_GOOGLE_AISTUDIO,
         "google_aistudio": PROVIDER_GOOGLE_AISTUDIO,
         "gemini": PROVIDER_GOOGLE_AISTUDIO,
+        "codex_cli": PROVIDER_CODEX,
     }.get(provider, provider)
     return provider if provider in SUPPORTED_PROVIDERS else PROVIDER_OPENAI
 
 
+def normalize_reasoning_effort(value: Any) -> str:
+    effort = str(value or "").strip().lower()
+    return effort if _CODEX_REASONING_EFFORT_RE.fullmatch(effort) else ""
+
+
 def _model_for_provider(provider: str, value: Any) -> str:
     model = str(value or "").strip()
+    if provider == PROVIDER_CODEX and not model:
+        return "default"
     if provider == PROVIDER_GOOGLE_AISTUDIO and (not model or model == "gpt-5.4"):
         return GOOGLE_AISTUDIO_DEFAULT_MODEL
     return model or "gpt-5.4"
@@ -377,7 +426,28 @@ async def complete_with_provider(
     messages: list[BrainMessage],
     *,
     client: Any | None = None,
+    on_delta: Callable[[str], Awaitable[None]] | None = None,
+    on_activity: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> BrainCompletion:
+    if config.provider == PROVIDER_CODEX:
+        if config.streaming_enabled and on_delta is not None:
+            emitted = False
+
+            async def track_delta(delta: str) -> None:
+                nonlocal emitted
+                emitted = emitted or bool(delta)
+                await on_delta(delta)
+
+            try:
+                return await _complete_codex_stream(config, messages, track_delta, on_activity)
+            except BrainLLMError:
+                if emitted:
+                    raise
+                return await _complete_codex(config, messages)
+        try:
+            return await _complete_codex_stream(config, messages, None, on_activity)
+        except BrainLLMError:
+            return await _complete_codex(config, messages)
     if config.provider == PROVIDER_OLLAMA:
         return await _complete_ollama(config, messages, client=client)
     if config.provider == PROVIDER_ANTHROPIC:
@@ -450,6 +520,8 @@ async def _with_client(config: BrainProviderConfig, callback):
 
 
 def _model_from_value(value: Any) -> BrainModel | None:
+    if isinstance(value, BrainModel):
+        return value
     if isinstance(value, str):
         model_id = value.strip()
         return BrainModel(model_id) if model_id else None
@@ -510,6 +582,9 @@ async def list_provider_models(
     client: Any | None = None,
 ) -> list[BrainModel]:
     provider_config = config if isinstance(config, BrainProviderConfig) else BrainProviderConfig.from_dict(config)
+    if provider_config.provider == PROVIDER_CODEX:
+        await _require_codex_login(provider_config.timeout_sec)
+        return await _list_codex_models(provider_config.timeout_sec)
 
     async def run(active_client):
         if provider_config.provider == PROVIDER_OLLAMA:
@@ -560,6 +635,562 @@ async def list_provider_models(
         return _models_from_openai_payload(data)
 
     return await run(client) if client is not None else await _with_client(provider_config, run)
+
+
+def _codex_executable() -> str:
+    discovered = shutil.which("codex")
+    bundled = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+    if discovered:
+        return discovered
+    if bundled.is_file():
+        return str(bundled)
+    raise BrainLLMError("Codex CLI was not found. Install Codex or the ChatGPT desktop app first.")
+
+
+def _codex_process_env() -> dict[str, str]:
+    env = dict(os.environ)
+    home = str(Path.home())
+    if not str(env.get("HOME") or "").strip():
+        env["HOME"] = home
+    codex_home = str(env.get("CODEX_HOME") or "").strip()
+    if codex_home:
+        env["CODEX_HOME"] = str(Path(codex_home).expanduser())
+    else:
+        env["CODEX_HOME"] = str(Path(home) / ".codex")
+    return env
+
+
+async def _run_codex_cli(
+    args: list[str],
+    *,
+    input_text: str = "",
+    timeout_sec: float,
+) -> tuple[str, str]:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            _codex_executable(),
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=tempfile.gettempdir(),
+            env=_codex_process_env(),
+        )
+    except OSError as exc:
+        raise BrainLLMError(f"Codex CLI could not start: {exc}") from exc
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(input_text.encode("utf-8")),
+            timeout=max(1.0, timeout_sec),
+        )
+    except TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise BrainLLMError(f"Codex CLI timed out after {timeout_sec:g} seconds.") from exc
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    if process.returncode:
+        detail = stderr_text or stdout_text or f"exit code {process.returncode}"
+        raise BrainLLMError(f"Codex CLI failed: {detail[-1200:]}")
+    return stdout_text, stderr_text
+
+
+async def _require_codex_login(timeout_sec: float) -> None:
+    # Codex versions disagree on whether status text goes to stdout or stderr.
+    # A successful exit code is the stable contract; _run_codex_cli raises otherwise.
+    await _run_codex_cli(["login", "status"], timeout_sec=min(timeout_sec, 10.0))
+
+
+async def _codex_app_server_response(process: Any, request_id: int, timeout_sec: float) -> dict[str, Any]:
+    while True:
+        try:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=max(1.0, timeout_sec))
+        except TimeoutError as exc:
+            raise BrainLLMError(f"Codex app-server timed out after {timeout_sec:g} seconds.") from exc
+        if not line:
+            detail = (await process.stderr.read()).decode("utf-8", errors="replace").strip()
+            raise BrainLLMError(f"Codex app-server closed before replying: {detail[-1200:] or 'no detail'}")
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(message, dict) or message.get("id") != request_id:
+            continue
+        if message.get("error"):
+            raise BrainLLMError(f"Codex app-server request failed: {message['error']}")
+        result = message.get("result")
+        if not isinstance(result, dict):
+            raise BrainLLMError("Codex app-server returned an invalid response.")
+        return result
+
+
+async def _codex_app_server_request(
+    process: Any,
+    request_id: int,
+    method: str,
+    params: dict[str, Any],
+    timeout_sec: float,
+) -> dict[str, Any]:
+    process.stdin.write(
+        (json.dumps({"id": request_id, "method": method, "params": params}) + "\n").encode("utf-8")
+    )
+    await process.stdin.drain()
+    return await _codex_app_server_response(process, request_id, timeout_sec)
+
+
+async def _stop_codex_app_server(process: Any) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=1.0)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+def _codex_models_from_payload(values: Any) -> list[BrainModel]:
+    models: list[BrainModel] = []
+    seen: set[str] = set()
+    for value in values if isinstance(values, list) else []:
+        if not isinstance(value, dict) or value.get("hidden") is True:
+            continue
+        model_id = str(value.get("model") or value.get("id") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        is_default = value.get("isDefault") is True
+        display_name = str(value.get("displayName") or model_id).strip() or model_id
+        efforts: list[tuple[str, str]] = []
+        for option in value.get("supportedReasoningEfforts") or []:
+            if not isinstance(option, dict):
+                continue
+            effort = normalize_reasoning_effort(option.get("reasoningEffort"))
+            if effort:
+                efforts.append((effort, str(option.get("description") or "").strip()))
+        models.append(
+            BrainModel(
+                id=model_id,
+                label=f"{display_name}{'（默认）' if is_default else ''}",
+                reasoning_efforts=tuple(efforts),
+                default_reasoning_effort=normalize_reasoning_effort(value.get("defaultReasoningEffort")),
+                is_default=is_default,
+                input_modalities=tuple(
+                    modality
+                    for modality in (
+                        str(item or "").strip().lower()
+                        for item in (
+                            value.get("inputModalities")
+                            if isinstance(value.get("inputModalities"), list)
+                            else ["text", "image"]
+                        )
+                    )
+                    if modality in {"text", "image"}
+                ),
+            )
+        )
+    return models
+
+
+async def _list_codex_models(timeout_sec: float) -> list[BrainModel]:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            _codex_executable(),
+            "app-server",
+            "--stdio",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=tempfile.gettempdir(),
+            env=_codex_process_env(),
+        )
+    except OSError as exc:
+        raise BrainLLMError(f"Codex app-server could not start: {exc}") from exc
+    try:
+        await _codex_app_server_request(
+            process,
+            1,
+            "initialize",
+            {
+                "clientInfo": {"name": "ipet", "title": "Ipet", "version": "0.3.0"},
+                "capabilities": {"experimentalApi": True},
+            },
+            timeout_sec,
+        )
+        models: list[BrainModel] = []
+        cursor: str | None = None
+        request_id = 2
+        while True:
+            result = await _codex_app_server_request(
+                process,
+                request_id,
+                "model/list",
+                {"cursor": cursor, "includeHidden": False, "limit": 100},
+                timeout_sec,
+            )
+            models.extend(_codex_models_from_payload(result.get("data")))
+            cursor = str(result.get("nextCursor") or "").strip() or None
+            if cursor is None:
+                return _dedupe_models(models)
+            request_id += 1
+    finally:
+        await _stop_codex_app_server(process)
+
+
+def _codex_prompt(messages: list[BrainMessage]) -> str:
+    payload = json.dumps([message.to_dict() for message in messages], ensure_ascii=False)
+    return (
+        "你是 Ipet Brain 的纯文本模型后端。不要调用任何工具，不要读取文件，不要解释过程；"
+        "只根据下面按角色排列的消息生成最终回复。system 消息是最高优先级指令。\n"
+        f"messages={payload}"
+    )
+
+
+def _parse_codex_jsonl(stdout: str) -> str:
+    messages: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = str(item.get("text") or "").strip()
+            if text:
+                messages.append(text)
+    return messages[-1] if messages else ""
+
+
+def _usage_from_value(value: Any) -> dict[str, int] | None:
+    source = value if isinstance(value, dict) else {}
+    aliases = {
+        "input_tokens": ("input_tokens", "inputTokens"),
+        "cached_input_tokens": ("cached_input_tokens", "cachedInputTokens"),
+        "output_tokens": ("output_tokens", "outputTokens"),
+        "reasoning_output_tokens": ("reasoning_output_tokens", "reasoningOutputTokens"),
+        "total_tokens": ("total_tokens", "totalTokens"),
+    }
+    result: dict[str, int] = {}
+    for target, names in aliases.items():
+        for name in names:
+            if name not in source:
+                continue
+            try:
+                result[target] = max(0, int(source[name]))
+            except (TypeError, ValueError):
+                pass
+            break
+    if "total_tokens" not in result and ("input_tokens" in result or "output_tokens" in result):
+        result["total_tokens"] = result.get("input_tokens", 0) + result.get("output_tokens", 0)
+    return result or None
+
+
+def _codex_jsonl_usage(stdout: str) -> dict[str, int] | None:
+    usage: dict[str, int] | None = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        candidate = _usage_from_value(event.get("usage"))
+        if candidate:
+            usage = candidate
+    return usage
+
+
+def _decode_partial_json_string(value: str) -> str:
+    output: list[str] = []
+    index = 0
+    escapes = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+    while index < len(value):
+        char = value[index]
+        if char == '"':
+            break
+        if char != "\\":
+            output.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(value):
+            break
+        escape = value[index + 1]
+        if escape == "u":
+            digits = value[index + 2 : index + 6]
+            if len(digits) < 4 or not all(char in "0123456789abcdefABCDEF" for char in digits):
+                break
+            output.append(chr(int(digits, 16)))
+            index += 6
+            continue
+        output.append(escapes.get(escape, escape))
+        index += 2
+    return "".join(output)
+
+
+class _StreamingSayTextExtractor:
+    def __init__(self) -> None:
+        self.raw = ""
+        self.emitted = 0
+        self.plain = False
+
+    def feed(self, delta: str) -> str:
+        chunk = str(delta or "")
+        self.raw += chunk
+        stripped = self.raw.lstrip()
+        if not stripped:
+            return ""
+        if self.plain or not stripped.startswith(("{", "```")):
+            self.plain = True
+            return chunk
+        if not re.search(r'"kind"\s*:\s*"say"', self.raw):
+            return ""
+        match = re.search(r'"text"\s*:\s*"', self.raw)
+        if match is None:
+            return ""
+        decoded = _decode_partial_json_string(self.raw[match.end() :])
+        fresh = decoded[self.emitted :]
+        self.emitted = len(decoded)
+        return fresh
+
+
+async def _read_codex_app_server_message(process: Any, timeout_sec: float) -> dict[str, Any]:
+    try:
+        line = await asyncio.wait_for(process.stdout.readline(), timeout=max(1.0, timeout_sec))
+    except TimeoutError as exc:
+        raise BrainLLMError(f"Codex app-server timed out after {timeout_sec:g} seconds.") from exc
+    if not line:
+        detail = (await process.stderr.read()).decode("utf-8", errors="replace").strip()
+        raise BrainLLMError(f"Codex app-server closed unexpectedly: {detail[-1200:] or 'no detail'}")
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    return message if isinstance(message, dict) else {}
+
+
+def _codex_web_search_activity(item: Any) -> dict[str, Any] | None:
+    source = item if isinstance(item, dict) else {}
+    if source.get("type") != "webSearch":
+        return None
+    action = source.get("action") if isinstance(source.get("action"), dict) else {}
+    action_type = str(action.get("type") or "search").strip()
+    query = str(action.get("query") or source.get("query") or "").strip()
+    queries = [str(value).strip() for value in action.get("queries") or [] if str(value).strip()]
+    url = str(action.get("url") or "").strip()
+    pattern = str(action.get("pattern") or "").strip()
+    if action_type == "openPage":
+        text = f"正在浏览：{url or '网页'}"
+    elif action_type == "findInPage":
+        target = f"{pattern}（{url}）" if pattern and url else pattern or url or "网页内容"
+        text = f"正在网页中查找：{target}"
+    else:
+        text = f"正在搜索：{query or '；'.join(queries) or '相关内容'}"
+    return {
+        "phase": "search",
+        "source": "brain",
+        "status_id": f"codex-web-search:{str(source.get('id') or action_type)}",
+        "action": action_type,
+        "text": text,
+        "transient": True,
+    }
+
+
+async def _complete_codex_stream(
+    config: BrainProviderConfig,
+    messages: list[BrainMessage],
+    on_delta: Callable[[str], Awaitable[None]] | None,
+    on_activity: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+) -> BrainCompletion:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            _codex_executable(),
+            "app-server",
+            "--stdio",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=tempfile.gettempdir(),
+            env=_codex_process_env(),
+        )
+    except OSError as exc:
+        raise BrainLLMError(f"Codex app-server could not start: {exc}") from exc
+    try:
+        await _codex_app_server_request(
+            process,
+            1,
+            "initialize",
+            {
+                "clientInfo": {"name": "ipet", "title": "Ipet", "version": "0.3.0"},
+                "capabilities": {"experimentalApi": True},
+            },
+            config.timeout_sec,
+        )
+        request_id = 2
+        web_search_available = False
+        if config.web_search_enabled:
+            try:
+                capabilities = await _codex_app_server_request(
+                    process,
+                    request_id,
+                    "modelProvider/capabilities/read",
+                    {},
+                    config.timeout_sec,
+                )
+                web_search_available = capabilities.get("webSearch") is True
+            except BrainLLMError:
+                web_search_available = False
+            request_id += 1
+        base_instructions = _CODEX_BASE_INSTRUCTIONS
+        if web_search_available:
+            base_instructions += (
+                " The only available tool is built-in web search. Use it when the user requests online, current, "
+                "or source-backed information, and otherwise answer directly."
+            )
+        thread_params: dict[str, Any] = {
+            "approvalPolicy": "never",
+            "baseInstructions": base_instructions,
+            "developerInstructions": "",
+            "config": {
+                "web_search": "live" if web_search_available else "disabled",
+                "features": {
+                    "apps": False,
+                    "browser_use": False,
+                    "computer_use": False,
+                    "goals": False,
+                    "hooks": False,
+                    "image_generation": False,
+                    "in_app_browser": False,
+                    "multi_agent": False,
+                    "plugins": False,
+                    "remote_plugin": False,
+                    "shell_tool": False,
+                    "tool_suggest": False,
+                    "workspace_dependencies": False,
+                },
+                "tools": {"view_image": False, "web_search": web_search_available},
+            },
+            "cwd": tempfile.gettempdir(),
+            "ephemeral": True,
+            "sandbox": "read-only",
+        }
+        if config.model and config.model != "default":
+            thread_params["model"] = config.model
+        thread_result = await _codex_app_server_request(
+            process,
+            request_id,
+            "thread/start",
+            thread_params,
+            config.timeout_sec,
+        )
+        thread = thread_result.get("thread") if isinstance(thread_result.get("thread"), dict) else {}
+        thread_id = str(thread.get("id") or "").strip()
+        if not thread_id:
+            raise BrainLLMError("Codex app-server did not return a thread id.")
+        request_id += 1
+        turn_params: dict[str, Any] = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": _codex_prompt(messages)}],
+        }
+        if config.reasoning_effort:
+            turn_params["effort"] = config.reasoning_effort
+        process.stdin.write(
+            (json.dumps({"id": request_id, "method": "turn/start", "params": turn_params}) + "\n").encode("utf-8")
+        )
+        await process.stdin.drain()
+
+        final_text = ""
+        usage: dict[str, int] | None = None
+        web_search_updates: set[tuple[str, str, str]] = set()
+        while True:
+            message = await _read_codex_app_server_message(process, config.timeout_sec)
+            if not message:
+                continue
+            if message.get("id") == request_id and message.get("error"):
+                raise BrainLLMError(f"Codex app-server turn failed to start: {message['error']}")
+            method = str(message.get("method") or "")
+            params = message.get("params") if isinstance(message.get("params"), dict) else {}
+            if method == "item/agentMessage/delta":
+                delta = str(params.get("delta") or "")
+                if delta:
+                    final_text += delta
+                    if on_delta is not None:
+                        await on_delta(delta)
+            elif method == "item/completed":
+                item = params.get("item") if isinstance(params.get("item"), dict) else {}
+                if item.get("type") == "agentMessage" and str(item.get("text") or "").strip():
+                    final_text = str(item["text"])
+            if method in {"item/started", "item/completed"}:
+                item = params.get("item") if isinstance(params.get("item"), dict) else {}
+                activity = _codex_web_search_activity(item)
+                if activity is not None and on_activity is not None:
+                    signature = (
+                        str(activity.get("status_id") or ""),
+                        str(activity.get("action") or ""),
+                        str(activity.get("text") or ""),
+                    )
+                    if signature not in web_search_updates:
+                        web_search_updates.add(signature)
+                        await on_activity(activity)
+            elif method == "thread/tokenUsage/updated":
+                token_usage = params.get("tokenUsage") if isinstance(params.get("tokenUsage"), dict) else {}
+                usage = _usage_from_value(token_usage.get("last")) or usage
+            elif method == "turn/completed":
+                turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+                if str(turn.get("status") or "") == "failed":
+                    error = turn.get("error") if isinstance(turn.get("error"), dict) else {}
+                    raise BrainLLMError(str(error.get("message") or "Codex app-server turn failed."))
+                for item in turn.get("items") or []:
+                    if isinstance(item, dict) and item.get("type") == "agentMessage" and str(item.get("text") or "").strip():
+                        final_text = str(item["text"])
+                break
+        if not final_text.strip():
+            raise BrainLLMError("Codex app-server returned no final agent message.")
+        return BrainCompletion(
+            text=final_text.strip(),
+            provider=PROVIDER_CODEX,
+            model=config.model or "default",
+            usage=usage,
+            web_search_unavailable=config.web_search_enabled and not web_search_available,
+        )
+    finally:
+        await _stop_codex_app_server(process)
+
+
+async def _complete_codex(config: BrainProviderConfig, messages: list[BrainMessage]) -> BrainCompletion:
+    args = [
+        "-a",
+        "never",
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--color",
+        "never",
+        "--json",
+    ]
+    if config.model and config.model != "default":
+        args.extend(("--model", config.model))
+    if config.reasoning_effort:
+        args.extend(("--config", f"model_reasoning_effort={json.dumps(config.reasoning_effort)}"))
+    args.extend(("--config", 'web_search="disabled"', "--config", "tools.web_search=false"))
+    args.append("-")
+    stdout, _stderr = await _run_codex_cli(args, input_text=_codex_prompt(messages), timeout_sec=config.timeout_sec)
+    text = _parse_codex_jsonl(stdout)
+    if not text:
+        raise BrainLLMError("Codex CLI returned no final agent message.")
+    return BrainCompletion(
+        text=text,
+        provider=PROVIDER_CODEX,
+        model=config.model or "default",
+        usage=_codex_jsonl_usage(stdout),
+        web_search_unavailable=config.web_search_enabled,
+    )
 
 
 def _google_generate_payload(config: BrainProviderConfig, messages: list[BrainMessage]) -> dict[str, Any]:
@@ -731,6 +1362,8 @@ async def run_brain_turn(
     request_system_prompt: str = "",
     conversation_history: list[dict[str, Any]] | None = None,
     client: Any | None = None,
+    on_delta: Callable[[str], Awaitable[None]] | None = None,
+    on_activity: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> BrainCompletion:
     provider_config = BrainProviderConfig.from_dict(brain_config)
     messages = build_turn_messages(
@@ -739,12 +1372,35 @@ async def run_brain_turn(
         request_system_prompt=request_system_prompt,
         conversation_history=conversation_history,
     )
-    completion = await complete_with_provider(provider_config, messages, client=client)
+    extractor = _StreamingSayTextExtractor()
+
+    async def forward_delta(delta: str) -> None:
+        visible_delta = extractor.feed(delta)
+        if visible_delta and on_delta is not None:
+            await on_delta(visible_delta)
+
+    completion = await complete_with_provider(
+        provider_config,
+        messages,
+        client=client,
+        on_delta=forward_delta if on_delta is not None else None,
+        on_activity=on_activity,
+    )
     decision = parse_brain_reply(completion.text)
+    web_search_unavailable = completion.web_search_unavailable or (
+        provider_config.web_search_enabled and completion.provider != PROVIDER_CODEX
+    )
+    if web_search_unavailable and decision.kind.value == "say":
+        answer = str(decision.payload.get("text") or decision.summary or "").strip()
+        decision = BrainDecision.say(
+            f"未进行联网搜索：当前模型不支持内置联网搜索，已自动回退为普通回答。\n\n{answer}"
+        )
     return BrainCompletion(
         text=_decision_text(decision),
         provider=completion.provider,
         model=completion.model,
         decision=decision,
         raw_text=completion.text,
+        usage=completion.usage,
+        web_search_unavailable=web_search_unavailable,
     )

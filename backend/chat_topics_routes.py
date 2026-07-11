@@ -13,6 +13,7 @@ from .chat_topics import TopicStore
 class ChatTopicsRouteDependencies:
     topic_store: TopicStore | Callable[[], TopicStore]
     default_topic_title: str
+    conversation_saving_enabled: Callable[[], bool] = lambda: True
 
     def resolved(self) -> ChatTopicsRouteDependencies:
         topic_store = self.topic_store() if callable(self.topic_store) else self.topic_store
@@ -21,6 +22,7 @@ class ChatTopicsRouteDependencies:
         return ChatTopicsRouteDependencies(
             topic_store=topic_store,
             default_topic_title=self.default_topic_title,
+            conversation_saving_enabled=self.conversation_saving_enabled,
         )
 
     def current_topic_store(self) -> TopicStore:
@@ -40,7 +42,7 @@ async def create_chat_topic(
     body = payload if isinstance(payload, dict) else {}
     topic_id = body.get("topic_id") or body.get("session_id")
     title = str(body.get("title") or deps.default_topic_title)
-    persisted = bool(body.get("persisted", True))
+    persisted = bool(body.get("persisted", True)) and bool(deps.conversation_saving_enabled())
     topic = deps.current_topic_store().create_topic(topic_id=topic_id, title=title, persisted=persisted)
     return {"ok": True, "topic": topic, **topic}
 

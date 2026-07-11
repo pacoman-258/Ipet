@@ -63,8 +63,11 @@ class SettingsFormSourceTests(unittest.TestCase):
             'const GOOGLE_AISTUDIO_DEFAULT_MODEL = "gemini-3.5-flash"',
             "setSecretPlaceholder(els.brainApiKey, neo.brain.api_key_preview, \"API Key\")",
             "setSecretPlaceholder(els.opsObserveApiKey, neo.human_ops.observe_model.api_key_preview, \"observe API Key\")",
-            "model_endpoint: isGoogleAistudio(brainProvider) ? \"\" : stringValue(els.brainModelEndpoint)",
-            "model_endpoint: isGoogleAistudio(observeProvider) ? \"\" : stringValue(els.opsObserveModelEndpoint)",
+            "model_endpoint: isEndpointlessProvider(brainProvider) ? \"\" : stringValue(els.brainModelEndpoint)",
+            "reasoning_effort: stringValue(els.brainReasoningEffort)",
+            "streaming_enabled: !!els.brainStreamingEnabled?.checked",
+            "web_search_enabled: !!els.brainWebSearchEnabled?.checked",
+            "model_endpoint: isEndpointlessProvider(observeProvider) ? \"\" : stringValue(els.opsObserveModelEndpoint)",
             "review_queue: linesValue(els.memoryReviewQueue)",
             "recipes: linesValue(els.skillsRecipeList)",
             "proposal_queue: linesValue(els.skillsProposalQueue)",
@@ -97,6 +100,7 @@ class SettingsFormSourceTests(unittest.TestCase):
             "updateClickPreview": ("", ""),
             "syncProviderControls": ("", ""),
             "isGoogleAistudio": ("value", "value"),
+            "isCodex": ("value", "value"),
         }
         for function_name, (signature, call_args) in wrappers.items():
             with self.subTest(function_name=function_name):
@@ -112,7 +116,7 @@ class SettingsFormSourceTests(unittest.TestCase):
             "system_prompt: neoDefaults().brain.persona",
             "review_queue: linesValue",
             "recipes: linesValue",
-            "model_endpoint: isGoogleAistudio(brainProvider) ?",
+            "model_endpoint: isEndpointlessProvider(brainProvider) ?",
             "setSecretPlaceholder(els.brainApiKey",
         ):
             with self.subTest(moved_token=moved_token):

@@ -71,9 +71,15 @@ class AppRouteDependencyContext:
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
+    def conversation_saving_enabled() -> bool:
+        private_config = context.normalize_private_config() if context.normalize_private_config else {}
+        memory_config = private_config.get("memory", {}) if isinstance(private_config.get("memory"), dict) else {}
+        return memory_config.get("conversation_saving") is not False
+
     return _chat_topics_route_helpers.ChatTopicsRouteDependencies(
         topic_store=context.topic_store,
         default_topic_title=context.default_topic_title,
+        conversation_saving_enabled=conversation_saving_enabled,
     )
 
 

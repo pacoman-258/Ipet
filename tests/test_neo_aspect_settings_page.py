@@ -52,15 +52,25 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
     def test_brain_provider_selector_supports_api_formats_including_google_aistudio(self) -> None:
         self.assertIn('id="brain-provider"', self.html)
         combined_js = f"{self.js}\n{self.form_js}"
-        for provider in ("openai_compatible", "ollama", "anthropic_compatible", "google_aistudio"):
+        for provider in ("openai_compatible", "ollama", "anthropic_compatible", "google_aistudio", "codex"):
             with self.subTest(provider=provider):
                 self.assertIn(f'value="{provider}"', self.html)
                 self.assertIn(provider, combined_js)
         self.assertIn("brainProvider", self.form_js)
         self.assertIn("provider:", self.form_js)
-        self.assertIn("model_endpoint: isGoogleAistudio(brainProvider) ? \"\" : stringValue(els.brainModelEndpoint)", self.form_js)
+        self.assertIn("model_endpoint: isEndpointlessProvider(brainProvider) ? \"\" : stringValue(els.brainModelEndpoint)", self.form_js)
         self.assertIn("Google AI Studio 只需要 API Key", self.form_js)
-        self.assertIn('els.brainModelName.value.trim() === "gpt-5.4"', self.form_js)
+        self.assertIn("复用本机 Codex 登录与账户额度", self.form_js)
+        self.assertIn('id="brain-reasoning-effort"', self.html)
+        self.assertIn("brainReasoningEffort", self.js)
+        self.assertIn("reasoning_effort: stringValue(els.brainReasoningEffort)", self.form_js)
+        self.assertIn('id="brain-streaming-enabled"', self.html)
+        self.assertIn("brainStreamingEnabled", self.js)
+        self.assertIn("streaming_enabled: !!els.brainStreamingEnabled?.checked", self.form_js)
+        self.assertIn('id="brain-web-search-enabled"', self.html)
+        self.assertIn("brainWebSearchEnabled", self.js)
+        self.assertIn("web_search_enabled: !!els.brainWebSearchEnabled?.checked", self.form_js)
+        self.assertIn('currentModel === "gpt-5.4"', self.form_js)
         self.assertNotIn("next.chat.backend_url = stringValue(els.brainModelEndpoint", self.form_js)
         read_form = self.form_js.split("  function readForm() {", 1)[1].split("  return {", 1)[0]
         self.assertNotIn("backend_url", read_form)
@@ -74,6 +84,14 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn("renderBrainModelOptions", self.js)
         self.assertIn("renderBrainModelOptions", self.model_picker_js)
         self.assertIn("target.value = model.id", self.model_picker_js)
+        self.assertIn("model.isDefault", self.model_picker_js)
+        self.assertIn("renderBrainReasoningOptions", self.model_picker_js)
+
+    def test_observe_model_provider_supports_codex_without_endpoint_or_key(self) -> None:
+        self.assertIn('<option value="codex">Codex（本机账户）</option>', self.html)
+        self.assertIn("const observeCodex = isCodex", self.form_js)
+        self.assertIn("Codex observe 复用本机登录与账户额度", self.form_js)
+        self.assertIn("model_endpoint: isEndpointlessProvider(observeProvider)", self.form_js)
 
     def test_settings_js_still_uses_existing_config_endpoint(self) -> None:
         self.assertIn("/api/settings/config", self.js)

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet 对话栏 Token 计数器</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>对话栏 Token 计数器</h1>
+  <p><strong>后续修正：</strong>本报告中的字符估算方案已于 2026-07-11 被 provider 实际 usage 取代，详见新一轮报告。</p>
+  <p><strong>日期：</strong>2026-07-10</p>
+  <h2>Goal</h2>
+  <p>在对话输入栏显示随草稿实时变化的 token 计数器。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p><code>index.html</code>、<code>frontend/index.css</code>、输入状态与关联前端控制器、前端测试、工作流文档。</p>
+  <h2>Achieved effect</h2>
+  <p>输入栏右上方显示 <code>约 N tokens</code>，并在键盘输入、语音转写、重试编辑和发送清空时同步更新。计数明确标为估算值，不冒充模型供应商的精确 usage。</p>
+  <h2>Verification</h2>
+  <p>8 个相关前端脚本通过 <code>node --check</code>；输入状态、DOM 引用、发送流程、控制器接线和聊天 UI 共 36 项回归测试通过。行为测试确认空输入为 0、英文按约四字符估算、中英文混合输入会实时刷新标签。</p>
+  <h2>Remaining work</h2>
+  <p>无必需实现；如以后各 provider 统一返回 usage，可另行显示服务端精确输入/输出 token。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet，在输入栏键入中英文混合文本并确认计数实时变化。</p>
+</body>
+</html>

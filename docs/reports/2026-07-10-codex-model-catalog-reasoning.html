@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 模型目录与思考程度</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Codex 模型目录与思考程度</h1>
+  <p><strong>日期：</strong>2026-07-10</p>
+  <h2>Goal</h2>
+  <p>让 Codex 模型拉取返回当前账户的具体模型并填入，同时提供模型专属思考程度设置。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。实现覆盖 Brain provider、设置页、后端模型路由、测试与文档。</p>
+  <h2>Files changed</h2>
+  <p><code>brain/llm.py</code>、<code>backend/brain_models_route.py</code>、Brain 默认配置、设置页 HTML/JS、相关测试、架构与工作流文档。</p>
+  <h2>Achieved effect</h2>
+  <p>Codex 通过 app-server <code>model/list</code> 返回账户模型、实际默认模型及每个模型支持的思考等级。设置页会把旧的 <code>default</code> 自动替换为具体 ID，并将所选思考程度传给 <code>codex exec</code>。</p>
+  <h2>Verification</h2>
+  <p>Python 编译检查与三个设置页 JavaScript 语法检查通过；Brain、后端契约、默认配置和设置页相关共 134 项测试通过。</p>
+  <p>真实调用 <code>POST /api/brain/models</code> 返回 200，并从当前 Codex 账户拉取到 <code>gpt-5.6-sol</code>、<code>gpt-5.6-terra</code>、<code>gpt-5.6-luna</code>、<code>gpt-5.5</code>、<code>gpt-5.4</code>、<code>gpt-5.4-mini</code>；默认模型为 <code>gpt-5.6-sol</code>，各模型返回了各自支持的思考程度。</p>
+  <h2>Remaining work</h2>
+  <p>无必需的剩余实现。模型目录按用户点击临时拉取且不常驻缓存，以便账户权限变化立即反映。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet，在 Brain 选择 Codex 后点击“拉取模型”，确认默认模型和思考程度选项。</p>
+</body>
+</html>

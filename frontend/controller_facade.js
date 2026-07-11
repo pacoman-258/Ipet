@@ -35,6 +35,7 @@
     "activeAsrStatusText": ["asr", "activeAsrStatusText"],
     "setAsrStatus": ["asr", "setAsrStatus"],
     "syncChatInputAvailability": ["chatInputState", "syncChatInputAvailability"],
+    "setChatTokenUsage": ["chatInputState", "setChatTokenUsage"],
     "canSubmitChatInput": ["chatInputState", "canSubmitChatInput"],
     "matchesPushToTalkKey": ["asr", "matchesPushToTalkKey"],
     "canStartPushToTalk": ["asr", "canStartPushToTalk"],

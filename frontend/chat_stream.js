@@ -40,6 +40,8 @@
       typeof deps.getReceivedStructuredSegment === "function" ? deps.getReceivedStructuredSegment : () => false;
     const setReceivedStructuredSegment =
       typeof deps.setReceivedStructuredSegment === "function" ? deps.setReceivedStructuredSegment : () => {};
+    const setChatTokenUsage =
+      typeof deps.setChatTokenUsage === "function" ? deps.setChatTokenUsage : () => {};
 
     function parseServerSentEvent(raw) {
       const lines = String(raw || "").split("\n");
@@ -60,6 +62,7 @@
 
     async function dispatchChatStreamEvent(context, eventName, payload) {
       if (eventName === "meta") {
+        setChatTokenUsage(null);
         if (payload.pet_display_name) {
           state.chat.pet_display_name = String(payload.pet_display_name);
           syncPetDisplayName();
@@ -131,6 +134,9 @@
 
       if (eventName === "done") {
         context.full = payload.text || context.full;
+        if (payload.usage) {
+          setChatTokenUsage(payload.usage);
+        }
         if (payload.memory_mode) {
           setCurrentMemoryMode(normalizeMemoryMode(payload.memory_mode));
           applyMemoryModeUI();

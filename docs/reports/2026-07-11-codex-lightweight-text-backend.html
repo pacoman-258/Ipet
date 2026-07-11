@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 轻量文本后端优化</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+    .result { padding: 12px 16px; border-left: 4px solid #2e9b63; background: #edf8f2; }
+  </style>
+</head>
+<body>
+  <h1>Codex 轻量文本后端优化</h1>
+  <p><strong>日期：</strong>2026-07-11</p>
+
+  <h2>Goal</h2>
+  <p>保留本机 Codex 登录与模型通道，但移除 Codex 自带 Agent 能力的固定上下文开销，由 Ipet 自己负责 Agent、工具、审批、观察、记忆与技能。</p>
+
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code>：流式和非流式统一优先使用轻量 app-server 线程，替换默认 Agent 指令并关闭非必要工具；保留 <code>codex exec</code> 兼容回退。</li>
+    <li><code>tests/test_brain_llm_providers.py</code>：覆盖轻量线程参数、真实 usage 解析和 CLI 回退。</li>
+    <li><code>docs/architecture.md</code>、<code>docs/WORKFLOW.md</code>：记录新的责任边界和运行路径。</li>
+  </ul>
+
+  <h2>Achieved effect</h2>
+  <p class="result">相同的“只回复 OK”真实探针，input token 从 14,250 降至 4,570，减少约 67.9%；模型仍正确回复 <code>OK</code>。</p>
+  <p>Codex 线程不再暴露 shell、多 Agent、apps、plugins、browser、computer-use、image、search、goals、hooks 和 workspace-dependency 工具。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li>Python 编译检查通过。</li>
+    <li>Brain provider、结构化回复与后端契约定向回归：114 项通过。</li>
+    <li>真实 Codex 探针：input 4,570、output 25、total 4,595；其中 reasoning output 18。</li>
+  </ul>
+
+  <h2>Remaining work</h2>
+  <p>剩余约 4.5k input token 属于当前 Codex 服务通道仍携带的基础上下文；若必须继续降低，需要改用直接的轻量模型 API，而不是本机 Codex 账户通道。</p>
+
+  <h2>Recommended next step</h2>
+  <p>在真实 Ipet 普通聊天中观察几轮 usage；随后按任务类型延迟注入 computer-use 合同，可继续降低 Ipet 自己的提示开销。</p>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>会话记忆连续性 - 2026-07-10</title>
+  <style>
+    body { max-width: 960px; margin: 32px auto; padding: 0 20px; color: #1f2937; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    h1 { font-size: 26px; }
+    h2 { margin-top: 24px; font-size: 18px; }
+    code { padding: 2px 5px; border-radius: 4px; background: #f3f4f6; }
+    .pass { color: #047857; font-weight: 700; }
+    .pending { color: #92400e; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>会话记忆连续性</h1>
+
+  <h2>Goal</h2>
+  <p>让持久会话把有界历史交给 Brain，同时让临时会话只保留进程内上下文，确保服务端的保存设置、模式切换和新会话边界不会造成意外落盘或历史串线。</p>
+
+  <h2>Worker / Subagent Split</h2>
+  <p>协调窗口负责方案、前端会话边界、API 契约测试、集成与验证；Brain 子窗口复核并恢复既有历史消息接口；Memory &amp; Skills 子窗口负责后端历史注入、临时会话隔离及其回归；qa-reports 子窗口负责安全边界复核、工作流文档和本 HTML 报告。</p>
+
+  <h2>Files Changed</h2>
+  <ul>
+    <li><code>backend/chat_stream_flow.py</code>：注入有界持久历史，维护有界进程内临时历史，并由服务端决定实际记忆模式。</li>
+    <li><code>backend/chat_topics_routes.py</code>：关闭会话保存时禁止预创建接口写入空话题。</li>
+    <li><code>backend/app_route_dependencies.py</code>：把实时会话保存设置注入话题路由。</li>
+    <li><code>frontend/app_bootstrap.js</code>：新对话和模式切换使用新的会话 ID。</li>
+    <li><code>frontend/chat_topic_history.js</code>：同步临时与持久话题的会话边界。</li>
+    <li><code>frontend/controller_graph_app_sections.js</code>：向启动控制器提供实时聊天状态。</li>
+    <li><code>tests/test_chat_stream_flow.py</code>：覆盖历史边界、临时隔离、保存设置和实际模式回传。</li>
+    <li><code>tests/test_chat_topics_api.py</code>：覆盖聊天 API 的持久与临时行为。</li>
+    <li><code>tests/test_chat_modes_ui.py</code>：覆盖模式切换与新会话 ID 的前端契约。</li>
+    <li><code>docs/WORKFLOW.md</code>：记录会话记忆的当前运行契约与未接线边界。</li>
+    <li><code>docs/reports/2026-07-10-session-memory-continuity.html</code>：本轮实施与验证报告。</li>
+  </ul>
+
+  <h2>Achieved Effect</h2>
+  <ul>
+    <li>持久会话从 <code>TopicStore</code> 读取历史；摘要最多 4,000 字，近期上下文最多 10 个完整 exchange，总历史最多 12,000 字。</li>
+    <li>临时会话最多保留 64 个进程内会话、每会话 10 轮，不读取或写入 <code>TopicStore</code>。</li>
+    <li><code>memory.conversation_saving=false</code> 时，服务端强制使用临时模式，不依赖前端自律。</li>
+    <li>话题预创建接口同样遵守关闭保存设置，不会先写入空目录再切换临时模式。</li>
+    <li><code>meta</code> 与 <code>done</code> 事件回传服务端实际采用的记忆模式。</li>
+    <li>切换记忆模式或新建对话时生成新的会话 ID，避免临时历史与持久历史意外合并。</li>
+    <li>回复或审批进行中拒绝切换模式与新建会话，防止旧 SSE 回写新会话界面。</li>
+  </ul>
+
+  <h2>Remaining Work</h2>
+  <p><span class="pending">未接线</span> 长期记忆的 Human Ops 批准、批准后写入与已批准记忆召回；mini/major summary 的自动生成也尚未接入聊天主链路。现有能力不得直接绕过 Human Ops 写入长期记忆。</p>
+
+  <h2>Recommended Next Step</h2>
+  <p>先实现专用的长期记忆提案、拒绝/批准和批准后写入链路，再只召回可证明已批准的记录；之后再以失败不改写上下文、保留原始消息为前提接入自动摘要生成。</p>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><span class="pass">PASS</span> 当前相关 targeted regression：52 tests passed。</li>
+    <li><span class="pass">PASS</span> 完整回归：679 tests passed。</li>
+    <li><span class="pass">PASS</span> Python <code>py_compile</code> 与 JavaScript <code>node --check</code>。</li>
+    <li><span class="pass">PASS</span> qa-reports 子窗口对本轮文档运行 <code>git diff --check</code>。</li>
+  </ul>
+</body>
+</html>

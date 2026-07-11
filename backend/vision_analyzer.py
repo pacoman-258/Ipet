@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from brain.llm import _codex_executable, _codex_process_env, _parse_codex_jsonl
+
 from .vision import (
     ALLOWED_MIME_TYPES,
     MAX_OBSERVATIONS,
@@ -39,7 +41,7 @@ DEFAULT_ANALYZER_CONFIG: dict[str, Any] = {
 
 GOOGLE_AISTUDIO_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
 GOOGLE_AISTUDIO_DEFAULT_MODEL = "gemini-3.5-flash"
-ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm", "google_aistudio_vlm"}
+ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm", "google_aistudio_vlm", "codex_vlm"}
 ANALYZER_IMAGE_DETAILS = {"low", "high", "auto"}
 ANALYZER_STATUS_KEYS = {"enabled", "provider", "status", "last_error", "observations_added", "unknowns_added"}
 DATA_URL_PREFIX = "data:"
@@ -61,7 +63,7 @@ def normalize_analyzer_config(config: Any) -> dict[str, Any]:
             source.get("timeout_sec", DEFAULT_ANALYZER_CONFIG["timeout_sec"]),
             fallback=DEFAULT_ANALYZER_CONFIG["timeout_sec"],
             min_value=0.2,
-            max_value=30.0,
+            max_value=300.0,
         ),
         "max_text_chars": _clamp_int(
             source.get("max_text_chars", DEFAULT_ANALYZER_CONFIG["max_text_chars"]),
@@ -171,6 +173,8 @@ class VisionAnalyzer:
             analysis = self._analyze_with_openai_compatible_vlm(payload)
         elif self.config["provider"] == "google_aistudio_vlm":
             analysis = self._analyze_with_google_aistudio_vlm(payload)
+        elif self.config["provider"] == "codex_vlm":
+            analysis = self._analyze_with_codex(payload)
         else:
             analysis = {
                 "observations": [],
@@ -383,6 +387,82 @@ class VisionAnalyzer:
         except Exception as exc:
             message = f"VLM analyzer returned invalid response: {exc}"
             return {"observations": [], "unknowns": [message], "last_error": message}
+
+    def _analyze_with_codex(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            mime_type, image_bytes = _decode_frame_data_url(payload, max_bytes=int(self.config["max_image_bytes"]))
+        except Exception as exc:
+            message = f"Codex VLM input invalid: {exc}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+
+        active = payload.get("active_observation") if isinstance(payload.get("active_observation"), dict) else {}
+        prompt = "\n\n".join(
+            (
+                "你是 Ipet 的只读视觉观察后端。不要调用工具、不要读取文件，只分析随本次请求附带的截图。",
+                _VLM_SYSTEM_PROMPT,
+                build_vlm_user_prompt(
+                    max_observations=int(self.config["max_observations"]),
+                    target_hint=active.get("target_hint"),
+                    observe_prompt=active.get("observe_prompt"),
+                    image_resolution=active.get("image_resolution"),
+                    screen_resolution=active.get("screen_resolution"),
+                    screen_bounds=active.get("screen_bounds"),
+                    coordinate_scale=active.get("coordinate_scale"),
+                ),
+            )
+        )
+        suffix = ".png" if mime_type == "image/png" else ".jpg"
+        image_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="ipet-codex-vision-", suffix=suffix, delete=False) as image_file:
+                image_file.write(image_bytes)
+                image_path = image_file.name
+            command = [
+                _codex_executable(),
+                "-a",
+                "never",
+                "exec",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--color",
+                "never",
+                "--json",
+                "--image",
+                image_path,
+            ]
+            model = _clean_text(self.config.get("model"), max_length=120)
+            if model and model != "default":
+                command.extend(("--model", model))
+            command.append("-")
+            result = self._runner(
+                command,
+                input=prompt,
+                capture_output=True,
+                cwd=tempfile.gettempdir(),
+                env=_codex_process_env(),
+                text=True,
+                timeout=float(self.config["timeout_sec"]),
+            )
+        except Exception as exc:
+            message = f"Codex VLM failed: {exc}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+        finally:
+            if image_path:
+                try:
+                    os.unlink(image_path)
+                except OSError:
+                    pass
+
+        if getattr(result, "returncode", 1) != 0:
+            detail = _clean_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=MAX_UNKNOWN_LENGTH)
+            message = f"Codex VLM failed: {detail or 'codex exec failed'}"
+            return {"observations": [], "unknowns": [message], "last_error": message}
+        content = _parse_codex_jsonl(str(getattr(result, "stdout", "") or ""))
+        return normalize_vlm_text_analysis(content, source="codex-vlm")
 
     def _status(
         self,
@@ -709,6 +789,8 @@ def _vlm_source_name(provider: str) -> str:
         return "local-vlm"
     if provider == "google_aistudio_vlm":
         return "google-aistudio-vlm"
+    if provider == "codex_vlm":
+        return "codex-vlm"
     return "openai-compatible-vlm"
 
 

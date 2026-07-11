@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 模型提供方接入报告</title>
+  <style>
+    body { max-width: 920px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+    .ok { padding: 12px 16px; border-left: 4px solid #2e9b63; background: #edf8f2; }
+  </style>
+</head>
+<body>
+  <h1>Codex 模型提供方接入</h1>
+  <p><strong>日期：</strong>2026-07-10</p>
+
+  <h2>目标</h2>
+  <p>在 Brain 模型提供方中加入 Codex，复用本机 Codex/ChatGPT 登录与账户侧额度，不要求用户把凭据复制到 Ipet。</p>
+
+  <h2>Worker / Subagent split</h2>
+  <p>本轮由主 agent 单独完成；未启用 subagent。Brain provider、设置页契约、回归测试、工作流文档与报告由同一实现者维护。</p>
+
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>brain/llm.py</code>：Codex CLI provider、登录检测、受限执行与 JSONL 结果解析。</li>
+    <li><code>backend/brain_models_route.py</code>、<code>backend/chat_stream_flow.py</code>：允许 Codex 无端点运行。</li>
+    <li><code>settings.html</code>、<code>settings.js</code>、<code>settings_form.js</code>、<code>settings_model_picker.js</code>：新增本机 Codex 选项及无端点/无 Key 交互。</li>
+    <li><code>tests/</code> 中相关 provider、设置页和后端契约测试。</li>
+    <li><code>docs/architecture.md</code>、<code>docs/WORKFLOW.md</code>：记录安全边界与使用方式。</li>
+  </ul>
+
+  <h2>Achieved effect</h2>
+  <p class="ok">设置页选择“Codex（本机账户）”后，可用“拉取模型”检测本机登录，并以 <code>default</code> 使用 Codex 账户默认模型。Brain 调用使用临时、只读、无审批升级的 <code>codex exec</code> 子进程；Ipet 不保存 Codex token。</p>
+
+  <h2>Verification</h2>
+  <p>Python 编译检查通过；Brain provider、结构化回复、后端契约、设置页与 chat stream 共 134 项定向回归通过。真实账户 smoke test 通过，桥接返回 <code>codex default codex-ok</code>。</p>
+
+  <h2>Remaining work</h2>
+  <p>当前不把 Codex 用作 Human Ops 的图片观察模型；每次回复会启动一个 CLI 进程，若实际使用中冷启动延迟明显，再评估常驻 app-server。</p>
+
+  <h2>Recommended next step</h2>
+  <p>在设置页选择 Codex，点击“拉取模型”确认登录，然后用 <code>default</code> 发送正常聊天消息；若冷启动延迟影响体验，再评估常驻 app-server。</p>
+</body>
+</html>

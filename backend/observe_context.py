@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from brain.decisions import BrainDecision
-from brain.llm import GOOGLE_AISTUDIO_DEFAULT_MODEL, PROVIDER_GOOGLE_AISTUDIO, normalize_provider
+from brain.llm import GOOGLE_AISTUDIO_DEFAULT_MODEL, PROVIDER_CODEX, PROVIDER_GOOGLE_AISTUDIO, normalize_provider
 
 from . import computer_use_context as _computer_use_context_helpers
 
@@ -250,11 +250,15 @@ def observe_model_analyzer_config(human_ops_config: dict[str, Any]) -> dict[str,
         analyzer_provider = "openai_compatible_vlm"
     elif provider == PROVIDER_GOOGLE_AISTUDIO:
         analyzer_provider = "google_aistudio_vlm"
+    elif provider == PROVIDER_CODEX:
+        analyzer_provider = "codex_vlm"
     else:
         return {"enabled": False, "provider": "none"}
     model_name = str(observe_model.get("model_name") or observe_model.get("model") or "").strip()
     if provider == PROVIDER_GOOGLE_AISTUDIO and not model_name:
         model_name = GOOGLE_AISTUDIO_DEFAULT_MODEL
+    elif provider == PROVIDER_CODEX and not model_name:
+        model_name = "default"
     try:
         timeout_sec = float(observe_model.get("timeout_sec", 90.0))
     except Exception:

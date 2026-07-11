@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Codex 内置联网搜索</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Codex 内置联网搜索</h1>
+  <p><strong>日期：</strong>2026-07-11</p>
+  <h2>Goal</h2>
+  <p>仅恢复 Codex 自带联网搜索，在设置页提供开关，并把 Codex 原生搜索与浏览活动实时显示在 Ipet 对话工作日志中。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p>Brain Codex 桥接、聊天 SSE 流、默认设置、设置页表单、相关 Python/前端契约测试、架构与工作流文档。</p>
+  <h2>Achieved effect</h2>
+  <ul>
+    <li><code>web_search_enabled</code> 默认关闭，可在 Brain 设置页开启。</li>
+    <li>开启时先读取 Codex provider capability；仅暴露内置 web search，其余 Codex Agent 工具保持禁用。</li>
+    <li>原生 <code>webSearch</code> 的 <code>search</code>、<code>openPage</code>、<code>findInPage</code> 动作映射为实时工作日志。</li>
+    <li>不支持搜索的 provider 或 CLI 回退会继续普通回答，并明确说明本次未进行联网搜索。</li>
+  </ul>
+  <h2>Verification</h2>
+  <p>Python 编译与 JavaScript 语法检查通过；Codex provider、Brain、后端契约、聊天流、默认设置和设置页扩展定向回归 147 项通过；<code>git diff --check</code> 通过。</p>
+  <h2>Remaining work</h2>
+  <p>真实 Codex 联网探针因当前账户达到 usage limit 未执行；额度恢复后应再跑一次真实搜索，核对实际网页活动与本地协议契约一致。</p>
+  <h2>Recommended next step</h2>
+  <p>额度恢复后，在设置页同时开启流式输出和模型内置联网搜索，询问一条最新信息并确认工作日志依次显示搜索词与打开的网页。</p>
+</body>
+</html>

@@ -1,6 +1,7 @@
 (() => {
   const GOOGLE_AISTUDIO_PROVIDER = "google_aistudio";
   const GOOGLE_AISTUDIO_DEFAULT_MODEL = "gemini-3.5-flash";
+  const CODEX_PROVIDER = "codex";
 
   function createSettingsFormController(deps = {}) {
     const {
@@ -51,6 +52,9 @@
           self_state: "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
           response_style: "lively",
           decision_temperature: 0.4,
+          reasoning_effort: "",
+          streaming_enabled: false,
+          web_search_enabled: false,
         },
         human_ops: {
           observe_screen: true,
@@ -156,6 +160,14 @@
       return String(value || "") === GOOGLE_AISTUDIO_PROVIDER;
     }
 
+    function isCodex(value) {
+      return String(value || "") === CODEX_PROVIDER;
+    }
+
+    function isEndpointlessProvider(value) {
+      return isGoogleAistudio(value) || isCodex(value);
+    }
+
     function setSecretPlaceholder(input, preview, label) {
       if (!input) {
         return;
@@ -166,38 +178,99 @@
 
     function syncProviderControls() {
       const brainGoogle = isGoogleAistudio(stringValue(els.brainProvider, "openai_compatible"));
+      const brainCodex = isCodex(stringValue(els.brainProvider, "openai_compatible"));
       if (els.brainModelEndpoint) {
-        els.brainModelEndpoint.disabled = brainGoogle;
+        els.brainModelEndpoint.disabled = brainGoogle || brainCodex;
         els.brainModelEndpoint.placeholder = brainGoogle
           ? "Google AI Studio 固定使用 Gemini API，可留空"
-          : "http://127.0.0.1:11434";
-        if (brainGoogle) {
+          : brainCodex
+            ? "使用本机 Codex 登录，无需端点"
+            : "http://127.0.0.1:11434";
+        if (brainGoogle || brainCodex) {
           els.brainModelEndpoint.value = "";
         }
       }
-      if (brainGoogle && els.brainModelName && (!els.brainModelName.value.trim() || els.brainModelName.value.trim() === "gpt-5.4")) {
-        els.brainModelName.value = GOOGLE_AISTUDIO_DEFAULT_MODEL;
+      if (els.brainModelName) {
+        const currentModel = els.brainModelName.value.trim();
+        if (brainGoogle && (!currentModel || currentModel === "gpt-5.4" || currentModel === "default")) {
+          els.brainModelName.value = GOOGLE_AISTUDIO_DEFAULT_MODEL;
+        } else if (brainCodex && (!currentModel || currentModel === GOOGLE_AISTUDIO_DEFAULT_MODEL)) {
+          els.brainModelName.value = "default";
+        } else if (!brainGoogle && !brainCodex && currentModel === "default") {
+          els.brainModelName.value = "gpt-5.4";
+        }
+      }
+      if (els.brainApiKey) {
+        els.brainApiKey.disabled = brainCodex;
+        if (brainCodex) {
+          els.brainApiKey.value = "";
+          els.brainApiKey.placeholder = "复用本机 Codex 登录，无需 API Key";
+        } else {
+          setSecretPlaceholder(
+            els.brainApiKey,
+            getSettingsPayload()?.config?.brain?.api_key_preview,
+            "API Key",
+          );
+        }
+      }
+      if (els.brainApiKeyClear) {
+        els.brainApiKeyClear.disabled = brainCodex;
+        if (brainCodex) {
+          els.brainApiKeyClear.checked = false;
+        }
+      }
+      if (els.brainReasoningEffortField) {
+        els.brainReasoningEffortField.hidden = !brainCodex;
+      }
+      if (els.brainReasoningEffort) {
+        els.brainReasoningEffort.disabled = !brainCodex;
       }
       if (els.brainModelStatus) {
-        els.brainModelStatus.textContent = brainGoogle ? "Google AI Studio 只需要 API Key" : "填写端点后可拉取模型列表";
+        els.brainModelStatus.textContent = brainGoogle
+          ? "Google AI Studio 只需要 API Key"
+          : brainCodex
+            ? "复用本机 Codex 登录与账户额度；点击拉取模型可检测登录"
+            : "填写端点后可拉取模型列表";
       }
 
       const observeGoogle = isGoogleAistudio(stringValue(els.opsObserveModelProvider, "openai_compatible"));
+      const observeCodex = isCodex(stringValue(els.opsObserveModelProvider, "openai_compatible"));
       if (els.opsObserveModelEndpoint) {
-        els.opsObserveModelEndpoint.disabled = observeGoogle;
+        els.opsObserveModelEndpoint.disabled = observeGoogle || observeCodex;
         els.opsObserveModelEndpoint.placeholder = observeGoogle
           ? "Google AI Studio 固定使用 Gemini API，可留空"
+          : observeCodex
+            ? "Codex 复用本机登录，无需端点"
           : "http://127.0.0.1:11434";
-        if (observeGoogle) {
+        if (observeGoogle || observeCodex) {
           els.opsObserveModelEndpoint.value = "";
         }
       }
       if (observeGoogle && els.opsObserveModelName && !els.opsObserveModelName.value.trim()) {
         els.opsObserveModelName.value = GOOGLE_AISTUDIO_DEFAULT_MODEL;
+      } else if (observeCodex && els.opsObserveModelName && !els.opsObserveModelName.value.trim()) {
+        els.opsObserveModelName.value = "default";
+      }
+      if (els.opsObserveApiKey) {
+        els.opsObserveApiKey.disabled = observeCodex;
+        if (observeCodex) {
+          els.opsObserveApiKey.value = "";
+        }
+        els.opsObserveApiKey.placeholder = observeCodex
+          ? "复用本机 Codex 登录，无需 API Key"
+          : "留空表示保留已保存密钥";
+      }
+      if (els.opsObserveApiKeyClear) {
+        els.opsObserveApiKeyClear.disabled = observeCodex;
+        if (observeCodex) {
+          els.opsObserveApiKeyClear.checked = false;
+        }
       }
       if (els.opsObserveModelStatus) {
         els.opsObserveModelStatus.textContent = observeGoogle
           ? "Google AI Studio observe 只需要 API Key"
+          : observeCodex
+            ? "Codex observe 复用本机登录与账户额度"
           : "可单独配置更快的观察模型";
       }
     }
@@ -259,6 +332,9 @@
       setValue(els.brainSelfState, neo.brain.self_state || "");
       setValue(els.brainResponseStyle, neo.brain.response_style || "lively");
       setValue(els.brainDecisionTemperature, Number(neo.brain.decision_temperature ?? 0.4));
+      setValue(els.brainReasoningEffort, neo.brain.reasoning_effort || "");
+      setChecked(els.brainStreamingEnabled, neo.brain.streaming_enabled === true);
+      setChecked(els.brainWebSearchEnabled, neo.brain.web_search_enabled === true);
 
       setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
       setChecked(els.opsAccessibility, neo.human_ops.accessibility);
@@ -343,12 +419,15 @@
       next.brain = {
         ...(next.brain || {}),
         provider: brainProvider,
-        model_endpoint: isGoogleAistudio(brainProvider) ? "" : stringValue(els.brainModelEndpoint),
-        model_name: stringValue(els.brainModelName, isGoogleAistudio(brainProvider) ? GOOGLE_AISTUDIO_DEFAULT_MODEL : "gpt-5.4"),
+        model_endpoint: isEndpointlessProvider(brainProvider) ? "" : stringValue(els.brainModelEndpoint),
+        model_name: stringValue(els.brainModelName, isGoogleAistudio(brainProvider) ? GOOGLE_AISTUDIO_DEFAULT_MODEL : isCodex(brainProvider) ? "default" : "gpt-5.4"),
         persona: stringValue(els.brainPersona),
         self_state: stringValue(els.brainSelfState),
         response_style: stringValue(els.brainResponseStyle, "lively"),
         decision_temperature: numberValue(els.brainDecisionTemperature, 0.4),
+        reasoning_effort: stringValue(els.brainReasoningEffort),
+        streaming_enabled: !!els.brainStreamingEnabled?.checked,
+        web_search_enabled: !!els.brainWebSearchEnabled?.checked,
       };
       if (els.brainApiKey?.value) {
         next.brain.api_key = els.brainApiKey.value;
@@ -368,8 +447,8 @@
           ...((next.human_ops || {}).observe_model || {}),
           enabled: !!els.opsObserveModelEnabled?.checked,
           provider: observeProvider,
-          model_endpoint: isGoogleAistudio(observeProvider) ? "" : stringValue(els.opsObserveModelEndpoint),
-          model_name: stringValue(els.opsObserveModelName, isGoogleAistudio(observeProvider) ? GOOGLE_AISTUDIO_DEFAULT_MODEL : ""),
+          model_endpoint: isEndpointlessProvider(observeProvider) ? "" : stringValue(els.opsObserveModelEndpoint),
+          model_name: stringValue(els.opsObserveModelName, isGoogleAistudio(observeProvider) ? GOOGLE_AISTUDIO_DEFAULT_MODEL : isCodex(observeProvider) ? "default" : ""),
           max_output_tokens: 512,
           timeout_sec: Number((next.human_ops || {}).observe_model?.timeout_sec || 90),
         },
@@ -423,6 +502,8 @@
       updateClickPreview,
       syncProviderControls,
       isGoogleAistudio,
+      isCodex,
+      isEndpointlessProvider,
     };
   }
 

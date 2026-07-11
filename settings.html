@@ -158,12 +158,14 @@
 
           <div class="form-grid two-col">
             <label class="field">
-              <span>API 格式</span>
+              <span>模型提供方</span>
               <select id="brain-provider">
                 <option value="openai_compatible">OpenAI 兼容</option>
                 <option value="ollama">Ollama</option>
                 <option value="anthropic_compatible">Anthropic 兼容</option>
                 <option value="google_aistudio">Google AI Studio</option>
+                <option value="codex">Codex（本机账户）</option>
+                <option value="codex">Codex（本机账户）</option>
               </select>
             </label>
             <label class="field">
@@ -181,6 +183,18 @@
             <label class="field">
               <span>模型名称</span>
               <input id="brain-model-name" type="text" placeholder="gpt-5.4" />
+            </label>
+            <label id="brain-reasoning-effort-field" class="field" hidden>
+              <span>Codex 思考程度</span>
+              <select id="brain-reasoning-effort">
+                <option value="">跟随模型默认</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="xhigh">超高</option>
+                <option value="max">最大</option>
+                <option value="ultra">Ultra（自动委派）</option>
+              </select>
             </label>
             <label class="field wide">
               <span>API Key</span>
@@ -205,6 +219,14 @@
                 <option value="calm">冷静</option>
                 <option value="concise">简洁</option>
               </select>
+            </label>
+            <label class="check-row">
+              <input id="brain-streaming-enabled" type="checkbox" />
+              <span>流式输出（提供方不支持时自动回退）</span>
+            </label>
+            <label class="check-row">
+              <input id="brain-web-search-enabled" type="checkbox" />
+              <span>启用模型内置联网搜索（不支持时自动回退）</span>
             </label>
             <label class="field">
               <span>单步决策温度</span>

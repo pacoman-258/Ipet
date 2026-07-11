@@ -417,6 +417,44 @@ class VisionAnalyzerTests(unittest.TestCase):
         self.assertIn("概括可见窗口", read_prompt)
         self.assertIn("用自然语言回答", read_prompt)
 
+    def test_codex_vlm_uses_local_account_with_temporary_image(self) -> None:
+        calls = []
+
+        def runner(command, **kwargs):
+            image_path = command[command.index("--image") + 1]
+            self.assertTrue(os.path.isfile(image_path))
+            calls.append((command, kwargs, image_path))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout='{"type":"item.completed","item":{"type":"agent_message","text":"屏幕中可见设置按钮，中心点 x=120, y=80。"}}\n',
+                stderr="",
+            )
+
+        analyzer = VisionAnalyzer(
+            {"enabled": True, "provider": "codex_vlm", "model": "gpt-vision", "timeout_sec": 90},
+            runner=runner,
+        )
+        with mock.patch("backend.vision_analyzer._codex_executable", return_value="/mock/codex"):
+            result = analyzer.enrich_payload(
+                {
+                    "mime_type": "image/png",
+                    "data_url": PNG_DATA_URL,
+                    "active_observation": {"observe_prompt": "请找设置按钮。"},
+                }
+            )
+
+        command, kwargs, image_path = calls[0]
+        self.assertEqual(command[:4], ["/mock/codex", "-a", "never", "exec"])
+        self.assertIn("--ephemeral", command)
+        self.assertIn("--ignore-user-config", command)
+        self.assertEqual(command[command.index("--model") + 1], "gpt-vision")
+        self.assertIn("请找设置按钮", kwargs["input"])
+        self.assertEqual(kwargs["timeout"], 90.0)
+        self.assertFalse(os.path.exists(image_path))
+        self.assertEqual(result.status["status"], "ok")
+        self.assertEqual(result.payload["observations"][0]["source"], "codex-vlm")
+
     def test_click_vlm_prompt_requires_coordinate_self_check_against_target_icon(self) -> None:
         prompt = build_vlm_user_prompt(
             max_observations=4,

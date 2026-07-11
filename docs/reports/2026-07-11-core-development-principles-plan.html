@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet 开发核心原则与实施计划</title>
+  <style>
+    body { max-width: 920px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Ipet 开发核心原则与实施计划</h1>
+  <p><strong>日期：</strong>2026-07-11</p>
+  <h2>Goal</h2>
+  <p>把用户提出的 Codex 风格过程透明化、人类思路与机器增强、探索/验证分离、结果确认、严谨审批、平台原生化、结构规范、谦虚开发和本地停止按键整理为项目级原则，并拆成可交给不同 Codex 会话实施的板块。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成文档整理；未使用 subagent。后续实施计划划分为 9 个独立 Codex 会话板块。</p>
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>开发核心原则.txt</code>：完整原则与验证顺序。</li>
+    <li><code>AGENTS.md</code>：所有开发会话必须遵守的精炼规则。</li>
+    <li><code>docs/superpowers/plans/2026-07-11-core-development-principles.md</code>：分板块实施计划。</li>
+    <li><code>docs/reports/2026-07-11-core-development-principles-plan.html</code>：本轮报告。</li>
+  </ul>
+  <h2>Achieved effect</h2>
+  <ul>
+    <li>明确工作日志展示结构化过程而非原始思维链，并在终态折叠。</li>
+    <li>明确未知 GUI 探索鼓励截图，结果验证优先确定性信号，再询问用户，最后才截图。</li>
+    <li>明确动作执行不等于目标达成，审批与结果确认分离。</li>
+    <li>明确停止按键由本地最高优先级处理，停止后不再产生新副作用。</li>
+    <li>按依赖、owner、高冲突文件和验收场景拆成 9 个实施板块。</li>
+  </ul>
+  <h2>Verification</h2>
+  <p>已检查文档结构、必需原则、实施板块数量、HTML 结构和 Git whitespace；未修改运行时代码，因此未运行产品回归测试。</p>
+  <h2>Remaining work</h2>
+  <p>原则尚未落入运行时。工作事件、停止后端、工作日志 UI、探索策略、macOS 验证、证据绑定、后置条件与端到端验收需按计划逐板块实现。</p>
+  <h2>Recommended next step</h2>
+  <p>从板块 0 的运行时合同与测试基线开始，再按依赖顺序交给独立 Codex 会话实施；共享同一工作目录时保持串行。</p>
+</body>
+</html>

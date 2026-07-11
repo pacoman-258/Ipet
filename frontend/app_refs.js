@@ -33,6 +33,7 @@
       chatMessagesEl: byId(runtimeDocument, "chat-messages"),
       chatInputEl: byId(runtimeDocument, "chat-input"),
       chatInputWrapEl: byId(runtimeDocument, "chat-input-wrap"),
+      chatTokenCountEl: byId(runtimeDocument, "chat-token-count"),
       chatAsrStatusEl: byId(runtimeDocument, "chat-asr-status"),
       chatSendEl: byId(runtimeDocument, "chat-send"),
       chatStopEl: byId(runtimeDocument, "chat-stop"),

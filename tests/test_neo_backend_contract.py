@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.app as backend_app
 from brain import BrainDecision
-from brain.llm import BrainLLMError
+from brain.llm import BrainLLMError, BrainModel
 
 
 def _sse_events(body: str) -> list[tuple[str, dict]]:
@@ -176,6 +176,55 @@ class NeoBackendContractTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertIn("endpoint", resp.json()["detail"].lower())
+
+    def test_brain_models_route_codex_uses_local_login_without_endpoint_or_key(self) -> None:
+        models = [
+            SimpleNamespace(
+                id="gpt-account",
+                label="GPT Account（默认）",
+                reasoning_efforts=(("low", "fast"), ("high", "deep")),
+                default_reasoning_effort="low",
+                is_default=True,
+            )
+        ]
+        with mock.patch.object(backend_app, "list_provider_models", new=mock.AsyncMock(return_value=models)) as list_mock:
+            resp = self.client.post("/api/brain/models", json={"provider": "codex", "model_endpoint": ""})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json()["models"],
+            [
+                {
+                    "id": "gpt-account",
+                    "label": "GPT Account（默认）",
+                    "reasoning_efforts": [
+                        {"value": "low", "description": "fast"},
+                        {"value": "high", "description": "deep"},
+                    ],
+                    "default_reasoning_effort": "low",
+                    "is_default": True,
+                }
+            ],
+        )
+        args, _kwargs = list_mock.await_args
+        self.assertEqual(args[0]["provider"], "codex")
+        self.assertEqual(args[0]["model_endpoint"], "")
+        self.assertEqual(args[0]["api_key"], "")
+
+    def test_observe_codex_model_list_only_returns_image_capable_models(self) -> None:
+        models = [
+            BrainModel(id="vision", input_modalities=("text", "image")),
+            BrainModel(id="text-only", input_modalities=("text",)),
+        ]
+        with mock.patch.object(backend_app, "list_provider_models", new=mock.AsyncMock(return_value=models)):
+            resp = self.client.post(
+                "/api/brain/models",
+                json={"scope": "observe", "provider": "codex", "model_endpoint": ""},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([model["id"] for model in resp.json()["models"]], ["vision"])
+        self.assertEqual(resp.json()["models"][0]["input_modalities"], ["text", "image"])
 
     def test_brain_models_route_can_use_saved_observe_model_secret(self) -> None:
         backend_app.CONFIG_PATH.write_text(
@@ -1485,6 +1534,16 @@ class NeoBackendContractTests(unittest.TestCase):
         )
 
         self.assertEqual(config["timeout_sec"], 90.0)
+
+    def test_human_ops_observe_maps_codex_to_local_vlm_bridge(self) -> None:
+        config = backend_app._observe_model_analyzer_config(
+            {"observe_model": {"enabled": True, "provider": "codex", "model_name": "gpt-vision"}}
+        )
+
+        self.assertEqual(config["provider"], "codex_vlm")
+        self.assertEqual(config["model"], "gpt-vision")
+        self.assertEqual(config["base_url"], "")
+        self.assertEqual(config["api_key"], "")
 
     def test_human_ops_observe_allows_slow_image_analysis_timeout(self) -> None:
         config = backend_app._observe_model_analyzer_config(

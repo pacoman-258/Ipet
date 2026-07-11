@@ -1,11 +1,12 @@
 (() => {
   function wireChatInputSection(sectionContext) {
     const { runtimeWindow, refs, controllerRegistry, graphState } = sectionContext;
-    const { chatSendEl, chatInputEl } = refs;
+    const { chatSendEl, chatInputEl, chatTokenCountEl } = refs;
     const chatInputStateController = runtimeWindow.IpetChatInputState.createChatInputStateController({
       refs: {
         chatSendEl,
         chatInputEl,
+        chatTokenCountEl,
       },
       getChatState: () => graphState.chatState,
       isAsrBusy: () => graphState.asrController.isBusy(),

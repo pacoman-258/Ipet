@@ -52,6 +52,7 @@ class FrontendChatStreamSourceTests(unittest.TestCase):
         self.assertIn("reader.read()", source)
         self.assertIn('buffer.split("\\n\\n")', source)
         self.assertIn("JSON.parse(dataText)", source)
+        self.assertIn("setChatTokenUsage(payload.usage);", source)
 
     def test_index_wires_stream_consumption_through_facade_registry(self) -> None:
         sections_source = CONTROLLER_GRAPH_APP_SECTIONS_JS.read_text(encoding="utf-8")

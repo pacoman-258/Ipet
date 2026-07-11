@@ -37,6 +37,10 @@
     brainModelStatus: $("brain-model-status"),
     brainModelList: $("brain-model-list"),
     brainModelName: $("brain-model-name"),
+    brainReasoningEffortField: $("brain-reasoning-effort-field"),
+    brainReasoningEffort: $("brain-reasoning-effort"),
+    brainStreamingEnabled: $("brain-streaming-enabled"),
+    brainWebSearchEnabled: $("brain-web-search-enabled"),
     brainApiKey: $("brain-api-key"),
     brainApiKeyClear: $("brain-api-key-clear"),
     brainPersona: $("brain-persona"),
@@ -176,6 +180,10 @@
     return formController.isGoogleAistudio(value);
   }
 
+  function isCodex(value) {
+    return formController.isCodex(value);
+  }
+
   function setActiveSection(sectionId) {
     const normalized = String(sectionId || "overview").replace(/^#/, "") || "overview";
     const title = document.querySelector(`[data-window-target="${normalized}"]`)?.dataset.title || "总览";
@@ -283,6 +291,9 @@
     if (isGoogleAistudio(provider)) {
       return "Google AI Studio";
     }
+    if (isCodex(provider)) {
+      return "Codex";
+    }
     return "OpenAI";
   }
 
@@ -295,6 +306,7 @@
     fetchJson,
     stringValue,
     isGoogleAistudio,
+    isCodex,
     getSettingsPayload: () => settingsPayload,
     renderSummary,
     readForm,

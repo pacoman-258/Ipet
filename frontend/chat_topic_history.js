@@ -259,6 +259,28 @@
     }
 
     async function createNewTopic(shouldOpen = true) {
+      if (getMemoryMode() === "temporary") {
+        const temporaryId = `temporary-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        currentTopicId = temporaryId;
+        state.chat.session_id = temporaryId;
+        currentTopicMeta = normalizeTopicRecord({
+          topic_id: temporaryId,
+          title: "临时聊天",
+          persisted: false,
+          supports_history_detail: false,
+          supports_delete: false,
+        });
+        clearPendingDeleteTopic(false);
+        replaceChatMessages([]);
+        closeOtherDrawer();
+        toggleChatHistoryDrawer(false);
+        renderTopicHistoryList();
+        updateShellButtons();
+        if (shouldOpen) {
+          openChat();
+        }
+        return currentTopicMeta;
+      }
       const backend = backendBaseUrl();
       if (!backend) {
         const fallbackId = `topic-${Date.now()}`;

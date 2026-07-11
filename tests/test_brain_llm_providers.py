@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest import mock
 
 from brain.llm import (
+    BrainLLMError,
     BrainMessage,
+    BrainModel,
     BrainProviderConfig,
+    BrainCompletion,
+    _StreamingSayTextExtractor,
+    _codex_jsonl_usage,
+    _codex_models_from_payload,
     complete_with_provider,
     list_provider_models,
+    normalize_provider,
+    run_brain_turn,
 )
 
 
@@ -60,7 +69,289 @@ class _FakeAsyncClient:
         return None
 
 
+class _FakeProcess:
+    def __init__(self, stdout: str, stderr: str = "", returncode: int = 0) -> None:
+        self.stdout = stdout.encode("utf-8")
+        self.stderr = stderr.encode("utf-8")
+        self.returncode = returncode
+        self.input = b""
+
+    async def communicate(self, input_data: bytes = b""):
+        self.input = input_data
+        return self.stdout, self.stderr
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+class _FakeAppServerPipe:
+    def __init__(self, lines: list[dict] | None = None) -> None:
+        self.lines = [f"{json.dumps(line)}\n".encode("utf-8") for line in lines or []]
+        self.writes: list[bytes] = []
+
+    async def readline(self) -> bytes:
+        return self.lines.pop(0) if self.lines else b""
+
+    async def read(self) -> bytes:
+        return b""
+
+    def write(self, value: bytes) -> None:
+        self.writes.append(value)
+
+    async def drain(self) -> None:
+        return None
+
+
+class _FakeAppServerProcess:
+    def __init__(self, lines: list[dict] | None = None) -> None:
+        self.stdin = _FakeAppServerPipe()
+        self.stdout = _FakeAppServerPipe(
+            lines or [
+                {"id": 1, "result": {}},
+                {"id": 2, "result": {"thread": {"id": "thread-test"}}},
+                {"id": 3, "result": {}},
+                {
+                    "method": "thread/tokenUsage/updated",
+                    "params": {"tokenUsage": {"last": {"inputTokens": 1200, "outputTokens": 3}}},
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "turn": {
+                            "status": "completed",
+                            "items": [{"type": "agentMessage", "text": '{"kind":"say","text":"OK"}'}],
+                        }
+                    },
+                },
+            ]
+        )
+        self.stderr = _FakeAppServerPipe()
+        self.returncode = None
+
+    def terminate(self) -> None:
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return int(self.returncode or 0)
+
+
 class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_provider_uses_lightweight_tool_free_app_server_thread(self) -> None:
+        process = _FakeAppServerProcess()
+        config = BrainProviderConfig(provider="codex", model="gpt-account")
+
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)) as spawn:
+                completion = await complete_with_provider(config, [BrainMessage(role="user", content="hi")])
+
+        self.assertEqual(completion.text, '{"kind":"say","text":"OK"}')
+        self.assertEqual(completion.usage, {"input_tokens": 1200, "output_tokens": 3, "total_tokens": 1203})
+        self.assertEqual(spawn.await_args.args[:3], ("/mock/codex", "app-server", "--stdio"))
+        requests = [json.loads(value) for chunk in process.stdin.writes for value in chunk.decode("utf-8").splitlines()]
+        thread_params = requests[1]["params"]
+        self.assertIn("text-only inference backend for Ipet", thread_params["baseInstructions"])
+        self.assertEqual(thread_params["developerInstructions"], "")
+        self.assertEqual(thread_params["config"]["web_search"], "disabled")
+        self.assertTrue(all(value is False for value in thread_params["config"]["features"].values()))
+        self.assertEqual(thread_params["config"]["tools"], {"view_image": False, "web_search": False})
+
+    async def test_codex_web_search_streams_native_search_and_browse_activity(self) -> None:
+        process = _FakeAppServerProcess(
+            [
+                {"id": 1, "result": {}},
+                {"id": 2, "result": {"webSearch": True, "imageGeneration": False, "namespaceTools": False}},
+                {"id": 3, "result": {"thread": {"id": "thread-search"}}},
+                {"id": 4, "result": {}},
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "id": "search-1",
+                            "type": "webSearch",
+                            "query": "Ipet latest",
+                            "action": {"type": "search", "query": "Ipet latest"},
+                        }
+                    },
+                },
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": {
+                            "id": "open-1",
+                            "type": "webSearch",
+                            "query": "Ipet latest",
+                            "action": {"type": "openPage", "url": "https://example.com/ipet"},
+                        }
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "turn": {
+                            "status": "completed",
+                            "items": [{"type": "agentMessage", "text": '{"kind":"say","text":"完成"}'}],
+                        }
+                    },
+                },
+            ]
+        )
+        activities: list[dict] = []
+
+        async def record_activity(activity: dict) -> None:
+            activities.append(activity)
+
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)):
+                completion = await complete_with_provider(
+                    BrainProviderConfig(provider="codex", model="gpt-account", web_search_enabled=True),
+                    [BrainMessage(role="user", content="查最新信息")],
+                    on_activity=record_activity,
+                )
+
+        requests = [json.loads(value) for chunk in process.stdin.writes for value in chunk.decode("utf-8").splitlines()]
+        self.assertEqual(requests[1]["method"], "modelProvider/capabilities/read")
+        self.assertEqual(requests[2]["params"]["config"]["web_search"], "live")
+        self.assertTrue(requests[2]["params"]["config"]["tools"]["web_search"])
+        self.assertEqual([item["text"] for item in activities], ["正在搜索：Ipet latest", "正在浏览：https://example.com/ipet"])
+        self.assertFalse(completion.web_search_unavailable)
+
+    async def test_enabled_search_on_unsupported_provider_falls_back_with_notice(self) -> None:
+        completion = BrainCompletion(text='{"kind":"say","text":"普通回答"}', provider="ollama", model="local")
+        with mock.patch("brain.llm.complete_with_provider", new=mock.AsyncMock(return_value=completion)):
+            result = await run_brain_turn(
+                {"provider": "ollama", "model_name": "local", "web_search_enabled": True},
+                user_text="请联网搜索",
+            )
+
+        self.assertTrue(result.web_search_unavailable)
+        self.assertIn("未进行联网搜索", result.text)
+        self.assertIn("普通回答", result.text)
+
+    async def test_codex_provider_uses_local_cli_account_in_read_only_ephemeral_mode(self) -> None:
+        process = _FakeProcess(
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Codex 回复"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":2,"output_tokens":3}}\n'
+        )
+        config = BrainProviderConfig(provider="codex", model="gpt-account", reasoning_effort="high")
+
+        with mock.patch("brain.llm._complete_codex_stream", new=mock.AsyncMock(side_effect=BrainLLMError("unsupported"))):
+            with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+                with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)) as spawn:
+                    completion = await complete_with_provider(
+                        config,
+                        [BrainMessage(role="system", content="persona"), BrainMessage(role="user", content="hi")],
+                    )
+
+        self.assertEqual(completion.text, "Codex 回复")
+        self.assertEqual(completion.provider, "codex")
+        self.assertEqual(completion.usage, {"input_tokens": 12, "cached_input_tokens": 2, "output_tokens": 3, "total_tokens": 15})
+        args = spawn.await_args.args
+        self.assertEqual(args[:4], ("/mock/codex", "-a", "never", "exec"))
+        for option in ("--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--json"):
+            self.assertIn(option, args)
+        model_index = args.index("--model")
+        self.assertEqual(args[model_index + 1], "gpt-account")
+        config_index = args.index("--config")
+        self.assertEqual(args[config_index + 1], 'model_reasoning_effort="high"')
+        self.assertIn('"role": "user", "content": "hi"', process.input.decode("utf-8"))
+
+    async def test_codex_provider_model_discovery_checks_local_login(self) -> None:
+        process = _FakeProcess("", stderr="Logged in using ChatGPT\n")
+        codex_models = [BrainModel(id="gpt-account", label="GPT Account（默认）", is_default=True)]
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)) as spawn:
+                with mock.patch("brain.llm._list_codex_models", new=mock.AsyncMock(return_value=codex_models)):
+                    models = await list_provider_models({"provider": "codex"})
+
+        self.assertEqual(
+            [model.to_dict() for model in models],
+            [{"id": "gpt-account", "label": "GPT Account（默认）", "is_default": True}],
+        )
+        self.assertEqual(spawn.await_args.args[:3], ("/mock/codex", "login", "status"))
+        self.assertTrue(spawn.await_args.kwargs["env"]["CODEX_HOME"].endswith("/.codex"))
+
+    async def test_codex_provider_model_discovery_rejects_failed_login_status(self) -> None:
+        process = _FakeProcess("", stderr="Not logged in", returncode=1)
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)):
+                with self.assertRaisesRegex(BrainLLMError, "Not logged in"):
+                    await list_provider_models({"provider": "codex"})
+
+    def test_codex_provider_alias_and_default_model_are_normalized(self) -> None:
+        self.assertEqual(normalize_provider("codex-cli"), "codex")
+        self.assertEqual(BrainProviderConfig.from_dict({"provider": "codex", "model_name": ""}).model, "default")
+        self.assertEqual(BrainProviderConfig.from_dict({"provider": "codex", "model_name": "gpt-5.4"}).model, "gpt-5.4")
+        self.assertEqual(
+            BrainProviderConfig.from_dict({"provider": "codex", "reasoning_effort": "XHIGH"}).reasoning_effort,
+            "xhigh",
+        )
+        self.assertTrue(BrainProviderConfig.from_dict({"provider": "codex", "streaming_enabled": True}).streaming_enabled)
+
+    def test_codex_stream_extracts_only_visible_say_text(self) -> None:
+        extractor = _StreamingSayTextExtractor()
+        chunks = ['{"kind":"say","text":"你', '好\\n世', '界"}']
+
+        self.assertEqual([extractor.feed(chunk) for chunk in chunks], ["你", "好\n世", "界"])
+        self.assertEqual(
+            _codex_jsonl_usage('{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":2}}'),
+            {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+        )
+
+    async def test_codex_stream_falls_back_before_any_delta(self) -> None:
+        config = BrainProviderConfig(provider="codex", model="gpt-account", streaming_enabled=True)
+        fallback = BrainCompletion(text="fallback", provider="codex", model="gpt-account")
+
+        with mock.patch("brain.llm._complete_codex_stream", new=mock.AsyncMock(side_effect=BrainLLMError("unsupported"))):
+            with mock.patch("brain.llm._complete_codex", new=mock.AsyncMock(return_value=fallback)) as complete:
+                result = await complete_with_provider(
+                    config,
+                    [BrainMessage(role="user", content="hi")],
+                    on_delta=mock.AsyncMock(),
+                )
+
+        self.assertEqual(result, fallback)
+        complete.assert_awaited_once()
+
+    def test_codex_model_catalog_includes_specific_models_and_reasoning_efforts(self) -> None:
+        models = _codex_models_from_payload(
+            [
+                {
+                    "id": "catalog-id",
+                    "model": "gpt-account",
+                    "displayName": "GPT Account",
+                    "isDefault": True,
+                    "hidden": False,
+                    "defaultReasoningEffort": "low",
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "low", "description": "fast"},
+                        {"reasoningEffort": "ultra", "description": "delegates"},
+                    ],
+                    "inputModalities": ["text", "image"],
+                },
+                {"model": "hidden-model", "hidden": True},
+            ]
+        )
+
+        self.assertEqual(
+            [model.to_dict() for model in models],
+            [
+                {
+                    "id": "gpt-account",
+                    "label": "GPT Account（默认）",
+                    "reasoning_efforts": [
+                        {"value": "low", "description": "fast"},
+                        {"value": "ultra", "description": "delegates"},
+                    ],
+                    "default_reasoning_effort": "low",
+                    "is_default": True,
+                    "input_modalities": ["text", "image"],
+                }
+            ],
+        )
+
     async def test_openai_compatible_uses_chat_completions_shape(self) -> None:
         client = _RecordingClient({"choices": [{"message": {"content": "你好，人类。"}}]})
         config = BrainProviderConfig(

@@ -44,6 +44,7 @@ class SettingsModelPickerSourceTests(unittest.TestCase):
             "fetchJson",
             "stringValue",
             "isGoogleAistudio",
+            "isCodex",
             "getSettingsPayload",
             "renderSummary",
             "readForm",
@@ -77,7 +78,14 @@ class SettingsModelPickerSourceTests(unittest.TestCase):
         self.assertIn("payload.api_key = els.brainApiKey.value", self.model_picker_js)
         self.assertIn('scope: "observe"', self.model_picker_js)
         self.assertIn("payload.api_key = els.opsObserveApiKey.value", self.model_picker_js)
-        self.assertEqual(self.model_picker_js.count("!endpoint && !isGoogleAistudio(provider)"), 2)
+        self.assertIn("!endpoint && !isGoogleAistudio(provider) && !isCodex(provider)", self.model_picker_js)
+        self.assertGreaterEqual(
+            self.model_picker_js.count("!endpoint && !isGoogleAistudio(provider) && !isCodex(provider)"),
+            2,
+        )
+        self.assertIn("default_reasoning_effort", self.model_picker_js)
+        self.assertIn("reasoning_efforts", self.model_picker_js)
+        self.assertIn("renderBrainReasoningOptions", self.model_picker_js)
 
     def test_backend_serves_model_picker_asset_with_no_store_cache(self) -> None:
         self.assertIn('@router.get("/settings_model_picker.js")', self.backend_settings_routes)

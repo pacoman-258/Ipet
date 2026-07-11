@@ -105,7 +105,10 @@
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-wrap">
-      <div id="chat-asr-status">&#25353;&#20303; Alt &#35828;&#35805;</div>
+      <div id="chat-input-meta">
+        <div id="chat-asr-status">&#25353;&#20303; Alt &#35828;&#35805;</div>
+        <div id="chat-token-count" title="完成回复后显示模型提供方返回的实际 token 用量" aria-live="polite">Token --</div>
+      </div>
       <textarea id="chat-input" placeholder="输入消息，Enter发送，Shift+Enter换行"></textarea>
       <button id="chat-send">发送</button>
       <button id="chat-stop">停止语音</button>

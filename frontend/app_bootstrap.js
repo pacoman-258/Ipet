@@ -42,12 +42,7 @@
       typeof deps.toggleChatSkillsDrawer === "function" ? deps.toggleChatSkillsDrawer : () => {};
     const getCurrentMemoryMode =
       typeof deps.getCurrentMemoryMode === "function" ? deps.getCurrentMemoryMode : () => "persistent";
-    const clearPendingDeleteTopic =
-      typeof deps.clearPendingDeleteTopic === "function" ? deps.clearPendingDeleteTopic : () => {};
-    const replaceChatMessages =
-      typeof deps.replaceChatMessages === "function" ? deps.replaceChatMessages : () => {};
-    const renderTopicHistoryList =
-      typeof deps.renderTopicHistoryList === "function" ? deps.renderTopicHistoryList : () => {};
+    const getChatState = typeof deps.getChatState === "function" ? deps.getChatState : () => "idle";
     const updateShellButtons = typeof deps.updateShellButtons === "function" ? deps.updateShellButtons : () => {};
     const createNewTopic = typeof deps.createNewTopic === "function" ? deps.createNewTopic : async () => {};
     const setChatMode = typeof deps.setChatMode === "function" ? deps.setChatMode : () => {};
@@ -83,6 +78,18 @@
     const refreshStatus = typeof deps.refreshStatus === "function" ? deps.refreshStatus : () => {};
 
     let pendingConfig = null;
+
+    function canChangeConversation() {
+      return ["idle", "awaiting_followup_input"].includes(getChatState());
+    }
+
+    function guardConversationChange() {
+      if (canChangeConversation()) {
+        return true;
+      }
+      showError("当前回复尚未结束，请稍后再切换会话。");
+      return false;
+    }
 
     function installPixiRenderer() {
       if (!runtimeWindow.PIXI) {
@@ -138,14 +145,7 @@
         toggleChatHistoryDrawer();
       });
       navChatButtonEl.addEventListener("click", async () => {
-        if (getCurrentMemoryMode() === "temporary") {
-          clearPendingDeleteTopic(false);
-          replaceChatMessages([]);
-          toggleChatSkillsDrawer(false);
-          toggleChatHistoryDrawer(false);
-          openChat();
-          renderTopicHistoryList();
-          updateShellButtons();
+        if (!guardConversationChange()) {
           return;
         }
         await createNewTopic(true);
@@ -160,7 +160,16 @@
         button.addEventListener("click", () => setChatMode(button.dataset.chatMode));
       }
       for (const button of memoryModeButtons) {
-        button.addEventListener("click", () => setMemoryMode(button.dataset.memoryMode));
+        button.addEventListener("click", async () => {
+          if (!guardConversationChange()) {
+            return;
+          }
+          const previousMode = getCurrentMemoryMode();
+          setMemoryMode(button.dataset.memoryMode);
+          if (getCurrentMemoryMode() !== previousMode) {
+            await createNewTopic(false);
+          }
+        });
       }
       chatCloseEl.addEventListener("click", () => closeChat());
       chatSkillsToggleEl.addEventListener("click", () => toggleChatSkillsDrawer());
