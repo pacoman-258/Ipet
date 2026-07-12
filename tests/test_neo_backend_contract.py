@@ -551,7 +551,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 382, "y": 930, "label": "Dock Chrome 图标"},
+                {"x": 382, "y": 930, "label": "Dock Chrome 图标", "target_app": "Finder"},
                 goal={"objective": "打开 Dock 里的 Chrome", "status": "handoff_review", "next": "human_ops_review"},
             ),
             provider="openai_compatible",
@@ -622,7 +622,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 382, "y": 930, "label": "Dock Chrome 图标"},
+                {"x": 382, "y": 930, "label": "Dock Chrome 图标", "target_app": "Finder"},
                 goal={"objective": "打开 Dock 里的 Chrome", "status": "handoff_review", "next": "human_ops_review"},
             ),
             provider="openai_compatible",
@@ -1209,6 +1209,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     "x": 735,
                     "y": 954,
                     "label": "屏幕底边（显示隐藏 Dock）",
+                    "target_app": "Finder",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -1292,7 +1293,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Reveal Dock",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 735, "y": 954, "label": "屏幕底边（显示隐藏 Dock）", "continue_after_approval": True},
+                {
+                    "x": 735,
+                    "y": 954,
+                    "label": "屏幕底边（显示隐藏 Dock）",
+                    "target_app": "Finder",
+                    "continue_after_approval": True,
+                },
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "handoff_review",
@@ -1873,7 +1880,10 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         followup = SimpleNamespace(
             text="Propose click",
-            decision=BrainDecision.propose_act("click", {"x": 452, "y": 1187, "label": "Dock 系统设置"}),
+            decision=BrainDecision.propose_act(
+                "click",
+                {"x": 452, "y": 1187, "label": "Dock 系统设置", "target_app": "Finder"},
+            ),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2020,7 +2030,10 @@ class NeoBackendContractTests(unittest.TestCase):
         }
         followup = SimpleNamespace(
             text="Propose click",
-            decision=BrainDecision.propose_act("click", {"x": 452, "y": 1187, "label": "Dock 系统设置"}),
+            decision=BrainDecision.propose_act(
+                "click",
+                {"x": 452, "y": 1187, "label": "Dock 系统设置", "target_app": "Finder"},
+            ),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2065,7 +2078,10 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Propose click",
-            decision=BrainDecision.propose_act("click", {"x": 120, "y": 240, "label": "发送按钮"}),
+            decision=BrainDecision.propose_act(
+                "click",
+                {"x": 120, "y": 240, "label": "发送按钮", "target_app": "WeChat"},
+            ),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2107,14 +2123,17 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose typing",
             decision=BrainDecision.propose_act(
                 "type_text",
-                {"text": "收到，我马上处理。", "label": "微信聊天输入框"},
+                {"text": "收到，我马上处理。", "label": "微信聊天输入框", "target_app": "WeChat"},
             ),
             provider="openai_compatible",
             model="neo-model",
         )
         enter_completion = SimpleNamespace(
             text="Propose enter",
-            decision=BrainDecision.propose_act("key_press", {"key": "enter", "label": "发送消息"}),
+            decision=BrainDecision.propose_act(
+                "key_press",
+                {"key": "enter", "label": "发送消息", "target_app": "WeChat"},
+            ),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2151,15 +2170,15 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         unsupported = SimpleNamespace(
-            text="Launch WeChat directly",
+            text="Launch NetEase Music directly",
             decision=BrainDecision.propose_act(
                 "launch_app",
-                {"app": "微信", "label": "微信"},
+                {"app": "网易云音乐", "label": "网易云音乐"},
                 goal={
-                    "objective": "打开微信并根据张三聊天信息回复张三",
+                    "objective": "打开网易云音乐",
                     "status": "handoff_review",
                     "stage": "launch_app",
-                    "next": "locate_contact",
+                    "next": "done",
                 },
             ),
             provider="openai_compatible",
@@ -2169,7 +2188,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信并根据张三聊天信息回复张三", "session_id": "neo-unsupported-action-correction"},
+                json={"text": "打开网易云音乐", "session_id": "neo-native-app-name-normalization"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -2180,6 +2199,9 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(approvals[0]["action_type"], "launch_app")
         self.assertIsNone(approvals[0]["preview"])
         self.assertIn("打开应用", approvals[0]["tools"][0]["summary"])
+        proposal = backend_app.HUMAN_OPS_PENDING_PROPOSALS[approvals[0]["proposal_id"]]["proposal"]
+        self.assertEqual(proposal.payload["arguments"]["app"], "NeteaseMusic")
+        self.assertEqual(proposal.payload["arguments"]["label"], "网易云音乐")
 
     def test_chat_stream_corrects_click_without_complete_coordinates_before_review(self) -> None:
         backend_app.CONFIG_PATH.write_text(
@@ -2198,7 +2220,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click WeChat without coordinates",
             decision=BrainDecision.propose_act(
                 "click",
-                {"label": "Dock 微信图标"},
+                {"label": "Dock 微信图标", "target_app": "Finder"},
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2213,7 +2235,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click WeChat in Dock",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 520, "y": 930, "label": "Dock 微信图标"},
+                {"x": 520, "y": 930, "label": "Dock 微信图标", "target_app": "Finder"},
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2260,7 +2282,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose typing",
             decision=BrainDecision.propose_act(
                 "type_text",
-                {"text": "收到，我马上处理。", "label": "微信聊天输入框"},
+                {"text": "收到，我马上处理。", "label": "微信聊天输入框", "target_app": "WeChat"},
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2313,6 +2335,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "text": draft_text,
                     "label": "微信聊天输入框",
+                    "target_app": "WeChat",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -2329,7 +2352,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose enter",
             decision=BrainDecision.propose_act(
                 "key_press",
-                {"key": "enter", "label": "发送微信回复"},
+                {"key": "enter", "label": "发送微信回复", "target_app": "WeChat"},
                 goal={
                     "objective": "根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2416,6 +2439,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "key": "enter",
                     "label": "发送微信回复",
+                    "target_app": "WeChat",
                     "expected_text": sent_text,
                     "continue_after_approval": True,
                 },
@@ -2514,6 +2538,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "key": "enter",
                     "label": "发送微信回复",
+                    "target_app": "WeChat",
                     "expected_text": sent_text,
                 },
                 goal={
@@ -3315,7 +3340,10 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Propose click",
-            decision=BrainDecision.propose_act("click", {"x": 12, "y": 34, "label": "Codex"}),
+            decision=BrainDecision.propose_act(
+                "click",
+                {"x": 12, "y": 34, "label": "Codex", "target_app": "Codex"},
+            ),
             provider="openai_compatible",
             model="neo-model",
         )

@@ -229,6 +229,103 @@ def execute_human_ops_key_press(
     return {"pressed": True, "key": normalized_key, "label": label, "method": "system_events"}
 
 
+def frontmost_macos_application(*, runner=subprocess.run) -> str:
+    script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+    result = runner(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=1.0,
+        check=False,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return ""
+    return str(getattr(result, "stdout", "") or "").strip()
+
+
+def focus_macos_application(
+    payload: dict | None,
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+    sleeper=time.sleep,
+    frontmost_provider=None,
+    timeout_sec: float = 4.0,
+) -> dict[str, object]:
+    if not _is_macos(platform_name):
+        raise RuntimeError("Target application focus is currently implemented through macOS Launch Services.")
+    data = payload if isinstance(payload, dict) else {}
+    target_app = str(data.get("target_app") or data.get("app") or data.get("name") or "").strip()
+    if not target_app:
+        raise RuntimeError("Human Ops action requires target_app before changing application focus.")
+    result = runner(
+        ["/usr/bin/open", "-a", target_app],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "open failed").strip()
+        raise RuntimeError(f"macOS could not focus {target_app}: {detail}")
+    get_frontmost = frontmost_provider or (lambda: frontmost_macos_application(runner=runner))
+    deadline = time.monotonic() + max(0.2, float(timeout_sec))
+    target_key = _application_name_key(target_app)
+    last_frontmost = ""
+    while time.monotonic() < deadline:
+        last_frontmost = str(get_frontmost() or "").strip()
+        frontmost_key = _application_name_key(last_frontmost)
+        if target_key and frontmost_key and (target_key == frontmost_key or target_key in frontmost_key or frontmost_key in target_key):
+            return {
+                "focused": True,
+                "target_app": target_app,
+                "frontmost_app": last_frontmost,
+                "method": "launch_services",
+            }
+        sleeper(0.08)
+    raise RuntimeError(
+        f"macOS foreground verification failed: expected {target_app}, got {last_frontmost or 'unknown'}"
+    )
+
+
+def execute_human_ops_native_approval(
+    payload: dict | None,
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> dict[str, object]:
+    if not _is_macos(platform_name):
+        raise RuntimeError("Native Human Ops approval is currently implemented through macOS dialogs.")
+    data = payload if isinstance(payload, dict) else {}
+    title = str(data.get("title") or "Ipet 需要你的批准").strip()[:120]
+    message = str(data.get("message") or data.get("summary") or "是否批准这一步操作？").strip()[:800]
+    timeout_sec = max(30, min(600, _screen_coordinate(data.get("timeout_sec"), fallback=300)))
+    script = (
+        f"display dialog {_applescript_string(message)} "
+        f"with title {_applescript_string(title)} "
+        f'buttons {{"拒绝", "批准"}} default button "批准" with icon caution giving up after {timeout_sec}'
+    )
+    result = runner(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec + 5,
+        check=False,
+    )
+    output = str(getattr(result, "stdout", "") or "").strip()
+    error = str(getattr(result, "stderr", "") or "").strip()
+    if getattr(result, "returncode", 1) != 0:
+        if "-128" in error or "canceled" in error.lower() or "cancelled" in error.lower():
+            return {"approved": False, "reason": "cancelled", "method": "macos_dialog"}
+        raise RuntimeError(error or output or "macOS approval dialog failed")
+    approved = "button returned:批准" in output and "gave up:true" not in output.lower()
+    return {
+        "approved": approved,
+        "reason": "approved" if approved else "rejected_or_timed_out",
+        "method": "macos_dialog",
+    }
+
+
 def process_pending_qt_events(*, qapplication=None) -> None:
     if qapplication is None:
         return

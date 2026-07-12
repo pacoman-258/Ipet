@@ -131,6 +131,13 @@ async def _perform_human_ops_action(proposal: ReviewableProposal) -> dict[str, A
     )
 
 
+async def _request_native_human_ops_approval(proposal: ReviewableProposal) -> dict[str, Any]:
+    return await _app_action_adapter_helpers.request_native_human_ops_approval(
+        proposal,
+        deps=_app_action_adapter_deps(send_desktop_command=_send_desktop_command),
+    )
+
+
 def _route_dependency_context() -> _app_route_dependency_helpers.AppRouteDependencyContext:
     return _app_route_context_helpers.create_route_dependency_context(
         app=app,

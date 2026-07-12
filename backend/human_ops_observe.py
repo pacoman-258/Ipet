@@ -36,9 +36,17 @@ async def perform_human_ops_observe(
             "unknowns": ["observe_screen disabled"],
         }
     target = deps.observe_target_hint_from_decision(decision, "screen")
+    decision_payload = decision.payload if isinstance(decision.payload, dict) else {}
+    target_app = str(decision_payload.get("target_app") or "").strip()
     result = await deps.send_desktop_command(
         "active_vision_capture",
-        {"mode": "desktop_survey", "target_hint": target, "target": target},
+        {
+            "mode": "desktop_survey",
+            "target_hint": target,
+            "target": target,
+            "target_app": target_app,
+            "capture_scope": "application" if target_app else "desktop",
+        },
         timeout_sec=14,
     )
     frame = result.get("frame") if isinstance(result.get("frame"), dict) else {}

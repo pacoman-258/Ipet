@@ -139,17 +139,17 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
         click = ReviewableProposal.act(
             action_type="click",
             summary="Ipet 想点击：确认",
-            payload={"x": "10.6", "y": "20.2", "target": "确认"},
+            payload={"target_app": "WeChat", "x": "10.6", "y": "20.2", "target": "确认"},
         )
         typed = ReviewableProposal.act(
             action_type="type_text",
             summary="Ipet 想输入：你好",
-            payload={"text": "你好", "target": "聊天框"},
+            payload={"target_app": "WeChat", "text": "你好", "target": "聊天框"},
         )
         pressed = ReviewableProposal.act(
             action_type="key_press",
             summary="Ipet 想按下回车：发送",
-            payload={"key": "Enter", "target": "发送"},
+            payload={"target_app": "WeChat", "key": "Enter", "target": "发送"},
         )
         launched = ReviewableProposal.act(
             action_type="launch_app",
@@ -165,16 +165,16 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             calls,
             [
-                ("human_ops_click", {"x": 11, "y": 20, "label": "确认"}, 5),
-                ("human_ops_type_text", {"text": "你好", "label": "聊天框"}, 5),
-                ("human_ops_launch_app", {"app": "WeChat", "label": "WeChat"}, 8),
-                ("human_ops_key_press", {"key": "enter", "label": "发送"}, 5),
+                ("human_ops_click", {"target_app": "WeChat", "x": 11, "y": 20, "label": "确认"}, 5),
+                ("human_ops_type_text", {"target_app": "WeChat", "text": "你好", "label": "聊天框"}, 8),
+                ("human_ops_launch_app", {"app": "WeChat", "target_app": "WeChat", "label": "WeChat"}, 10),
+                ("human_ops_key_press", {"target_app": "WeChat", "key": "enter", "label": "发送"}, 8),
             ],
         )
-        self.assertEqual(click_result, {"clicked": True, "x": 11, "y": 20, "label": "确认", "source": "desktop"})
-        self.assertEqual(type_result, {"typed": True, "text": "你好", "label": "聊天框", "source": "desktop"})
+        self.assertEqual(click_result, {"clicked": True, "target_app": "WeChat", "x": 11, "y": 20, "label": "确认", "source": "desktop"})
+        self.assertEqual(type_result, {"typed": True, "target_app": "WeChat", "text": "你好", "label": "聊天框", "source": "desktop"})
         self.assertEqual(launch_result, {"launched": True, "app": "WeChat", "source": "desktop"})
-        self.assertEqual(key_result, {"pressed": True, "key": "enter", "label": "发送", "source": "desktop"})
+        self.assertEqual(key_result, {"pressed": True, "target_app": "WeChat", "key": "enter", "label": "发送", "source": "desktop"})
 
     async def test_backend_app_no_longer_inlines_desktop_response_polling(self) -> None:
         source = (ROOT_DIR / "backend" / "app.py").read_text(encoding="utf-8")

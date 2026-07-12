@@ -68,6 +68,7 @@ class AppRouteDependencyContext:
     post_approval_observe_prompt: Callable[[str, ReviewableProposal], str] | None = None
     human_ops_continuation_prompt: Callable[..., str] | None = None
     with_inherited_enter_expected_text: Callable[..., BrainDecision] | None = None
+    request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
@@ -184,4 +185,5 @@ def create_human_ops_decision_route_deps(
         computer_use_context_text=context.computer_use_context_text or (lambda observation: ""),
         goal_status=context.goal_status or (lambda decision, *, operation_request: ""),
         goal_is_terminal=context.goal_is_terminal or (lambda status: False),
+        request_native_approval=context.request_native_approval,
     )

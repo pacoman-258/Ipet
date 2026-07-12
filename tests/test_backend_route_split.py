@@ -9,6 +9,7 @@ from fastapi import Response
 from fastapi.testclient import TestClient
 
 import backend.app as backend_app
+from human_ops.approvals import ReviewableProposal
 from backend import (
     asr_disabled_routes,
     audio_routes,
@@ -201,6 +202,38 @@ class BackendRouteSplitTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json(), {"detail": "missing proposal"})
+
+    def test_native_human_ops_decision_uses_system_prompt_result(self) -> None:
+        proposal_id = "native-route-proposal"
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：登录",
+            payload={"target_app": "Google Chrome", "x": 10, "y": 20, "label": "登录"},
+        )
+        backend_app.HUMAN_OPS_PENDING_PROPOSALS[proposal_id] = {
+            "proposal": proposal,
+            "session_id": "native-route",
+            "user_text": "登录 YouTube",
+            "status": "pending",
+        }
+        try:
+            with mock.patch.object(
+                backend_app,
+                "_request_native_human_ops_approval",
+                new=mock.AsyncMock(return_value={"approved": False, "method": "macos_dialog"}),
+            ) as native_prompt:
+                with self.client.stream(
+                    "POST",
+                    f"/api/human-ops/proposals/{proposal_id}/native-decision",
+                    json={},
+                ) as resp:
+                    body = resp.read().decode("utf-8")
+        finally:
+            backend_app.HUMAN_OPS_PENDING_PROPOSALS.pop(proposal_id, None)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('"approved": false', body)
+        native_prompt.assert_awaited_once_with(proposal)
 
     def test_final_split_routes_resolve_app_dependencies_per_request(self) -> None:
         with (

@@ -453,7 +453,9 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertNotIn("Math.max(0, Math.min(window.innerWidth, viewportX))", source)
         self.assertNotIn("Math.max(0, Math.min(window.innerHeight, viewportY))", source)
         self.assertIn('payload.preview?.marker === "red_dot"', source)
-        self.assertIn('/api/human-ops/proposals/${encodeURIComponent(turnId)}/decision', source)
+        self.assertIn('const endpoint = nativeApproval ? "native-decision" : "decision";', source)
+        self.assertIn('continueApproval(turnId, false, "", { native: true })', source)
+        self.assertNotIn('approveBtn.textContent = "批准"', source)
         self.assertNotIn('fetch(`${backend}/api/chat/approval`', source)
 
     def test_index_history_assistant_messages_render_without_pet_bubbles(self) -> None:

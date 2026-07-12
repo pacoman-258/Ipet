@@ -37,6 +37,7 @@ class HumanOpsApprovalFlowDependencies:
     computer_use_context_text: Callable[[dict[str, Any] | None], str]
     goal_status: Callable[..., str]
     goal_is_terminal: Callable[[str], bool]
+    request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
 
 
 def stream_human_ops_proposal_decision(
@@ -71,7 +72,7 @@ def stream_human_ops_proposal_decision(
         if not approved:
             record["status"] = "rejected"
             user_text = str(decision_payload.get("user_text") or "").strip()
-            final_text = "已拒绝这次点击。" + (f" 调整说明：{user_text}" if user_text else "")
+            final_text = "已拒绝这次操作。" + (f" 调整说明：{user_text}" if user_text else "")
             yield deps.sse("display_segment", {"text": final_text})
             yield deps.sse(
                 "done",
@@ -139,10 +140,23 @@ def stream_human_ops_proposal_decision(
                 },
             )
             try:
+                proposal_args = (
+                    proposal.payload.get("arguments")
+                    if isinstance(proposal.payload.get("arguments"), dict)
+                    else {}
+                )
+                target_app = str(
+                    proposal_args.get("target_app")
+                    or (proposal_args.get("app") if action_type == "launch_app" else "")
+                    or execution.get("target_app")
+                    or execution.get("app")
+                    or ""
+                ).strip()
                 observation = await deps.perform_human_ops_observe(
                     BrainDecision.observe(
                         "screen",
                         observe_prompt=verification_task,
+                        target_app=target_app,
                     ),
                     human_ops_config,
                 )
@@ -170,6 +184,11 @@ def stream_human_ops_proposal_decision(
                     continuation_text = str(getattr(completion, "text", None) or next_decision.summary).strip()
                     next_kind = deps.decision_kind(next_decision)
                     if next_kind == DecisionKind.PROPOSE_ACT:
+                        next_decision = deps.with_inherited_enter_expected_text(
+                            next_decision,
+                            previous_proposal=proposal,
+                            execution=execution,
+                        )
                         supported_action, unsupported_action = deps.simple_human_action_support(next_decision)
                         if not supported_action:
                             if continuation_budget <= 0:
@@ -193,11 +212,6 @@ def stream_human_ops_proposal_decision(
                                 remaining_budget=continuation_budget,
                             )
                             continue
-                        next_decision = deps.with_inherited_enter_expected_text(
-                            next_decision,
-                            previous_proposal=proposal,
-                            execution=execution,
-                        )
                         next_proposal_id, next_proposal = deps.create_human_ops_act_proposal(
                             next_decision,
                             session_id=session_id,

@@ -81,7 +81,11 @@ async def perform_human_ops_click(
     if proposal.proposal_type != "act" or str(proposal.payload.get("action_type") or "") != "click":
         raise RuntimeError("unsupported human ops proposal")
     args = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
+    target_app = str(args.get("target_app") or "").strip()
+    if not target_app:
+        raise RuntimeError("Human Ops click requires target_app.")
     payload = {
+        "target_app": target_app,
         "x": _coerce_int(args.get("x")),
         "y": _coerce_int(args.get("y")),
         "label": str(args.get("label") or args.get("target") or "目标位置").strip() or "目标位置",
@@ -102,19 +106,37 @@ async def perform_human_ops_action(
     if action_type == "click":
         return await perform_human_ops_click(proposal, send_command=send_command)
     if action_type == "type_text":
+        target_app = str(args.get("target_app") or "").strip()
+        if not target_app:
+            raise RuntimeError("Human Ops text input requires target_app.")
         text = str(args.get("text") or "")
         label = str(args.get("label") or args.get("target") or "输入位置").strip() or "输入位置"
-        result = await send_command("human_ops_type_text", {"text": text, "label": label}, timeout_sec=5)
-        return {"typed": True, "text": text, "label": label, **result}
+        result = await send_command(
+            "human_ops_type_text",
+            {"target_app": target_app, "text": text, "label": label},
+            timeout_sec=8,
+        )
+        return {"typed": True, "target_app": target_app, "text": text, "label": label, **result}
     if action_type == "launch_app":
         app_name = str(args.get("app") or args.get("name") or args.get("label") or "").strip()
         if not app_name:
             raise RuntimeError("Human Ops app launch requires an application name.")
-        result = await send_command("human_ops_launch_app", {"app": app_name, "label": app_name}, timeout_sec=8)
+        result = await send_command(
+            "human_ops_launch_app",
+            {"app": app_name, "target_app": app_name, "label": app_name},
+            timeout_sec=10,
+        )
         return {"launched": True, "app": app_name, **result}
     if action_type == "key_press":
+        target_app = str(args.get("target_app") or "").strip()
+        if not target_app:
+            raise RuntimeError("Human Ops key press requires target_app.")
         key = str(args.get("key") or "enter").strip().lower() or "enter"
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"
-        result = await send_command("human_ops_key_press", {"key": key, "label": label}, timeout_sec=5)
-        return {"pressed": True, "key": key, "label": label, **result}
+        result = await send_command(
+            "human_ops_key_press",
+            {"target_app": target_app, "key": key, "label": label},
+            timeout_sec=8,
+        )
+        return {"pressed": True, "target_app": target_app, "key": key, "label": label, **result}
     raise RuntimeError(f"unsupported human ops action: {action_type}")

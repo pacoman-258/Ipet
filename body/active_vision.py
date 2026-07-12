@@ -630,6 +630,8 @@ def capture_active_vision_frame_payload(
         mode = ACTIVE_VISION_SURVEY_MODE
     target_id = _clean_vision_text(payload.get("target_id"), max_length=120)
     target_hint = _clean_vision_text(payload.get("target_hint"), max_length=80)
+    target_app = _clean_vision_text(payload.get("target_app"), max_length=120)
+    capture_scope = "application" if target_app else "desktop"
     requested_actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
     if mode == ACTIVE_VISION_FOCUS_MODE and not requested_actions:
         requested_actions = [ACTIVE_VISION_FOCUS_MODE]
@@ -664,6 +666,8 @@ def capture_active_vision_frame_payload(
         "mode": mode,
         "target_id": target_id or (ACTIVE_VISION_SURVEY_MODE if mode == ACTIVE_VISION_SURVEY_MODE else ""),
         "target_hint": target_hint,
+        "target_app": target_app,
+        "capture_scope": capture_scope,
         "click_policy": ACTIVE_VISION_CLICK_POLICY,
         "desktop_targets": list(desktop_targets or [])[:12],
         "target_candidates": list(target_candidates or [])[:12],
@@ -680,7 +684,8 @@ def capture_active_vision_frame_payload(
         "detail_frames_count": 0,
     }
     try:
-        if was_visible and hasattr(window, "hide"):
+        hidden_for_desktop_capture = capture_scope == "desktop" and was_visible and hasattr(window, "hide")
+        if hidden_for_desktop_capture:
             window.hide()
         if mode == ACTIVE_VISION_FOCUS_MODE:
             interaction_trace = interaction_runner(
@@ -745,13 +750,8 @@ def capture_active_vision_frame_payload(
         trace["status"] = "error"
         raise
     finally:
-        if was_visible and hasattr(window, "show"):
+        if capture_scope == "desktop" and was_visible and hasattr(window, "show"):
             try:
                 window.show()
             except Exception:
                 pass
-            if hasattr(window, "raise_"):
-                try:
-                    window.raise_()
-                except Exception:
-                    pass

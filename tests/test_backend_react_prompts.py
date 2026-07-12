@@ -199,23 +199,23 @@ class BackendReactPromptsTests(unittest.TestCase):
         react_prompts = self._react_prompts()
 
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"x": "12.5", "y": 34})),
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"target_app": "Chrome", "x": "12.5", "y": 34})),
             (True, ""),
         )
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"x": 12})),
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"target_app": "Chrome", "x": 12})),
             (False, "click missing complete x/y"),
         )
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"key": "Enter"})),
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"target_app": "Chrome", "key": "Enter"})),
             (True, ""),
         )
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"key": "tab"})),
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"target_app": "Chrome", "key": "tab"})),
             (False, "key_press tab"),
         )
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("type_text", {"text": "hi"})),
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("type_text", {"target_app": "Chrome", "text": "hi"})),
             (True, ""),
         )
         self.assertEqual(
@@ -234,6 +234,19 @@ class BackendReactPromptsTests(unittest.TestCase):
         self.assertEqual(decision.payload["action_type"], "launch_app")
         self.assertEqual(decision.payload["arguments"]["app"], "WeChat")
         self.assertFalse(decision.payload["arguments"]["continue_after_approval"])
+
+    def test_production_coercion_normalizes_model_launch_app_name(self) -> None:
+        model_decision = BrainDecision.propose_act(
+            "launch_app",
+            {"app": "网易云音乐", "label": "网易云音乐"},
+            goal={"objective": "打开网易云音乐", "status": "handoff_review"},
+        )
+
+        decision = backend_app._coerce_decision_for_human_ops("打开网易云音乐", model_decision)
+
+        self.assertEqual(decision.payload["arguments"]["app"], "NeteaseMusic")
+        self.assertEqual(decision.payload["arguments"]["label"], "网易云音乐")
+        self.assertEqual(decision.payload["goal"], model_decision.payload["goal"])
 
 
 if __name__ == "__main__":

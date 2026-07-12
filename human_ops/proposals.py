@@ -29,19 +29,21 @@ def _default_intent_predicate(_text: str) -> bool:
 def proposal_tool_label(proposal: ReviewableProposal) -> str:
     action_type = str(proposal.payload.get("action_type") or "").strip()
     args = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
+    target_app = str(args.get("target_app") or "").strip()
+    target_suffix = f" · {target_app}" if target_app else ""
     if action_type == "click":
         label = str(args.get("label") or args.get("target") or "目标位置").strip() or "目标位置"
-        return f"点击 {label} ({_coerce_int(args.get('x'))}, {_coerce_int(args.get('y'))})"
+        return f"点击 {label} ({_coerce_int(args.get('x'))}, {_coerce_int(args.get('y'))}){target_suffix}"
     if action_type == "type_text":
         label = str(args.get("label") or args.get("target") or "输入位置").strip() or "输入位置"
         text = str(args.get("text") or "").strip()
         preview = text[:24] + ("..." if len(text) > 24 else "")
-        return f"输入到 {label}: {preview}"
+        return f"输入到 {label}: {preview}{target_suffix}"
     if action_type == "key_press":
         key = str(args.get("key") or "").strip().lower() or "enter"
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"
         key_label = "回车" if key in {"enter", "return"} else key
-        return f"按下{key_label}（{label}）"
+        return f"按下{key_label}（{label}）{target_suffix}"
     if action_type == "launch_app":
         app_name = str(args.get("app") or args.get("name") or args.get("label") or "应用").strip() or "应用"
         return f"打开应用 {app_name}"
@@ -175,22 +177,44 @@ def with_inherited_enter_expected_text(
         return decision
     payload = decision.payload if isinstance(decision.payload, dict) else {}
     action_type = str(payload.get("action_type") or "").strip()
-    if action_type != "key_press":
-        return decision
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    next_args = dict(arguments)
+    previous_args = proposal_arguments(previous_proposal)
+    if action_type in {"click", "type_text", "key_press"} and not str(next_args.get("target_app") or "").strip():
+        inherited_target_app = str(
+            execution.get("target_app")
+            or execution.get("app")
+            or previous_args.get("target_app")
+            or previous_args.get("app")
+            or ""
+        ).strip()
+        if inherited_target_app:
+            next_args["target_app"] = inherited_target_app
+    if action_type != "key_press":
+        if next_args == arguments:
+            return decision
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     key = str(arguments.get("key") or "enter").strip().lower() or "enter"
     if key not in {"enter", "return"}:
         return decision
-    if str(arguments.get("expected_text") or "").strip():
-        return decision
+    if str(next_args.get("expected_text") or "").strip():
+        if next_args == arguments:
+            return decision
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     previous_action_type = str(previous_proposal.payload.get("action_type") or "").strip()
     if previous_action_type != "type_text":
-        return decision
-    previous_args = proposal_arguments(previous_proposal)
+        if next_args == arguments:
+            return decision
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     expected_text = str(execution.get("text") or previous_args.get("text") or "").strip()
     if not expected_text:
-        return decision
-    next_args = dict(arguments)
+        if next_args == arguments:
+            return decision
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     next_args["expected_text"] = expected_text
     goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
     return BrainDecision.propose_act(action_type, next_args, goal=goal)

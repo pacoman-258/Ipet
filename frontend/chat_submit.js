@@ -109,7 +109,7 @@
       };
     }
 
-    async function continueApproval(turnId, approved, userText = "") {
+    async function continueApproval(turnId, approved, userText = "", options = {}) {
       const backend = backendBaseUrl();
       if (!backend) {
         appendMessage("error", "后端地址未配置");
@@ -120,12 +120,16 @@
       beginSpeechStream();
       setReceivedStructuredSegment(false);
       const turnKey = String(turnId || "").trim();
+      const nativeApproval = options?.native === true;
       const thoughtSessionId = chatWorklogController.resolveApprovalThoughtSessionId(turnKey);
       try {
-        const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/decision`, {
+        const endpoint = nativeApproval ? "native-decision" : "decision";
+        const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
+          body: nativeApproval
+            ? JSON.stringify({})
+            : JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
         });
         removeApprovalBubble(turnId);
         const result = await consumeChatStream(resp, { thoughtSessionId });
@@ -137,6 +141,10 @@
         chatWorklogController.deleteApprovalThoughtSessionId(turnKey);
         if (!result.awaitingApproval) {
           finishSpeechIfIdle();
+        }
+        if (nativeApproval && result.approved === false && chatInputEl && typeof chatInputEl.focus === "function") {
+          setChatState("idle");
+          chatInputEl.focus();
         }
       } catch (err) {
         chatWorklogController.deleteApprovalThoughtSessionId(turnKey);

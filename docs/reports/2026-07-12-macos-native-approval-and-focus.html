@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>macOS 原生审批与目标窗口焦点闭环</title>
+  <style>
+    body { max-width: 940px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 15px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #0f172a; }
+    section { margin: 24px 0; padding: 18px 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    code { padding: 2px 5px; border-radius: 5px; background: #f1f5f9; }
+    .ok { color: #047857; font-weight: 700; }
+    .note { color: #92400e; }
+  </style>
+</head>
+<body>
+  <h1>macOS 原生审批与目标窗口焦点闭环</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>修复全屏应用与批准流程造成的错误桌面截图循环：把批准/拒绝迁移到 macOS 原生弹窗；截图、点击、输入和按键前切换并验证目标应用；动作完成后不再默认置顶 Ipet；仅桌面截图临时隐藏 Ipet。</p>
+  </section>
+
+  <section>
+    <h2>Worker / subagent split</h2>
+    <p>单 worker 完成，未使用 subagent。Brain 契约负责声明目标应用，Human Ops 负责原生审批与动作安全，Body/桌面主机负责 macOS 焦点和截图策略，前端只展示审批状态，QA 覆盖跨层回归。</p>
+  </section>
+
+  <section>
+    <h2>Files changed</h2>
+    <ul>
+      <li>Brain 与 ReAct：<code>brain/decisions.py</code>、<code>brain/llm.py</code>、<code>backend/react_prompts.py</code>、<code>backend/chat_stream_flow.py</code>、<code>backend/computer_use_context.py</code></li>
+      <li>Human Ops：<code>human_ops/approval_flow.py</code>、<code>human_ops/desktop_actions.py</code>、<code>human_ops/proposals.py</code>、<code>backend/human_ops_decision_routes.py</code>、<code>backend/app_action_adapters.py</code>、<code>backend/desktop_command_client.py</code>、<code>backend/human_ops_observe.py</code></li>
+      <li>桌面组合与 Body：<code>app/desktop_action_bridge.py</code>、<code>app/desktop_action_wiring.py</code>、<code>app/desktop_command_router.py</code>、<code>app/desktop_command_wiring.py</code>、<code>backend/app.py</code>、<code>backend/app_route_context.py</code>、<code>backend/app_route_dependencies.py</code>、<code>body/active_vision.py</code>、<code>main.py</code></li>
+      <li>前端：<code>frontend/chat_stream.js</code>、<code>frontend/chat_submit.js</code>、<code>frontend/chat_worklog.js</code>、<code>frontend/index.css</code></li>
+      <li>测试：<code>tests/test_backend_desktop_command_client.py</code>、<code>tests/test_backend_human_ops_observe.py</code>、<code>tests/test_backend_react_prompts.py</code>、<code>tests/test_backend_route_split.py</code>、<code>tests/test_chat_modes_ui.py</code>、<code>tests/test_desktop_actions.py</code>、<code>tests/test_desktop_command_router.py</code>、<code>tests/test_desktop_command_wiring.py</code>、<code>tests/test_human_ops_approval_flow.py</code>、<code>tests/test_main_runtime_env.py</code>、<code>tests/test_neo_backend_contract.py</code></li>
+      <li>文档：<code>docs/WORKFLOW.md</code> 与本报告。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved effect</h2>
+    <ul>
+      <li>聊天栏不再创建批准/拒绝按钮；待审批 proposal 自动打开 macOS 原生系统弹窗。</li>
+      <li>批准后保持当前目标应用，不把 Ipet 拉到前台；拒绝或超时不执行动作，并唤回 Ipet 聊天窗口与输入框。</li>
+      <li><code>click</code>、<code>type_text</code>、<code>key_press</code> 必须携带 <code>target_app</code>。桌面主机先用 Launch Services 激活应用，再读取 macOS 前台进程验证；不匹配时失败关闭。</li>
+      <li>应用截图同样先切换并验证目标应用，支持其他全屏 Space；截图时不隐藏、不恢复、不置顶 Ipet。</li>
+      <li>只有明确的桌面截图会临时隐藏 Ipet；截图完成后只恢复可见性，不再调用 <code>raise_()</code>。</li>
+      <li>后续观察和连续动作继承已验证的目标应用，避免在批准或截图后退回桌面并进入重复观察循环。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p class="ok">全量回归 709 项全部通过。</p>
+    <ul>
+      <li>核心组合回归 236 项通过，覆盖原生审批路由、焦点验证、动作执行、截图策略、聊天 UI 与运行时组合。</li>
+      <li><code>tests.test_neo_backend_contract</code> 81 项通过，确认旧的 observe → review 与连续审批链不会新增纠错循环。</li>
+      <li>相关 Python 文件语法检查、三个前端 JavaScript 文件语法检查以及 <code>git diff --check</code> 均通过。</li>
+    </ul>
+    <p class="note">测试环境仍报告 PyQt6 与 PySide6 同时加载的 Objective-C 类重复警告；所有测试通过，该警告是现有运行环境问题，不由本轮变更引入。</p>
+  </section>
+
+  <section>
+    <h2>Remaining work</h2>
+    <p>未在本轮自动打开真实 Chrome/YouTube 或向真实应用输入内容，因为这会改变用户当前应用、焦点和外部会话状态。单元与路由测试已模拟并验证完整顺序。</p>
+  </section>
+
+  <section>
+    <h2>Recommended next step</h2>
+    <p>在用户明确批准后执行一次真实 macOS 冒烟测试：让 Chrome 进入全屏，触发一次应用截图与一个无副作用的测试点击，分别确认前台应用验证、Ipet 不抢焦点，以及拒绝审批后聊天框能被唤回。</p>
+  </section>
+</body>
+</html>

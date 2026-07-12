@@ -200,6 +200,48 @@ class DesktopActionsModuleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Human Ops app launch is currently implemented through macOS"):
             desktop_actions.execute_human_ops_launch_app({"app": "WeChat"}, platform_name="linux")
 
+    def test_focus_macos_application_waits_for_verified_frontmost_app(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        frontmost = iter(["Ipet", "Google Chrome"])
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        result = desktop_actions.focus_macos_application(
+            {"target_app": "Google Chrome"},
+            platform_name="darwin",
+            runner=runner,
+            sleeper=lambda _seconds: None,
+            frontmost_provider=lambda: next(frontmost),
+        )
+
+        self.assertEqual(calls, [["/usr/bin/open", "-a", "Google Chrome"]])
+        self.assertEqual(result["frontmost_app"], "Google Chrome")
+        self.assertTrue(result["focused"])
+
+    def test_native_approval_dialog_returns_rejection_without_guessing(self) -> None:
+        desktop_actions = _desktop_actions_module()
+
+        def runner(args, **kwargs):
+            self.assertIn('buttons {"拒绝", "批准"}', args[-1])
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="button returned:拒绝, gave up:false\n",
+                stderr="",
+            )
+
+        result = desktop_actions.execute_human_ops_native_approval(
+            {"message": "点击登录按钮", "timeout_sec": 60},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertFalse(result["approved"])
+        self.assertEqual(result["method"], "macos_dialog")
+
     def test_hide_and_restore_window_use_injected_qapplication(self) -> None:
         desktop_actions = _desktop_actions_module()
 

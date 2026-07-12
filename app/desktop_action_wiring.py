@@ -107,6 +107,30 @@ def create_desktop_action_entries(
             runner=runner,
         )
 
+    def focus_macos_application(
+        payload: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=default_runner,
+    ) -> dict[str, object]:
+        return bridge_factory().focus_macos_application(
+            payload,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
+    def execute_human_ops_native_approval(
+        payload: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=default_runner,
+    ) -> dict[str, object]:
+        return bridge_factory().execute_human_ops_native_approval(
+            payload,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
     def _process_pending_qt_events() -> None:
         bridge_factory().process_pending_qt_events()
 
@@ -125,6 +149,8 @@ def create_desktop_action_entries(
         "execute_human_ops_type_text": execute_human_ops_type_text,
         "execute_human_ops_launch_app": execute_human_ops_launch_app,
         "execute_human_ops_key_press": execute_human_ops_key_press,
+        "focus_macos_application": focus_macos_application,
+        "execute_human_ops_native_approval": execute_human_ops_native_approval,
         "_process_pending_qt_events": _process_pending_qt_events,
         "_hide_window_for_desktop_click": _hide_window_for_desktop_click,
         "_restore_window_after_desktop_click": _restore_window_after_desktop_click,
@@ -137,6 +163,8 @@ def create_desktop_action_entries(
         "execute_human_ops_type_text",
         "execute_human_ops_launch_app",
         "execute_human_ops_key_press",
+        "focus_macos_application",
+        "execute_human_ops_native_approval",
         "_process_pending_qt_events",
         "_hide_window_for_desktop_click",
         "_restore_window_after_desktop_click",

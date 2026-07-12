@@ -144,7 +144,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         proposal = ReviewableProposal.act(
             action_type="type_text",
             summary="Ipet 想输入到聊天框：你好",
-            payload={"text": "你好", "label": "聊天框", "continue_after_approval": True},
+            payload={"target_app": "WeChat", "text": "你好", "label": "聊天框", "continue_after_approval": True},
         )
         pending = {
             "proposal-1": {
@@ -163,6 +163,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def perform_observe(decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
             calls["observe_prompt"] = decision.payload.get("observe_prompt")
+            self.assertEqual(decision.payload.get("target_app"), "WeChat")
             return {"text": "聊天框里已经出现“你好”，可以按回车发送。", "observations": [], "unknowns": []}
 
         async def run_brain_turn(_config: dict[str, Any], *, user_text: str):

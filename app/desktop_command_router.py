@@ -54,6 +54,8 @@ class DesktopCommandRouter:
         execute_human_ops_type_text: Callable[[dict], dict[str, object]] = _not_configured_action,
         execute_human_ops_launch_app: Callable[[dict], dict[str, object]] = _not_configured_action,
         execute_human_ops_key_press: Callable[[dict], dict[str, object]] = _not_configured_action,
+        focus_target_application: Callable[[dict], dict[str, object]] = _not_configured_action,
+        execute_human_ops_native_approval: Callable[[dict], dict[str, object]] = _not_configured_action,
         hide_window_for_desktop_click: Callable[[object], bool] = lambda _host: False,
         restore_window_after_desktop_click: Callable[[object, bool], None] = lambda _host, _was_hidden: None,
         capture_active_vision_frame_payload: Callable[..., dict] = _not_configured_action,
@@ -80,6 +82,8 @@ class DesktopCommandRouter:
         self.execute_human_ops_type_text = execute_human_ops_type_text
         self.execute_human_ops_launch_app = execute_human_ops_launch_app
         self.execute_human_ops_key_press = execute_human_ops_key_press
+        self.focus_target_application = focus_target_application
+        self.execute_human_ops_native_approval = execute_human_ops_native_approval
         self.hide_window_for_desktop_click = hide_window_for_desktop_click
         self.restore_window_after_desktop_click = restore_window_after_desktop_click
         self.capture_active_vision_frame_payload = capture_active_vision_frame_payload
@@ -264,6 +268,10 @@ class DesktopCommandRouter:
             self._process_human_ops_key_press(command, payload)
             return
 
+        if command_type == "human_ops_native_approval":
+            self._process_human_ops_native_approval(command, payload)
+            return
+
         if command_type == "active_vision_capture":
             self._process_active_vision_capture(command, payload, config)
             return
@@ -331,21 +339,19 @@ class DesktopCommandRouter:
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_click(self, command: dict, payload: dict) -> None:
-        was_hidden = self.hide_window_for_desktop_click(self.host)
-        self.sleep(0.05)
         try:
+            focus = self.focus_target_application(payload)
             result = self.execute_human_ops_click(payload)
-            self.write_desktop_command_response(command, "success", result)
+            self.write_desktop_command_response(command, "success", {**focus, **result})
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
-        finally:
-            self.restore_window_after_desktop_click(self.host, was_hidden)
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_type_text(self, command: dict, payload: dict) -> None:
         try:
+            focus = self.focus_target_application(payload)
             result = self.execute_human_ops_type_text(payload)
-            self.write_desktop_command_response(command, "success", result)
+            self.write_desktop_command_response(command, "success", {**focus, **result})
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
@@ -353,14 +359,31 @@ class DesktopCommandRouter:
     def _process_human_ops_launch_app(self, command: dict, payload: dict) -> None:
         try:
             result = self.execute_human_ops_launch_app(payload)
-            self.write_desktop_command_response(command, "success", result)
+            focus = self.focus_target_application({**payload, "target_app": result.get("app") or payload.get("app")})
+            self.write_desktop_command_response(command, "success", {**result, **focus})
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_key_press(self, command: dict, payload: dict) -> None:
         try:
+            focus = self.focus_target_application(payload)
             result = self.execute_human_ops_key_press(payload)
+            self.write_desktop_command_response(command, "success", {**focus, **result})
+        except Exception as exc:
+            self.write_desktop_command_response(command, "error", {"error": str(exc)})
+        self.write_desktop_host_heartbeat()
+
+    def _process_human_ops_native_approval(self, command: dict, payload: dict) -> None:
+        try:
+            result = self.execute_human_ops_native_approval(payload)
+            if not bool(result.get("approved")):
+                if hasattr(self.host, "show"):
+                    self.host.show()
+                if hasattr(self.host, "raise_"):
+                    self.host.raise_()
+                if hasattr(self.host, "activateWindow"):
+                    self.host.activateWindow()
             self.write_desktop_command_response(command, "success", result)
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
@@ -368,7 +391,11 @@ class DesktopCommandRouter:
 
     def _process_active_vision_capture(self, command: dict, payload: dict, config: dict) -> None:
         try:
+            target_app = str(payload.get("target_app") or "").strip()
+            focus = self.focus_target_application(payload) if target_app else {}
             frame = self.capture_active_vision_frame_payload(self.host, payload, config.get("vision", {}))
+            if focus and isinstance(frame, dict):
+                frame["focus_verification"] = focus
             trace = frame.get("active_observation") if isinstance(frame, dict) and isinstance(frame.get("active_observation"), dict) else {}
             self.write_desktop_command_response(command, "success", {"frame": frame, "trace": trace})
         except Exception as exc:

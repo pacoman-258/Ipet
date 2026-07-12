@@ -582,66 +582,14 @@
         approvalCardEl.appendChild(previewEl);
       }
 
-      const actionWrap = runtimeDocument.createElement("div");
-      actionWrap.className = "approval-actions";
-
-      const approveBtn = runtimeDocument.createElement("button");
-      approveBtn.className = "approval-btn approve";
-      approveBtn.textContent = "批准";
-
-      const rejectBtn = runtimeDocument.createElement("button");
-      rejectBtn.className = "approval-btn reject";
-      rejectBtn.textContent = "拒绝并提示";
-
       const statusEl = runtimeDocument.createElement("div");
       statusEl.className = "approval-status";
-
-      actionWrap.appendChild(approveBtn);
-      actionWrap.appendChild(rejectBtn);
-      approvalCardEl.appendChild(actionWrap);
+      statusEl.textContent = "请在 macOS 系统弹窗中批准或拒绝。";
       approvalCardEl.appendChild(statusEl);
       message.el.appendChild(approvalCardEl);
-
-      const setResolved = (text) => {
-        approveBtn.disabled = true;
-        rejectBtn.disabled = true;
-        statusEl.textContent = text;
-        hideHumanOpsClickPreview();
-      };
-
-      approveBtn.addEventListener("click", async () => {
-        if (!payload.turn_id || getActiveApprovalId()) {
-          return;
-        }
-        setActiveApprovalId(String(payload.turn_id));
-        appendMessage("user", "好，去做吧。", { speakerName: "你" });
-        setResolved("已批准，正在处理。");
-        await continueApproval(payload.turn_id, true);
-      });
-
-      rejectBtn.addEventListener("click", async () => {
-        if (!payload.turn_id || getActiveApprovalId() || getPendingApprovalInputTurnId()) {
-          return;
-        }
-        setActiveApprovalId(String(payload.turn_id));
-        setPendingApprovalInputTurnId(String(payload.turn_id));
-        setResolved("已拒绝这一步，请在输入框里告诉我接下来该怎么调整。");
-        appendWorklogPhase(
-          {
-            phase: "action",
-            text: "这一步我先暂停啦。你直接补充想法，我会沿着当前任务继续处理。",
-            source: "human_ops",
-            transient: false,
-            status_id: `approval_rejected:${String(payload.turn_id || "").trim()}`,
-            render: "worklog",
-          },
-          sessionId,
-        );
-        setChatState("awaiting_followup_input");
-        if (chatInputEl && typeof chatInputEl.focus === "function") {
-          chatInputEl.focus();
-        }
-      });
+      if (turnId) {
+        Promise.resolve().then(() => continueApproval(turnId, false, "", { native: true }));
+      }
 
       return message;
     }

@@ -1094,13 +1094,37 @@ class MainDesktopEnvTests(unittest.TestCase):
 
         self.assertEqual(window.calls[0], "hide")
         self.assertEqual(events[-1], "capture")
-        self.assertEqual(window.calls[-2:], ["show", "raise"])
+        self.assertEqual(window.calls[-1:], ["show"])
+        self.assertNotIn("raise", window.calls)
         self.assertTrue(window.visible)
         self.assertEqual(payload["active_observation"]["mode"], "desktop_survey")
         self.assertEqual(payload["active_observation"]["status"], "success")
         self.assertEqual(payload["active_observation"]["desktop_targets"][0]["target_id"], "target-safari")
         self.assertEqual(payload["active_observation"]["action_trace"], [])
         self.assertNotIn("data_url", payload["active_observation"])
+
+    def test_active_vision_application_capture_does_not_hide_or_raise_ipet(self) -> None:
+        window = _FakeWindow()
+
+        payload = main.capture_active_vision_frame_payload(
+            window,
+            {"mode": "desktop_survey", "target_app": "Google Chrome", "settle_ms": 1},
+            {"enabled": True, "active_observation": {"enabled": True, "settle_ms": 1}},
+            screen_provider=lambda: object(),
+            frame_encoder=lambda screen, config, **kwargs: {
+                "mime_type": "image/jpeg",
+                "data_url": "data:image/jpeg;base64,active",
+                "capture_backend": "unit-test",
+            },
+            desktop_targets_provider=lambda **kwargs: [],
+            dock_items_provider=None,
+            running_apps_provider=lambda **kwargs: [],
+            sleeper=lambda seconds: None,
+        )
+
+        self.assertEqual(window.calls, [])
+        self.assertEqual(payload["active_observation"]["capture_scope"], "application")
+        self.assertEqual(payload["active_observation"]["target_app"], "Google Chrome")
 
     def test_active_vision_survey_records_discovery_error_and_fallback_candidates(self) -> None:
         window = _FakeWindow()
@@ -1285,66 +1309,83 @@ class MainDesktopEnvTests(unittest.TestCase):
         command = {
             "nonce": "click-test",
             "type": "human_ops_click",
-            "payload": {"x": 12, "y": 34, "label": "发送按钮"},
+            "payload": {"target_app": "WeChat", "x": 12, "y": 34, "label": "发送按钮"},
         }
         click_result = {"clicked": True, "x": 12, "y": 34, "label": "发送按钮"}
+        focus_result = {"focused": True, "target_app": "WeChat", "frontmost_app": "WeChat"}
 
-        with mock.patch.object(main, "execute_human_ops_click", return_value=click_result) as click_mock:
+        with mock.patch.object(main, "focus_macos_application", return_value=focus_result) as focus_mock, mock.patch.object(
+            main, "execute_human_ops_click", return_value=click_result
+        ) as click_mock:
             main.DesktopPet.process_desktop_command(host, command)
 
+        focus_mock.assert_called_once_with(command["payload"])
         click_mock.assert_called_once_with(command["payload"])
         self.assertEqual(host.responses[0][1], "success")
-        self.assertEqual(host.responses[0][2], click_result)
+        self.assertEqual(host.responses[0][2], {**focus_result, **click_result})
 
     def test_desktop_command_human_ops_type_text_returns_response(self) -> None:
         host = _DesktopCommandHost()
         command = {
             "nonce": "type-test",
             "type": "human_ops_type_text",
-            "payload": {"text": "收到，我马上处理。", "label": "微信聊天输入框"},
+            "payload": {"target_app": "WeChat", "text": "收到，我马上处理。", "label": "微信聊天输入框"},
         }
         type_result = {"typed": True, "text": "收到，我马上处理。", "label": "微信聊天输入框"}
+        focus_result = {"focused": True, "target_app": "WeChat", "frontmost_app": "WeChat"}
 
-        with mock.patch.object(main, "execute_human_ops_type_text", return_value=type_result) as type_mock:
+        with mock.patch.object(main, "focus_macos_application", return_value=focus_result) as focus_mock, mock.patch.object(
+            main, "execute_human_ops_type_text", return_value=type_result
+        ) as type_mock:
             main.DesktopPet.process_desktop_command(host, command)
 
+        focus_mock.assert_called_once_with(command["payload"])
         type_mock.assert_called_once_with(command["payload"])
         self.assertEqual(host.responses[0][1], "success")
-        self.assertEqual(host.responses[0][2], type_result)
+        self.assertEqual(host.responses[0][2], {**focus_result, **type_result})
 
     def test_desktop_command_human_ops_key_press_returns_response(self) -> None:
         host = _DesktopCommandHost()
         command = {
             "nonce": "enter-test",
             "type": "human_ops_key_press",
-            "payload": {"key": "enter", "label": "发送消息"},
+            "payload": {"target_app": "WeChat", "key": "enter", "label": "发送消息"},
         }
         key_result = {"pressed": True, "key": "enter", "label": "发送消息"}
+        focus_result = {"focused": True, "target_app": "WeChat", "frontmost_app": "WeChat"}
 
-        with mock.patch.object(main, "execute_human_ops_key_press", return_value=key_result) as key_mock:
+        with mock.patch.object(main, "focus_macos_application", return_value=focus_result) as focus_mock, mock.patch.object(
+            main, "execute_human_ops_key_press", return_value=key_result
+        ) as key_mock:
             main.DesktopPet.process_desktop_command(host, command)
 
+        focus_mock.assert_called_once_with(command["payload"])
         key_mock.assert_called_once_with(command["payload"])
         self.assertEqual(host.responses[0][1], "success")
-        self.assertEqual(host.responses[0][2], key_result)
+        self.assertEqual(host.responses[0][2], {**focus_result, **key_result})
 
-    def test_desktop_command_human_ops_click_hides_pet_window_during_click_and_restores(self) -> None:
+    def test_desktop_command_human_ops_click_keeps_pet_window_state_unchanged(self) -> None:
         host = _DesktopCommandHost()
         command = {
             "nonce": "click-through-window-test",
             "type": "human_ops_click",
-            "payload": {"x": 120, "y": 240, "label": "桌面目标"},
+            "payload": {"target_app": "Finder", "x": 120, "y": 240, "label": "桌面目标"},
         }
 
         def click_side_effect(payload):
-            self.assertFalse(host.visible)
+            self.assertTrue(host.visible)
             return {"clicked": True, "x": payload["x"], "y": payload["y"], "label": payload["label"]}
 
-        with mock.patch.object(main, "execute_human_ops_click", side_effect=click_side_effect):
+        with mock.patch.object(
+            main,
+            "focus_macos_application",
+            return_value={"focused": True, "target_app": "Finder", "frontmost_app": "Finder"},
+        ), mock.patch.object(main, "execute_human_ops_click", side_effect=click_side_effect):
             main.DesktopPet.process_desktop_command(host, command)
 
-        self.assertEqual(host.calls[:1], ["hide"])
-        self.assertEqual(host.calls[-1], "show")
+        self.assertNotIn("hide", host.calls)
+        self.assertNotIn("show", host.calls)
+        self.assertNotIn("raise", host.calls)
         self.assertTrue(host.visible)
         self.assertEqual(host.responses[0][1], "success")
 

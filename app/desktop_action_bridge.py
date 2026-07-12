@@ -84,6 +84,32 @@ class DesktopActionBridge:
             runner=runner,
         )
 
+    def focus_macos_application(
+        self,
+        payload: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=subprocess.run,
+    ) -> dict[str, object]:
+        return self.desktop_actions_module.focus_macos_application(
+            payload,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
+    def execute_human_ops_native_approval(
+        self,
+        payload: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=subprocess.run,
+    ) -> dict[str, object]:
+        return self.desktop_actions_module.execute_human_ops_native_approval(
+            payload,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
     def process_pending_qt_events(self) -> None:
         self.desktop_actions_module.process_pending_qt_events(qapplication=self.qapplication)
 

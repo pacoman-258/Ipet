@@ -19,6 +19,43 @@ _TEMPORARY_EXCHANGES_PER_SESSION = MAX_RECENT_CONVERSATION_MESSAGES // 2
 _TEMPORARY_HISTORIES: OrderedDict[str, deque[tuple[int, str, str]]] = OrderedDict()
 
 
+def with_observation_target_app(
+    decision: BrainDecision,
+    observation: dict[str, Any] | None,
+) -> BrainDecision:
+    if decision.kind != DecisionKind.PROPOSE_ACT:
+        return decision
+    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    action_type = str(payload.get("action_type") or "").strip()
+    if action_type not in {"click", "type_text", "key_press"}:
+        return decision
+    arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    if str(arguments.get("target_app") or "").strip():
+        return decision
+    data = observation if isinstance(observation, dict) else {}
+    surface = data.get("surface") if isinstance(data.get("surface"), dict) else {}
+    frame = data.get("frame") if isinstance(data.get("frame"), dict) else {}
+    desktop = frame.get("desktop_context") if isinstance(frame.get("desktop_context"), dict) else {}
+    focus = frame.get("focus_verification") if isinstance(frame.get("focus_verification"), dict) else {}
+    surface_kind = str(surface.get("kind") or "").strip()
+    target_app = str(
+        surface.get("app")
+        or focus.get("target_app")
+        or focus.get("frontmost_app")
+        or desktop.get("foreground_app")
+        or desktop.get("frontmost_process")
+        or ("WeChat" if surface_kind == "wechat_gui" else "")
+        or ("Finder" if surface_kind == "desktop_gui" else "")
+        or ""
+    ).strip()
+    if not target_app:
+        return decision
+    next_arguments = dict(arguments)
+    next_arguments["target_app"] = target_app
+    goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+    return BrainDecision.propose_act(action_type, next_arguments, goal=goal)
+
+
 def _tail_messages(
     messages: list[dict[str, str]],
     *,
@@ -335,6 +372,7 @@ async def stream_chat_response(
 
     while True:
         decision = deps.coerce_decision_for_human_ops(text, decision)
+        decision = with_observation_target_app(decision, last_observation)
         decision_kind = deps.decision_kind(decision)
         react_trace.append(
             {

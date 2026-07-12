@@ -45,11 +45,11 @@ STRUCTURED_REPLY_INSTRUCTIONS = """
 当前可执行的 kind：
 - "say": {"kind":"say","text":"给用户看的回复"}
 - "think": {"kind":"think","thought":"内部进展说明","next_kind":"observe"}
-- "observe": {"kind":"observe","target":"screen","question":"用自然语言写给 observe 模型看的观察问题"}
+- "observe": {"kind":"observe","target":"screen","target_app":"需要截图的应用名称","question":"用自然语言写给 observe 模型看的观察问题"}
 - "propose_act": {"kind":"propose_act","action_type":"launch_app","arguments":{"app":"应用名称","label":"应用名称"}}
-- "propose_act": {"kind":"propose_act","action_type":"click","arguments":{"x":0,"y":0,"label":"目标"}}
-- "propose_act": {"kind":"propose_act","action_type":"type_text","arguments":{"text":"要输入的文字","label":"输入位置"}}
-- "propose_act": {"kind":"propose_act","action_type":"key_press","arguments":{"key":"enter","label":"按键目的","expected_text":"期望发送后的消息文本"}}
+- "propose_act": {"kind":"propose_act","action_type":"click","arguments":{"target_app":"目标应用名称","x":0,"y":0,"label":"目标"}}
+- "propose_act": {"kind":"propose_act","action_type":"type_text","arguments":{"target_app":"目标应用名称","text":"要输入的文字","label":"输入位置"}}
+- "propose_act": {"kind":"propose_act","action_type":"key_press","arguments":{"target_app":"目标应用名称","key":"enter","label":"按键目的","expected_text":"期望发送后的消息文本"}}
 
 以下 kind 已预留给后续版本：
 - "remember": {"kind":"remember","category":"preference","text":"要保存的记忆"}
@@ -61,7 +61,7 @@ STRUCTURED_REPLY_INSTRUCTIONS = """
 surface 不限于 GUI，可以是 desktop_gui、browser_page、browser_chrome、terminal_shell、terminal_tui、editor、file_dialog、wechat_gui 或 unknown。
 affordance 是人类能操作的入口，例如 Dock App 图标、按钮、链接、聊天输入框、浏览器地址栏、终端提示符、TUI 菜单项。
 打开 App 时直接返回 propose_act launch_app，arguments.app 写应用名称；Human Ops 会在批准后通过 macOS 应用注册信息解析并启动它。打开 App 不需要截图、Dock 坐标、screen_edge 或虚拟点击。
-当前动作范围只包含 launch_app、click、type_text、key_press enter；不要返回 focus_window、hotkey、scroll、drag 或 wait。切换窗口和聚焦输入框仍先观察可见入口，再用 click 完成。
+当前动作范围只包含 launch_app、click、type_text、key_press enter；不要返回 focus_window、hotkey、scroll、drag 或 wait。Body 会用 macOS 原生能力切换到 arguments.target_app；click、type_text、key_press 必须写 target_app，前台应用不匹配时动作会失败关闭。聚焦输入框仍先观察可见入口，再用 click 完成。
 聊天回复任务应按 stage 推进：launch_app -> locate_contact -> read_context -> draft_reply -> focus_input -> type_reply -> send_reply -> verify_result。
 在 locate_contact 阶段，如果目标联系人条目不可见但搜索框可见，像人类一样先 click 搜索框、type_text 输入联系人姓名，再 key_press enter 或点击搜索结果；不要因为当前列表没有目标联系人就反复 observe。
 如果 Structured computer-use context 里的 chat_context.recent_messages 已包含目标联系人的可见聊天内容，应把它当作 read_context 阶段的依据来起草简短、贴合上下文的回复；不要为了重复读取同一段消息而继续 observe。
@@ -392,6 +392,7 @@ def parse_brain_reply(raw_text: str) -> BrainDecision:
         return BrainDecision.observe(
             str(data.get("target") or payload.get("target") or "screen"),
             observe_prompt=observe_prompt,
+            target_app=str(data.get("target_app") or payload.get("target_app") or ""),
             goal=_goal_from_data(data, payload),
         )
     if kind in {"act", "propose_act"}:

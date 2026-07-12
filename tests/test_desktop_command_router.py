@@ -58,6 +58,9 @@ class _FakeHost:
     def activateWindow(self) -> None:
         self.activated += 1
 
+    def show(self) -> None:
+        self.visible = True
+
 
 class DesktopCommandRouterSplitTests(unittest.TestCase):
     def test_router_module_exists_without_importing_main(self) -> None:
@@ -154,25 +157,16 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             {"group": "Tap", "index": 2, "model_path": "normalized:model/Haru.model3.json"},
         )
 
-    def test_human_ops_click_hides_and_restores_window_around_action(self) -> None:
+    def test_human_ops_click_focuses_target_without_hiding_or_restoring_ipet(self) -> None:
         module = _router_module()
         host = _FakeHost()
         calls: list[str] = []
         responses: list[dict[str, object]] = []
 
-        def hide_window(window) -> bool:
-            calls.append("hide")
-            window.visible = False
-            return True
-
         def click(payload):
             calls.append("click")
-            self.assertFalse(host.visible)
+            self.assertTrue(host.visible)
             return {"clicked": True, "x": payload["x"], "y": payload["y"], "label": payload["label"]}
-
-        def restore_window(window, was_hidden: bool) -> None:
-            calls.append(f"restore:{was_hidden}")
-            window.visible = True
 
         router = module.DesktopCommandRouter(
             host,
@@ -181,9 +175,10 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             default_response_path=Path("/tmp/ipet-router-test/response.json"),
             heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
             execute_human_ops_click=click,
-            hide_window_for_desktop_click=hide_window,
-            restore_window_after_desktop_click=restore_window,
-            sleep=lambda _seconds: calls.append("sleep"),
+            focus_target_application=lambda payload: calls.append(f"focus:{payload['target_app']}") or {
+                "focused": True,
+                "target_app": payload["target_app"],
+            },
             write_response_func=lambda command, status, result=None: responses.append(
                 {"command": command, "status": status, "result": result}
             ),
@@ -194,14 +189,17 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             {
                 "nonce": "click-1",
                 "type": "human_ops_click",
-                "payload": {"x": 12, "y": 34, "label": "发送按钮"},
+                "payload": {"target_app": "WeChat", "x": 12, "y": 34, "label": "发送按钮"},
             }
         )
 
-        self.assertEqual(calls, ["hide", "sleep", "click", "restore:True", "heartbeat"])
+        self.assertEqual(calls, ["focus:WeChat", "click", "heartbeat"])
         self.assertTrue(host.visible)
         self.assertEqual(responses[0]["status"], "success")
-        self.assertEqual(responses[0]["result"], {"clicked": True, "x": 12, "y": 34, "label": "发送按钮"})
+        self.assertEqual(
+            responses[0]["result"],
+            {"focused": True, "target_app": "WeChat", "clicked": True, "x": 12, "y": 34, "label": "发送按钮"},
+        )
 
     def test_active_vision_capture_writes_frame_and_trace(self) -> None:
         module = _router_module()
@@ -230,6 +228,30 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0]["status"], "success")
         self.assertEqual(responses[0]["result"], {"frame": frame, "trace": frame["active_observation"]})
 
+    def test_native_approval_only_focuses_ipet_after_rejection(self) -> None:
+        module = _router_module()
+        for approved, expected_focus_count in ((True, 0), (False, 1)):
+            with self.subTest(approved=approved):
+                host = _FakeHost()
+                responses = []
+                router = module.DesktopCommandRouter(
+                    host,
+                    root_dir=Path("/tmp/ipet-router-test"),
+                    command_path=Path("/tmp/ipet-router-test/command.json"),
+                    default_response_path=Path("/tmp/ipet-router-test/response.json"),
+                    heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+                    execute_human_ops_native_approval=lambda payload: {"approved": approved},
+                    write_response_func=lambda command, status, result=None: responses.append((status, result)),
+                )
+
+                router.process_desktop_command(
+                    {"nonce": "approval-1", "type": "human_ops_native_approval", "payload": {"message": "test"}}
+                )
+
+                self.assertEqual(responses[0][0], "success")
+                self.assertEqual(host.raised, expected_focus_count)
+                self.assertEqual(host.activated, expected_focus_count)
+
     def test_human_ops_launch_app_routes_without_hiding_pet_window(self) -> None:
         module = _router_module()
         host = _FakeHost()
@@ -242,6 +264,10 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             default_response_path=Path("/tmp/ipet-router-test/response.json"),
             heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
             execute_human_ops_launch_app=lambda payload: calls.append(payload["app"]) or {"launched": True},
+            focus_target_application=lambda payload: calls.append(f"focus:{payload['target_app']}") or {
+                "focused": True,
+                "target_app": payload["target_app"],
+            },
             hide_window_for_desktop_click=lambda _host: calls.append("hide") or True,
             write_response_func=lambda command, status, result=None: responses.append(
                 {"command": command, "status": status, "result": result}
@@ -252,9 +278,9 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             {"nonce": "launch-1", "type": "human_ops_launch_app", "payload": {"app": "WeChat"}}
         )
 
-        self.assertEqual(calls, ["WeChat"])
+        self.assertEqual(calls, ["WeChat", "focus:WeChat"])
         self.assertEqual(responses[0]["status"], "success")
-        self.assertEqual(responses[0]["result"], {"launched": True})
+        self.assertEqual(responses[0]["result"], {"launched": True, "focused": True, "target_app": "WeChat"})
 
     def test_poll_syncs_nonce_and_dispatches_new_command_once(self) -> None:
         module = _router_module()

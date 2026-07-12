@@ -56,10 +56,19 @@ def _coerce_decision_for_human_ops(
         else ""
     )
     payload = decision.payload if isinstance(decision.payload, dict) else {}
-    if app_name and not (
+    is_launch_proposal = (
         _decision_kind(decision) == DecisionKind.PROPOSE_ACT
         and str(payload.get("action_type") or "").strip() == "launch_app"
-    ):
+    )
+    if app_name and is_launch_proposal:
+        arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        if str(arguments.get("app") or "").strip() == app_name:
+            return decision
+        normalized_arguments = dict(arguments)
+        normalized_arguments["app"] = app_name
+        normalized_arguments.setdefault("label", str(arguments.get("app") or app_name).strip())
+        return BrainDecision.propose_act("launch_app", normalized_arguments, goal=_decision_goal(decision) or None)
+    if app_name:
         continue_after_approval = bool(
             looks_like_chat_reply_request is not None and looks_like_chat_reply_request(user_text)
         )
@@ -186,12 +195,17 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
     action_type = str(payload.get("action_type") or "").strip()
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
     if action_type == "click":
+        target_app = str(arguments.get("target_app") or "").strip()
+        if not target_app:
+            return False, "click missing target_app"
         if _has_numeric_action_argument(arguments, "x") and _has_numeric_action_argument(arguments, "y"):
             return True, ""
         return False, "click missing complete x/y"
     if action_type == "type_text":
-        return True, ""
+        return (True, "") if str(arguments.get("target_app") or "").strip() else (False, "type_text missing target_app")
     if action_type == "key_press":
+        if not str(arguments.get("target_app") or "").strip():
+            return False, "key_press missing target_app"
         key = str(arguments.get("key") or "enter").strip().lower() or "enter"
         if key in {"enter", "return"}:
             return True, ""
@@ -229,6 +243,7 @@ def _unsupported_simple_action_prompt(
         f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
         "当前 Human Ops 只能审批并执行这些动作：launch_app、click、type_text、key_press enter。"
         "打开 App 直接 propose_act launch_app，并在 arguments.app 中给出应用名；不要截图找图标或改成 click；"
+        "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
         "聚焦输入框也用 click；输入文本用 type_text；发送/确认用 key_press enter。"
         "请重新选择一个下一步 JSON：observe、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter，"
         "或带 terminal goal.status 的 say/stop。"

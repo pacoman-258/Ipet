@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet 应用启动提案名称规范化修复</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>应用启动提案名称规范化修复</h1>
+  <p><strong>日期：</strong>2026-07-12</p>
+  <h2>Goal</h2>
+  <p>修复 Brain 已直接返回 <code>launch_app(app="网易云音乐")</code> 时绕过应用别名映射、最终导致 macOS 按中文名启动失败的问题。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p><code>backend/react_prompts.py</code>、<code>tests/test_backend_react_prompts.py</code>、<code>tests/test_neo_backend_contract.py</code> 和本报告。</p>
+  <h2>Achieved effect</h2>
+  <p>所有应用启动意图在进入 Human Ops 审批前都会统一规范化：网易云音乐的实际执行参数为 <code>NeteaseMusic</code>，中文 <code>label</code>、继续执行参数和原 goal 保持不变。无论 Brain 返回 observe、say，还是已经返回 launch_app，都经过同一规则。</p>
+  <h2>Verification</h2>
+  <p>辅助函数回归和完整聊天流回归均断言待审批提案中的 <code>arguments.app</code> 为 <code>NeteaseMusic</code>；相关测试 29 项通过，Python 编译与 diff 格式检查通过，全量回归 710 项通过。</p>
+  <h2>Remaining work</h2>
+  <p>未实际启动网易云音乐；真实烟雾测试会改变应用状态，需要单独批准。运行中的旧 Ipet 进程需要重启后才会加载本次修复。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet，再发送“打开网易云音乐”并批准。审批后应通过 <code>NeteaseMusic.app</code> 启动，不再出现 “Unable to find application named 网易云音乐”。</p>
+</body>
+</html>

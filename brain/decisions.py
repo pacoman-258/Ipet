@@ -79,6 +79,7 @@ class BrainDecision:
         target: str = "screen",
         observe_prompt: str = "",
         *,
+        target_app: str = "",
         goal: dict[str, Any] | None = None,
     ) -> "BrainDecision":
         target_text = str(target or "screen").strip() or "screen"
@@ -86,6 +87,9 @@ class BrainDecision:
         prompt_text = str(observe_prompt or "").strip()
         if prompt_text:
             payload["observe_prompt"] = prompt_text
+        target_app_text = str(target_app or "").strip()
+        if target_app_text:
+            payload["target_app"] = target_app_text
         if isinstance(goal, dict):
             payload["goal"] = dict(goal)
         return cls(DecisionKind.OBSERVE, f"Observe {target_text}", payload)

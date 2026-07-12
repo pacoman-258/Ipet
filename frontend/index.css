@@ -1392,40 +1392,6 @@
       margin-top: 2px;
     }
 
-    .approval-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 4px;
-    }
-
-    .approval-btn {
-      border: none;
-      border-radius: 999px;
-      padding: 8px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      color: #6a4654;
-      background: rgba(255, 255, 255, 0.82);
-      box-shadow: 0 8px 16px rgba(123, 92, 108, 0.12);
-    }
-
-    .approval-btn.approve {
-      background: linear-gradient(180deg, rgba(215, 255, 233, 0.98), rgba(190, 245, 216, 0.96));
-      color: #306f50;
-    }
-
-    .approval-btn.reject {
-      background: linear-gradient(180deg, rgba(255, 240, 245, 0.98), rgba(255, 220, 232, 0.96));
-      color: #8a4c68;
-    }
-
-    .approval-btn:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
-
     .approval-status {
       font-size: 12px;
       color: #765260;

@@ -81,10 +81,31 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
 
         send_mock.assert_awaited_once_with(
             "active_vision_capture",
-            {"mode": "desktop_survey", "target_hint": "Dock 微信", "target": "Dock 微信"},
+            {
+                "mode": "desktop_survey",
+                "target_hint": "Dock 微信",
+                "target": "Dock 微信",
+                "target_app": "",
+                "capture_scope": "desktop",
+            },
             timeout_sec=14,
         )
         self.assertEqual(result["trace"], {"capture": "ok"})
+
+    def test_application_observe_carries_explicit_target_app(self) -> None:
+        send_mock = mock.AsyncMock(return_value={"frame": {"capture_backend": "macos_screencapture"}})
+
+        asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("screen", target_app="Google Chrome"),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(send_desktop_command=send_mock),
+            )
+        )
+
+        payload = send_mock.await_args.args[1]
+        self.assertEqual(payload["target_app"], "Google Chrome")
+        self.assertEqual(payload["capture_scope"], "application")
 
     def test_observe_model_disabled_reports_model_requirement(self) -> None:
         async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):

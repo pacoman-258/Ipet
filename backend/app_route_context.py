@@ -134,6 +134,7 @@ class _LiveRouteDependencyContext:
             previous_proposal=previous_proposal,
             execution=execution,
         )
+        self.request_native_approval = lambda proposal: self._call("_request_native_human_ops_approval", proposal)
 
     @property
     def default_topic_title(self) -> str:

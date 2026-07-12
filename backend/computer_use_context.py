@@ -409,6 +409,13 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
     text_surface = text.lower()
     combined = f"{hint} {text}".lower()
     surface: dict[str, Any] = {"kind": "unknown", "confidence": 0.2}
+    desktop_context = frame_data.get("desktop_context") if isinstance(frame_data.get("desktop_context"), dict) else {}
+    foreground_app = str(
+        desktop_context.get("foreground_app")
+        or desktop_context.get("frontmost_process")
+        or frame_data.get("foreground_app")
+        or ""
+    ).strip()
     dock_negative = _has_negative_visibility_evidence(text, ("dock", "dock 栏", "程序坞"))
     wechat_negative = _has_negative_visibility_evidence(text, ("微信", "wechat"))
     if ("dock" in text_surface or "程序坞" in text_surface) and not dock_negative:
@@ -419,6 +426,8 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
         surface = {"kind": "browser_page", "confidence": 0.7}
     elif "终端" in text_surface or "terminal" in text_surface or "prompt" in text_surface:
         surface = {"kind": "terminal_shell", "confidence": 0.7}
+    if foreground_app:
+        surface["app"] = foreground_app
 
     coordinates = _coordinate_pair_from_text(text)
     affordances: list[dict[str, Any]] = []

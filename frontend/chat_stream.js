@@ -135,6 +135,7 @@
       }
 
       if (eventName === "done") {
+        context.approved = payload?.approved;
         context.full = payload.text || context.full;
         const goalStatus = String(payload?.decision?.payload?.goal?.status || "").trim().toLowerCase();
         const blocked =
@@ -234,6 +235,7 @@
       const context = {
         full: "",
         awaitingApproval: false,
+        approved: null,
         receivedDisplaySegment: false,
         thoughtSessionId,
         ensureFinalMessage() {
@@ -263,7 +265,12 @@
       if (!context.awaitingApproval) {
         removeEmptyPendingThoughtGroup(thoughtSessionId);
       }
-      return { full: context.full, awaitingApproval: context.awaitingApproval, thoughtSessionId };
+      return {
+        full: context.full,
+        awaitingApproval: context.awaitingApproval,
+        approved: context.approved,
+        thoughtSessionId,
+      };
     }
 
     return {
