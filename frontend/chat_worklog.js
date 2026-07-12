@@ -30,6 +30,26 @@
     let thoughtSessionCounter = 0;
     const approvalBubbleRefs = new Map();
     const approvalThoughtSessionRefs = new Map();
+    const executionCategories = new Set([
+      "planning",
+      "searching",
+      "observing",
+      "acting",
+      "waiting_approval",
+      "verifying",
+      "blocked",
+      "completed",
+    ]);
+    const executionCategoryLabels = {
+      planning: "规划",
+      searching: "搜索",
+      observing: "观察",
+      acting: "执行",
+      waiting_approval: "等待批准",
+      verifying: "验证",
+      blocked: "受阻",
+      completed: "完成",
+    };
 
     function scrollChatMessagesToBottom() {
       if (!chatMessagesEl) {
@@ -97,6 +117,7 @@
     }
 
     function resetChatTimelineState() {
+      stopWorklogTimer(currentAssistantWorklog);
       currentThoughtGroup = null;
       currentAssistantWorklog = null;
       approvalBubbleRefs.clear();
@@ -236,7 +257,94 @@
       if (value === "human_ops") {
         return "Human Ops";
       }
+      if (value === "body") {
+        return "Body";
+      }
       return value || "状态";
+    }
+
+    function normalizeExecutionCategory(payload) {
+      const explicit = String(payload?.category || "").trim().toLowerCase();
+      if (executionCategories.has(explicit)) {
+        return explicit;
+      }
+      const phase = String(payload?.phase || "").trim().toLowerCase();
+      const name = String(payload?.name || "").trim().toLowerCase();
+      const status = String(payload?.status || "").trim().toLowerCase();
+      if (status === "blocked" || status === "failed") {
+        return "blocked";
+      }
+      if (phase === "search" || name.includes("search")) {
+        return "searching";
+      }
+      if (name.includes("review") || status === "waiting") {
+        return "waiting_approval";
+      }
+      if (name.includes("observe")) {
+        return String(payload?.verification || "").toLowerCase() === "true" ? "verifying" : "observing";
+      }
+      if (name.includes("click") || name.includes("action") || phase === "action") {
+        return "acting";
+      }
+      if (phase === "done") {
+        return "completed";
+      }
+      return "planning";
+    }
+
+    function formatWorklogDuration(elapsedMs) {
+      const seconds = Math.max(0, Number(elapsedMs) || 0) / 1000;
+      return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+    }
+
+    function updateWorklogSummary(turn, now = Date.now()) {
+      if (!turn?.processSummaryEl) {
+        return;
+      }
+      const elapsed = formatWorklogDuration(now - turn.startedAt);
+      const category = turn.activeStatusRef?.dataset.category || turn.terminalCategory || "planning";
+      const label = executionCategoryLabels[category] || "执行过程";
+      turn.processTitleEl.textContent = turn.terminalCategory
+        ? `${turn.terminalCategory === "completed" ? "已完成" : "执行受阻"} · ${turn.stepCount} 步`
+        : `正在${label}`;
+      turn.processMetaEl.textContent = elapsed;
+    }
+
+    function stopWorklogTimer(turn) {
+      if (turn?.timerId) {
+        clearInterval(turn.timerId);
+        turn.timerId = null;
+      }
+    }
+
+    function startWorklogTimer(turn) {
+      if (!turn || turn.timerId) {
+        return;
+      }
+      turn.timerId = setInterval(() => {
+        const now = Date.now();
+        if (turn.activeStatusRef?._worklogDurationEl) {
+          turn.activeStatusRef._worklogDurationEl.textContent = formatWorklogDuration(
+            now - turn.activeStatusRef._worklogStartedAt,
+          );
+        }
+        updateWorklogSummary(turn, now);
+      }, 250);
+    }
+
+    function settleWorklogStatus(turn, category = "completed") {
+      const rowEl = turn?.activeStatusRef;
+      if (!rowEl) {
+        return;
+      }
+      const now = Date.now();
+      rowEl.classList.remove("is-running", "is-waiting");
+      rowEl.classList.add(category === "blocked" ? "is-blocked" : "is-completed");
+      rowEl.dataset.status = category;
+      if (rowEl._worklogDurationEl) {
+        rowEl._worklogDurationEl.textContent = formatWorklogDuration(now - rowEl._worklogStartedAt);
+      }
+      turn.activeStatusRef = null;
     }
 
     function buildAssistantWorklogTurn(sessionId = "") {
@@ -246,16 +354,48 @@
       el.dataset.worklogId = `assistant-worklog-${assistantWorklogCounter}`;
       el.dataset.sessionId = String(sessionId || "").trim();
 
+      const processDetailsEl = runtimeDocument.createElement("details");
+      processDetailsEl.className = "worklog-process";
+      processDetailsEl.open = true;
+      processDetailsEl.hidden = true;
+
+      const processSummaryEl = runtimeDocument.createElement("summary");
+      const processTitleEl = runtimeDocument.createElement("span");
+      processTitleEl.className = "worklog-process-title";
+      processTitleEl.textContent = "正在规划";
+      const processMetaEl = runtimeDocument.createElement("span");
+      processMetaEl.className = "worklog-process-meta";
+      processMetaEl.textContent = "0.0s";
+      processSummaryEl.appendChild(processTitleEl);
+      processSummaryEl.appendChild(processMetaEl);
+
       const statusListEl = runtimeDocument.createElement("div");
       statusListEl.className = "worklog-status-list";
+      processDetailsEl.appendChild(processSummaryEl);
+      processDetailsEl.appendChild(statusListEl);
 
       const finalTextEl = runtimeDocument.createElement("div");
       finalTextEl.className = "worklog-final-text";
 
-      el.appendChild(statusListEl);
+      el.appendChild(processDetailsEl);
       el.appendChild(finalTextEl);
       appendChatMessageElement(el);
-      return { el, statusListEl, finalTextEl, sessionId: el.dataset.sessionId, statusRefs: new Map() };
+      return {
+        el,
+        processDetailsEl,
+        processSummaryEl,
+        processTitleEl,
+        processMetaEl,
+        statusListEl,
+        finalTextEl,
+        sessionId: el.dataset.sessionId,
+        statusRefs: new Map(),
+        activeStatusRef: null,
+        startedAt: Date.now(),
+        stepCount: 0,
+        timerId: null,
+        terminalCategory: "",
+      };
     }
 
     function ensureAssistantWorklogTurn(sessionId = "") {
@@ -279,30 +419,91 @@
         return turn;
       }
       const source = String(payload?.source || "brain").trim();
-      const statusId = String(payload?.status_id || payload?.phase || "").trim();
+      const category = normalizeExecutionCategory(payload);
+      const statusId = String(payload?.status_id || payload?.name || payload?.phase || "").trim();
       const reusable = statusId && payload?.transient !== false ? turn.statusRefs.get(statusId) : null;
       const rowEl = reusable || runtimeDocument.createElement("div");
-      rowEl.className = `worklog-status-row source-${source.replace(/[^a-z0-9_-]/gi, "-")}`;
+      if (turn.activeStatusRef && turn.activeStatusRef !== rowEl) {
+        settleWorklogStatus(turn);
+      }
+      rowEl.className = `worklog-status-row source-${source.replace(/[^a-z0-9_-]/gi, "-")} ${
+        category === "waiting_approval" ? "is-waiting" : "is-running"
+      }`;
       rowEl.dataset.statusId = statusId;
+      rowEl.dataset.category = category;
+
+      const contentEl = reusable?.querySelector(".worklog-status-content") || runtimeDocument.createElement("div");
+      contentEl.className = "worklog-status-content";
+
+      const labelEl = reusable?.querySelector(".worklog-status-label") || runtimeDocument.createElement("div");
+      labelEl.className = "worklog-status-label";
+      labelEl.textContent = executionCategoryLabels[category] || executionCategoryLabels.planning;
 
       const textEl = reusable?.querySelector(".worklog-status-text") || runtimeDocument.createElement("div");
       textEl.className = "worklog-status-text";
       textEl.textContent = text;
 
+      const task = String(payload?.task || payload?.observe_prompt || "").trim();
+      let taskEl = reusable?.querySelector(".worklog-status-task") || null;
+      if (task) {
+        taskEl = taskEl || runtimeDocument.createElement("div");
+        taskEl.className = "worklog-status-task";
+        taskEl.textContent = `Brain → Observe：${task}`;
+      } else if (taskEl) {
+        taskEl.remove();
+        taskEl = null;
+      }
+
       const sourceEl = reusable?.querySelector(".worklog-status-source") || runtimeDocument.createElement("span");
       sourceEl.className = "worklog-status-source";
       sourceEl.textContent = sourceLabel(source);
-      textEl.appendChild(sourceEl);
+
+      const durationEl = reusable?.querySelector(".worklog-status-duration") || runtimeDocument.createElement("span");
+      durationEl.className = "worklog-status-duration";
+      durationEl.textContent = reusable?._worklogDurationEl?.textContent || "0.0s";
 
       if (!reusable) {
-        rowEl.appendChild(textEl);
+        contentEl.appendChild(labelEl);
+        contentEl.appendChild(textEl);
+        if (taskEl) {
+          contentEl.appendChild(taskEl);
+        }
+        rowEl.appendChild(contentEl);
+        rowEl.appendChild(sourceEl);
+        rowEl.appendChild(durationEl);
         turn.statusListEl.appendChild(rowEl);
+        turn.stepCount += 1;
         if (statusId) {
           turn.statusRefs.set(statusId, rowEl);
         }
+      } else if (taskEl && !taskEl.parentNode) {
+        contentEl.appendChild(taskEl);
       }
+      rowEl._worklogStartedAt = reusable?._worklogStartedAt || Date.now();
+      rowEl._worklogDurationEl = durationEl;
+      turn.processDetailsEl.hidden = false;
+      turn.processDetailsEl.open = true;
+      turn.terminalCategory = "";
+      turn.activeStatusRef = rowEl;
+      startWorklogTimer(turn);
+      updateWorklogSummary(turn);
       scrollChatMessagesToBottom();
       return turn;
+    }
+
+    function finishWorklogProcess(turn, category = "completed") {
+      const target = turn || currentAssistantWorklog;
+      if (!target) {
+        return target;
+      }
+      settleWorklogStatus(target, category);
+      target.terminalCategory = category;
+      stopWorklogTimer(target);
+      updateWorklogSummary(target);
+      if (category === "completed") {
+        target.processDetailsEl.open = false;
+      }
+      return target;
     }
 
     function updateWorklogFinalText(turn, text, pending = false) {
@@ -349,10 +550,10 @@
       const message = ensureAssistantWorklogTurn(sessionId);
       appendWorklogPhase(
         {
-          phase: "action",
-          text: String(payload.text || ""),
+          category: "waiting_approval",
+          text: `等待批准：${String(payload.text || "")}`,
           source: "human_ops",
-          transient: false,
+          transient: true,
           status_id: `approval:${String(payload.turn_id || Date.now()).trim()}`,
           render: "worklog",
         },
@@ -460,6 +661,7 @@
       buildAssistantWorklogTurn,
       ensureAssistantWorklogTurn,
       appendWorklogPhase,
+      finishWorklogProcess,
       updateWorklogFinalText,
       appendAssistantHistoryBlock,
       setApprovalThoughtSessionId,

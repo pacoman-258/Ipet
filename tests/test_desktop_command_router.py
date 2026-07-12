@@ -230,6 +230,32 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0]["status"], "success")
         self.assertEqual(responses[0]["result"], {"frame": frame, "trace": frame["active_observation"]})
 
+    def test_human_ops_launch_app_routes_without_hiding_pet_window(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        calls: list[str] = []
+        responses: list[dict[str, object]] = []
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            execute_human_ops_launch_app=lambda payload: calls.append(payload["app"]) or {"launched": True},
+            hide_window_for_desktop_click=lambda _host: calls.append("hide") or True,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {"nonce": "launch-1", "type": "human_ops_launch_app", "payload": {"app": "WeChat"}}
+        )
+
+        self.assertEqual(calls, ["WeChat"])
+        self.assertEqual(responses[0]["status"], "success")
+        self.assertEqual(responses[0]["result"], {"launched": True})
+
     def test_poll_syncs_nonce_and_dispatches_new_command_once(self) -> None:
         module = _router_module()
         host = _FakeHost()

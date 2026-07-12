@@ -44,7 +44,39 @@ def _coerce_decision_for_human_ops(
     *,
     looks_like_desktop_observe_request: Callable[[str], bool],
     looks_like_desktop_action_request: Callable[[str], bool],
+    looks_like_app_launch_request: Callable[[str], bool] | None = None,
+    app_launch_target: Callable[[str], str] | None = None,
+    looks_like_chat_reply_request: Callable[[str], bool] | None = None,
 ) -> BrainDecision:
+    app_name = (
+        app_launch_target(user_text)
+        if looks_like_app_launch_request is not None
+        and app_launch_target is not None
+        and looks_like_app_launch_request(user_text)
+        else ""
+    )
+    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    if app_name and not (
+        _decision_kind(decision) == DecisionKind.PROPOSE_ACT
+        and str(payload.get("action_type") or "").strip() == "launch_app"
+    ):
+        continue_after_approval = bool(
+            looks_like_chat_reply_request is not None and looks_like_chat_reply_request(user_text)
+        )
+        return BrainDecision.propose_act(
+            "launch_app",
+            {
+                "app": app_name,
+                "label": app_name,
+                "continue_after_approval": continue_after_approval,
+            },
+            goal={
+                "objective": str(user_text or "").strip(),
+                "status": "handoff_review",
+                "stage": "launch_app",
+                "next": "observe" if continue_after_approval else "done",
+            },
+        )
     if _decision_kind(decision) != DecisionKind.SAY:
         return decision
     if _decision_goal(decision):
@@ -164,6 +196,9 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
         if key in {"enter", "return"}:
             return True, ""
         return False, f"key_press {key}"
+    if action_type == "launch_app":
+        app_name = str(arguments.get("app") or arguments.get("name") or arguments.get("label") or "").strip()
+        return (True, "") if app_name else (False, "launch_app missing app name")
     return False, action_type or "unknown"
 
 
@@ -192,9 +227,9 @@ def _unsupported_simple_action_prompt(
         f"上一轮 Brain 返回了不可执行或不符合当前简单人类动作范围的 propose_act：{unsupported_action}。\n"
         f"上一轮 Brain 决定：{decision.to_dict()}\n"
         f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
-        "当前 Human Ops 只能审批并执行这些简单人类动作：click、type_text、key_press enter。"
-        "打开 App 请通过 observe 找到 Dock/App 图标或搜索结果，再 propose_act click；"
+        "当前 Human Ops 只能审批并执行这些动作：launch_app、click、type_text、key_press enter。"
+        "打开 App 直接 propose_act launch_app，并在 arguments.app 中给出应用名；不要截图找图标或改成 click；"
         "聚焦输入框也用 click；输入文本用 type_text；发送/确认用 key_press enter。"
-        "请重新选择一个下一步 JSON：observe、propose_act click、propose_act type_text、propose_act key_press enter，"
+        "请重新选择一个下一步 JSON：observe、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter，"
         "或带 terminal goal.status 的 say/stop。"
     )

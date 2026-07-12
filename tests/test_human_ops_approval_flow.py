@@ -215,6 +215,10 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         event_names = [name for name, _data in events]
         self.assertEqual(event_names[:4], ["meta", "phase", "display_segment", "phase"])
         self.assertEqual(event_names[-2:], ["phase", "approval_required"])
+        phase_payloads = [data for name, data in events if name == "phase"]
+        self.assertEqual([data["category"] for data in phase_payloads], ["acting", "verifying", "waiting_approval"])
+        self.assertEqual(phase_payloads[1]["task"], "执行后观察 回复消息")
+        self.assertEqual(phase_payloads[-1]["status_id"], "approval:next-proposal")
         self.assertEqual(events[-1][1]["proposal_id"], "next-proposal")
         self.assertEqual(events[-1][1]["action_type"], "key_press")
         self.assertNotIn("done", event_names)

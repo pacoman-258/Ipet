@@ -24,6 +24,10 @@ def _looks_like_app_launch_request(user_text: str) -> bool:
     return _computer_use_context_helpers._looks_like_app_launch_request(user_text)
 
 
+def _app_launch_target(user_text: str) -> str:
+    return _computer_use_context_helpers._app_launch_target(user_text)
+
+
 def _looks_like_chat_reply_request(user_text: str) -> bool:
     return _computer_use_context_helpers._looks_like_chat_reply_request(user_text)
 
@@ -160,6 +164,9 @@ def _coerce_decision_for_human_ops(user_text: str, decision: BrainDecision) -> B
         decision,
         looks_like_desktop_observe_request=_looks_like_desktop_observe_request,
         looks_like_desktop_action_request=_looks_like_desktop_action_request,
+        looks_like_app_launch_request=_looks_like_app_launch_request,
+        app_launch_target=_app_launch_target,
+        looks_like_chat_reply_request=_looks_like_chat_reply_request,
     )
 
 

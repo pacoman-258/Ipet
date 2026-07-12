@@ -42,6 +42,9 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"
         key_label = "回车" if key in {"enter", "return"} else key
         return f"按下{key_label}（{label}）"
+    if action_type == "launch_app":
+        app_name = str(args.get("app") or args.get("name") or args.get("label") or "应用").strip() or "应用"
+        return f"打开应用 {app_name}"
     return proposal.summary or action_type
 
 
@@ -140,6 +143,9 @@ def build_human_ops_act_proposal(
         label = str(arguments.get("label") or arguments.get("target") or "当前焦点").strip() or "当前焦点"
         key_label = "回车" if key in {"enter", "return"} else key
         summary = f"Ipet 想按下{key_label}：{label}"
+    elif action_type == "launch_app":
+        app_name = str(arguments.get("app") or arguments.get("name") or arguments.get("label") or "应用").strip() or "应用"
+        summary = f"Ipet 想打开应用：{app_name}"
     else:
         summary = decision.summary or f"Ipet 想执行：{action_type}"
     return ReviewableProposal.act(

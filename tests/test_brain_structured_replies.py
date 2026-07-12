@@ -178,8 +178,8 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("type_text", system_text)
         self.assertIn("key_press", system_text)
         self.assertIn("打开 App", system_text)
-        self.assertIn("Dock App 图标", system_text)
-        self.assertIn("不要返回 launch_app", system_text)
+        self.assertIn("propose_act launch_app", system_text)
+        self.assertIn("不需要截图", system_text)
         self.assertIn("聊天输入框", system_text)
         self.assertIn("输入框可见但没有聚焦", system_text)
         self.assertIn("recent_messages", system_text)
@@ -189,9 +189,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("联系人条目不可见", system_text)
         self.assertIn("搜索框", system_text)
         self.assertIn("输入联系人", system_text)
-        self.assertIn("screen_edge", system_text)
-        self.assertIn("reveal_hidden_dock", system_text)
-        self.assertIn("隐藏 Dock", system_text)
+        self.assertIn("macOS 应用注册信息", system_text)
 
     def test_turn_prompt_overrides_legacy_gui_only_persona(self) -> None:
         messages = build_turn_messages(

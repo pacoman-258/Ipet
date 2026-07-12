@@ -41,6 +41,7 @@ class DesktopCommandWiringTests(unittest.TestCase):
             qfiledialog=qfiledialog,
             execute_human_ops_click=lambda payload: {"click": payload},
             execute_human_ops_type_text=lambda payload: {"type": payload},
+            execute_human_ops_launch_app=lambda payload: {"launch": payload},
             execute_human_ops_key_press=lambda payload: {"key": payload},
             hide_window_for_desktop_click=lambda host: True,
             restore_window_after_desktop_click=lambda host, was_hidden: None,
@@ -79,6 +80,7 @@ class DesktopCommandWiringTests(unittest.TestCase):
         self.assertIs(kwargs["clean_vision_text"], deps.clean_vision_text)
         self.assertIs(kwargs["execute_human_ops_click"], deps.execute_human_ops_click)
         self.assertIs(kwargs["execute_human_ops_type_text"], deps.execute_human_ops_type_text)
+        self.assertIs(kwargs["execute_human_ops_launch_app"], deps.execute_human_ops_launch_app)
         self.assertIs(kwargs["execute_human_ops_key_press"], deps.execute_human_ops_key_press)
         self.assertIs(kwargs["hide_window_for_desktop_click"], deps.hide_window_for_desktop_click)
         self.assertIs(kwargs["restore_window_after_desktop_click"], deps.restore_window_after_desktop_click)
@@ -119,6 +121,7 @@ class DesktopCommandWiringTests(unittest.TestCase):
             qfiledialog=_FakeQFileDialog(),
             execute_human_ops_click=lambda payload: payload,
             execute_human_ops_type_text=lambda payload: payload,
+            execute_human_ops_launch_app=lambda payload: payload,
             execute_human_ops_key_press=lambda payload: payload,
             hide_window_for_desktop_click=lambda host: False,
             restore_window_after_desktop_click=lambda host, was_hidden: None,

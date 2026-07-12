@@ -622,6 +622,7 @@ def _build_desktop_command_router_dependencies() -> DesktopCommandRouterWiringDe
         qfiledialog=QFileDialog,
         execute_human_ops_click=execute_human_ops_click,
         execute_human_ops_type_text=execute_human_ops_type_text,
+        execute_human_ops_launch_app=execute_human_ops_launch_app,
         execute_human_ops_key_press=execute_human_ops_key_press,
         hide_window_for_desktop_click=_hide_window_for_desktop_click,
         restore_window_after_desktop_click=_restore_window_after_desktop_click,

@@ -46,6 +46,7 @@ STRUCTURED_REPLY_INSTRUCTIONS = """
 - "say": {"kind":"say","text":"给用户看的回复"}
 - "think": {"kind":"think","thought":"内部进展说明","next_kind":"observe"}
 - "observe": {"kind":"observe","target":"screen","question":"用自然语言写给 observe 模型看的观察问题"}
+- "propose_act": {"kind":"propose_act","action_type":"launch_app","arguments":{"app":"应用名称","label":"应用名称"}}
 - "propose_act": {"kind":"propose_act","action_type":"click","arguments":{"x":0,"y":0,"label":"目标"}}
 - "propose_act": {"kind":"propose_act","action_type":"type_text","arguments":{"text":"要输入的文字","label":"输入位置"}}
 - "propose_act": {"kind":"propose_act","action_type":"key_press","arguments":{"key":"enter","label":"按键目的","expected_text":"期望发送后的消息文本"}}
@@ -59,9 +60,8 @@ STRUCTURED_REPLY_INSTRUCTIONS = """
 你必须使用 computer-use mental model：先识别 stage（当前任务阶段）、surface（当前交互表面）、affordance（人类可操作入口），再选择最小下一步动作。
 surface 不限于 GUI，可以是 desktop_gui、browser_page、browser_chrome、terminal_shell、terminal_tui、editor、file_dialog、wechat_gui 或 unknown。
 affordance 是人类能操作的入口，例如 Dock App 图标、按钮、链接、聊天输入框、浏览器地址栏、终端提示符、TUI 菜单项。
-打开 App 时，如果 Dock App 图标、桌面图标、启动器结果或搜索结果已经可见且位置可信，把它当作 click_to_open affordance，直接 propose_act click；不要为了证明打开成功而继续 observe。
-如果 Structured computer-use context 提供 kind=screen_edge 且 purpose=reveal_hidden_dock，说明 Dock/App 图标当前不可见但可通过一次点击屏幕边缘尝试唤出隐藏 Dock；在 launch_app 或 reveal_dock 阶段，propose_act click 到该 screen_edge 坐标，goal.stage 写 reveal_dock，next 写 launch_app，并设置 continue_after_approval=true。这个 reveal_hidden_dock 点击只尝试一次；批准后必须 observe 新 surface，再寻找真实 Dock App 图标。
-当前动作范围只包含 click、type_text、key_press enter；不要返回 launch_app、focus_window、hotkey、scroll、drag 或 wait。打开 App、切换窗口、聚焦输入框都先观察可见入口，再用 click 完成。
+打开 App 时直接返回 propose_act launch_app，arguments.app 写应用名称；Human Ops 会在批准后通过 macOS 应用注册信息解析并启动它。打开 App 不需要截图、Dock 坐标、screen_edge 或虚拟点击。
+当前动作范围只包含 launch_app、click、type_text、key_press enter；不要返回 focus_window、hotkey、scroll、drag 或 wait。切换窗口和聚焦输入框仍先观察可见入口，再用 click 完成。
 聊天回复任务应按 stage 推进：launch_app -> locate_contact -> read_context -> draft_reply -> focus_input -> type_reply -> send_reply -> verify_result。
 在 locate_contact 阶段，如果目标联系人条目不可见但搜索框可见，像人类一样先 click 搜索框、type_text 输入联系人姓名，再 key_press enter 或点击搜索结果；不要因为当前列表没有目标联系人就反复 observe。
 如果 Structured computer-use context 里的 chat_context.recent_messages 已包含目标联系人的可见聊天内容，应把它当作 read_context 阶段的依据来起草简短、贴合上下文的回复；不要为了重复读取同一段消息而继续 observe。
@@ -74,14 +74,14 @@ ReAct 是显式且有边界的：think 只能表达当前目标状态和下一�
 say 不是未完成操作目标的结束路径；当 goal.status 仍是 in_progress 时，不要用 say 或 stop 结束本轮。
 say 只可在 goal.status 为 done、blocked 或 need_user 时作为操作目标的终态回答。
 propose_act 是交给 Human Ops 审批的 handoff，不是执行动作；返回 propose_act 时 goal.status 应为 handoff_review。
-需要看屏幕、定位界面、读取窗口、寻找 Dock/App/按钮/输入框时，使用 "observe"。
+需要看屏幕、定位界面、读取窗口、寻找按钮或输入框时，使用 "observe"；单纯打开应用不使用 observe。
 observe 的 question 是你用自然语言问 observe 模型的问题；不要为 observe 设计复杂 JSON。
 Brain 的工作风格必须符合 Human Ops：对用户给出的目标负责，把桌面目标推进到一个可审批的单步操作，而不是只描述你看到了什么。
-用户要求点击、打开或操作某个界面目标时，"say" 不能作为完成动作的回答；不要只说目标在哪里，也不要口头请求用户批准。
+用户要求点击或操作某个界面目标时，"say" 不能作为完成动作的回答；用户要求打开应用时提交 launch_app；不要口头请求用户批准。
 换句话说，say 不能作为完成动作的回答，除非目标不可见、有歧义或需要用户补充信息。
 如果你需要坐标，就在 question 中自然地要求它给出可点击中心点的 macOS 屏幕坐标，例如“如果能看到目标，请告诉我可点击中心点的 macOS 屏幕坐标 x 和 y”。
 如果只是查看、读取、判断状态，就用自然语言问内容、文字或状态，不要要求坐标。
-如果用户要求点击、打开或操作且你尚未观察屏幕、目标位置不明确或坐标不可信，返回 "observe"，让 observe 找目标、说明可见依据，并给出可点击中心点的 macOS 屏幕坐标 x 和 y。
+如果用户要求点击或操作界面元素且你尚未观察屏幕、目标位置不明确或坐标不可信，返回 "observe"，让 observe 找目标、说明可见依据，并给出可点击中心点的 macOS 屏幕坐标 x 和 y。打开应用是例外：直接提交 launch_app，不需要屏幕坐标。
 当你收到 observe 的自然语言结果后，基于结果决定下一步：如果有可信 macOS 屏幕坐标，或已经按坐标上下文转换出 macOS 屏幕坐标，必须返回 "propose_act"；如果目标可见但没有数字坐标，必须再次返回 "observe" 明确要求可点击中心点 x 和 y；如果目标不可见或有歧义，才用 "say" 说明不确定或请求用户澄清。
 如果用户要求点击且你已经知道可信的绝对屏幕坐标，必须返回 "propose_act"。
 不要用 say 口头请求批准；需要人类批准的点击必须返回 "propose_act"。
@@ -90,7 +90,7 @@ Brain 的工作风格必须符合 Human Ops：对用户给出的目标负责，�
 """.strip()
 
 COMPUTER_USE_COMPATIBILITY_INSTRUCTIONS = """
-如果 persona 或用户配置暗示只能使用 GUI、不要考虑终端命令、或把人类操作等同于单一图形界面，请以本合同为准：surface 不限于 GUI；人类也会使用 browser_chrome、terminal_shell、terminal_tui、editor、file_dialog 等表面。你仍然只能在当前可执行动作范围内选择 click、type_text、key_press enter，并通过观察到的 affordance 推进任务。
+如果 persona 或用户配置暗示只能使用 GUI、不要考虑终端命令、或把人类操作等同于单一图形界面，请以本合同为准：surface 不限于 GUI；人类也会使用 browser_chrome、terminal_shell、terminal_tui、editor、file_dialog 等表面。你仍然只能在当前可执行动作范围内选择 launch_app、click、type_text、key_press enter，并通过原生应用注册信息或观察到的 affordance 推进任务。
 """.strip()
 
 
@@ -989,6 +989,7 @@ def _codex_web_search_activity(item: Any) -> dict[str, Any] | None:
     else:
         text = f"正在搜索：{query or '；'.join(queries) or '相关内容'}"
     return {
+        "category": "searching",
         "phase": "search",
         "source": "brain",
         "status_id": f"codex-web-search:{str(source.get('id') or action_type)}",
@@ -1136,7 +1137,7 @@ async def _complete_codex_stream(
                         await on_activity(activity)
             elif method == "thread/tokenUsage/updated":
                 token_usage = params.get("tokenUsage") if isinstance(params.get("tokenUsage"), dict) else {}
-                usage = _usage_from_value(token_usage.get("last")) or usage
+                usage = _usage_from_value(token_usage.get("total")) or _usage_from_value(token_usage.get("last")) or usage
             elif method == "turn/completed":
                 turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
                 if str(turn.get("status") or "") == "failed":

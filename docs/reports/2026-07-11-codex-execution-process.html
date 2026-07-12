@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex 风格可折叠执行过程</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 15px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #0f172a; }
+    section { margin: 24px 0; padding: 18px 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    code { padding: 2px 5px; border-radius: 5px; background: #f1f5f9; }
+    .ok { color: #047857; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Codex 风格可折叠执行过程</h1>
+
+  <section>
+    <h2>目标</h2>
+    <p>在聊天回复中实时展示整理后的执行过程，统一规划、搜索、观察、动作、审批、验证、阻塞与完成状态，并在完成后自动收起过程、突出最终回复。</p>
+  </section>
+
+  <section>
+    <h2>Worker / subagent split</h2>
+    <p>单 worker 完成；未使用 subagent。Frontend UI 负责渲染和计时，Brain/Body/Human Ops 只补充既有 SSE 的语义字段，QA 由针对性单元测试与源码契约测试覆盖。</p>
+  </section>
+
+  <section>
+    <h2>Files changed</h2>
+    <ul>
+      <li><code>frontend/chat_worklog.js</code>、<code>frontend/chat_stream.js</code>、<code>frontend/index.css</code></li>
+      <li><code>frontend/controller_facade.js</code>、<code>frontend/controller_graph_app_sections.js</code></li>
+      <li><code>backend/chat_stream_flow.py</code>、<code>human_ops/approval_flow.py</code>、<code>brain/llm.py</code></li>
+      <li><code>tests/test_frontend_chat_worklog_source.py</code>、<code>tests/test_frontend_chat_stream_source.py</code>、<code>tests/test_chat_stream_flow.py</code>、<code>tests/test_human_ops_approval_flow.py</code>、<code>tests/test_neo_backend_contract.py</code></li>
+      <li><code>docs/WORKFLOW.md</code> 与本报告</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved effect</h2>
+    <ul>
+      <li>统一为 <code>planning</code>、<code>searching</code>、<code>observing</code>、<code>acting</code>、<code>waiting_approval</code>、<code>verifying</code>、<code>blocked</code>、<code>completed</code> 八类事件。</li>
+      <li>当前阶段实时显示旋转或等待状态，阶段切换时结算耗时和完成状态。</li>
+      <li>观察事件可展示 Brain 发给 Observe 的整理后任务，不展示原始思维链。</li>
+      <li>完成时自动折叠执行细节，阻塞时保持展开，最终回复保持在面板外并提高视觉权重。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p class="ok">通过：138 项针对性回归测试。</p>
+    <ul>
+      <li>聊天执行流、Human Ops、前端 worklog 与后端契约：97 项通过。</li>
+      <li>Brain provider 与聊天 UI 契约：41 项通过。</li>
+      <li><code>node --check</code> 检查两个修改后的 JavaScript 文件通过。</li>
+      <li><code>git diff --check</code> 通过。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Remaining work</h2>
+    <p>无已知必需项。真实桌面视觉微调可在启动应用后按实际窗口尺寸继续调整。</p>
+  </section>
+
+  <section>
+    <h2>Recommended next step</h2>
+    <p>若需要像素级确认，下一轮启动本地桌面应用，用一次包含搜索、观察和审批的任务做视觉冒烟测试。</p>
+  </section>
+</body>
+</html>

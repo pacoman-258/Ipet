@@ -151,9 +151,15 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             summary="Ipet 想按下回车：发送",
             payload={"key": "Enter", "target": "发送"},
         )
+        launched = ReviewableProposal.act(
+            action_type="launch_app",
+            summary="Ipet 想打开应用：WeChat",
+            payload={"app": "WeChat"},
+        )
 
         click_result = await client.perform_human_ops_action(click, send_command=send_command)
         type_result = await client.perform_human_ops_action(typed, send_command=send_command)
+        launch_result = await client.perform_human_ops_action(launched, send_command=send_command)
         key_result = await client.perform_human_ops_action(pressed, send_command=send_command)
 
         self.assertEqual(
@@ -161,11 +167,13 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             [
                 ("human_ops_click", {"x": 11, "y": 20, "label": "确认"}, 5),
                 ("human_ops_type_text", {"text": "你好", "label": "聊天框"}, 5),
+                ("human_ops_launch_app", {"app": "WeChat", "label": "WeChat"}, 8),
                 ("human_ops_key_press", {"key": "enter", "label": "发送"}, 5),
             ],
         )
         self.assertEqual(click_result, {"clicked": True, "x": 11, "y": 20, "label": "确认", "source": "desktop"})
         self.assertEqual(type_result, {"typed": True, "text": "你好", "label": "聊天框", "source": "desktop"})
+        self.assertEqual(launch_result, {"launched": True, "app": "WeChat", "source": "desktop"})
         self.assertEqual(key_result, {"pressed": True, "key": "enter", "label": "发送", "source": "desktop"})
 
     async def test_backend_app_no_longer_inlines_desktop_response_polling(self) -> None:

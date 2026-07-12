@@ -269,7 +269,16 @@ async def stream_chat_response(
             "memory_mode": memory_mode,
         },
     )
-    yield deps.sse("phase", {"name": "neo_brain", "status": "running", "text": f"Brain provider: {initial_provider}"})
+    yield deps.sse(
+        "phase",
+        {
+            "category": "planning",
+            "name": "neo_brain",
+            "status": "running",
+            "text": "Brain 正在理解目标并选择路线",
+            "detail": f"provider: {initial_provider}",
+        },
+    )
     if retry_from_assistant_turn > 0 and memory_mode == "temporary":
         _truncate_temporary_history(session_id, retry_from_assistant_turn)
     elif retry_from_assistant_turn > 0:
@@ -289,7 +298,12 @@ async def stream_chat_response(
 
         async def queue_activity(activity: dict[str, Any]) -> None:
             if activity:
-                await delta_queue.put(("phase", activity))
+                normalized_activity = dict(activity)
+                if not str(normalized_activity.get("category") or "").strip():
+                    normalized_activity["category"] = (
+                        "searching" if str(normalized_activity.get("phase") or "").strip() == "search" else "planning"
+                    )
+                await delta_queue.put(("phase", normalized_activity))
 
         reply_task = asyncio.create_task(resolve_reply(conversation_history, queue_delta, queue_activity))
         while not reply_task.done():
@@ -341,9 +355,10 @@ async def stream_chat_response(
                 yield deps.sse(
                     "phase",
                     {
+                        "category": "planning",
                         "name": "brain_react",
                         "status": "running",
-                        "text": "Brain ReAct: unsupported action correction",
+                        "text": "Brain 正在调整为可观察、可审批的动作",
                     },
                 )
                 followup_text = deps.unsupported_simple_action_prompt(
@@ -375,7 +390,16 @@ async def stream_chat_response(
                 session_id=session_id,
                 user_text=text,
             )
-            yield deps.sse("phase", {"name": "human_ops_review", "status": "waiting", "text": "Human Ops: waiting for review"})
+            yield deps.sse(
+                "phase",
+                {
+                    "category": "waiting_approval",
+                    "name": "human_ops_review",
+                    "status": "waiting",
+                    "status_id": f"approval:{proposal_id}",
+                    "text": "Human Ops 正在等待你的批准",
+                },
+            )
             yield deps.sse("approval_required", deps.proposal_event_payload(proposal_id, proposal))
             return
 
@@ -387,9 +411,10 @@ async def stream_chat_response(
             yield deps.sse(
                 "phase",
                 {
+                    "category": "planning",
                     "name": "brain_react",
                     "status": "running",
-                    "text": "Brain ReAct: think",
+                    "text": "Brain 正在规划下一步",
                 },
             )
             react_budget -= 1
@@ -418,7 +443,21 @@ async def stream_chat_response(
             continue
 
         if decision_kind == DecisionKind.OBSERVE:
-            yield deps.sse("phase", {"name": "human_ops_observe", "status": "running", "text": "Human Ops: observe"})
+            yield deps.sse(
+                "phase",
+                {
+                    "category": "observing",
+                    "name": "human_ops_observe",
+                    "status": "running",
+                    "text": "Body 正在读取界面与系统状态",
+                    "source": "body",
+                    "task": str(
+                        decision.payload.get("observe_prompt")
+                        or decision.payload.get("question")
+                        or decision.summary
+                    ).strip(),
+                },
+            )
             try:
                 observation = await deps.perform_human_ops_observe(decision, human_ops_config)
             except Exception as exc:
@@ -514,9 +553,10 @@ async def stream_chat_response(
             yield deps.sse(
                 "phase",
                 {
+                    "category": "planning",
                     "name": "brain_react",
                     "status": "running",
-                    "text": "Brain ReAct: unfinished goal correction",
+                    "text": "Brain 正在补全尚未完成的任务路线",
                 },
             )
             followup_text = deps.react_followup_prompt(

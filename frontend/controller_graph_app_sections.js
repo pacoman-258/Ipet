@@ -33,6 +33,7 @@
       ensureAssistantWorklogTurn: facade.ensureAssistantWorklogTurn,
       removeEmptyPendingThoughtGroup: facade.removeEmptyPendingThoughtGroup,
       appendWorklogPhase: facade.appendWorklogPhase,
+      finishWorklogProcess: facade.finishWorklogProcess,
       appendApprovalBubble: facade.appendApprovalBubble,
       updateWorklogFinalText: facade.updateWorklogFinalText,
       clearActiveThoughtSession: facade.clearActiveThoughtSession,

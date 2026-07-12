@@ -52,6 +52,7 @@ class DesktopCommandRouter:
         pick_image_file_func: Callable[..., object] = _default_pick_image_file,
         execute_human_ops_click: Callable[[dict], dict[str, object]] = _not_configured_action,
         execute_human_ops_type_text: Callable[[dict], dict[str, object]] = _not_configured_action,
+        execute_human_ops_launch_app: Callable[[dict], dict[str, object]] = _not_configured_action,
         execute_human_ops_key_press: Callable[[dict], dict[str, object]] = _not_configured_action,
         hide_window_for_desktop_click: Callable[[object], bool] = lambda _host: False,
         restore_window_after_desktop_click: Callable[[object, bool], None] = lambda _host, _was_hidden: None,
@@ -77,6 +78,7 @@ class DesktopCommandRouter:
         self.pick_image_file_func = pick_image_file_func
         self.execute_human_ops_click = execute_human_ops_click
         self.execute_human_ops_type_text = execute_human_ops_type_text
+        self.execute_human_ops_launch_app = execute_human_ops_launch_app
         self.execute_human_ops_key_press = execute_human_ops_key_press
         self.hide_window_for_desktop_click = hide_window_for_desktop_click
         self.restore_window_after_desktop_click = restore_window_after_desktop_click
@@ -254,6 +256,10 @@ class DesktopCommandRouter:
             self._process_human_ops_type_text(command, payload)
             return
 
+        if command_type == "human_ops_launch_app":
+            self._process_human_ops_launch_app(command, payload)
+            return
+
         if command_type == "human_ops_key_press":
             self._process_human_ops_key_press(command, payload)
             return
@@ -339,6 +345,14 @@ class DesktopCommandRouter:
     def _process_human_ops_type_text(self, command: dict, payload: dict) -> None:
         try:
             result = self.execute_human_ops_type_text(payload)
+            self.write_desktop_command_response(command, "success", result)
+        except Exception as exc:
+            self.write_desktop_command_response(command, "error", {"error": str(exc)})
+        self.write_desktop_host_heartbeat()
+
+    def _process_human_ops_launch_app(self, command: dict, payload: dict) -> None:
+        try:
+            result = self.execute_human_ops_launch_app(payload)
             self.write_desktop_command_response(command, "success", result)
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})

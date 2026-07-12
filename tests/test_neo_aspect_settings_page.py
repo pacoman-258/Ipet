@@ -88,7 +88,11 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn("renderBrainReasoningOptions", self.model_picker_js)
 
     def test_observe_model_provider_supports_codex_without_endpoint_or_key(self) -> None:
-        self.assertIn('<option value="codex">Codex（本机账户）</option>', self.html)
+        brain_provider = self.html.split('<select id="brain-provider">', 1)[1].split("</select>", 1)[0]
+        observe_provider = self.html.split('<select id="ops-observe-model-provider">', 1)[1].split("</select>", 1)[0]
+        codex_option = '<option value="codex">Codex（本机账户）</option>'
+        self.assertEqual(brain_provider.count(codex_option), 1)
+        self.assertEqual(observe_provider.count(codex_option), 1)
         self.assertIn("const observeCodex = isCodex", self.form_js)
         self.assertIn("Codex observe 复用本机登录与账户额度", self.form_js)
         self.assertIn("model_endpoint: isEndpointlessProvider(observeProvider)", self.form_js)

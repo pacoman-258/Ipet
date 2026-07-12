@@ -85,6 +85,7 @@
     "appendThoughtPhase": ["chatWorklog", "appendThoughtPhase"],
     "ensureAssistantWorklogTurn": ["chatWorklog", "ensureAssistantWorklogTurn"],
     "appendWorklogPhase": ["chatWorklog", "appendWorklogPhase"],
+    "finishWorklogProcess": ["chatWorklog", "finishWorklogProcess"],
     "updateWorklogFinalText": ["chatWorklog", "updateWorklogFinalText"],
     "appendAssistantHistoryBlock": ["chatWorklog", "appendAssistantHistoryBlock"],
     "findUserMessageById": ["chatMessages", "findUserMessageById"],

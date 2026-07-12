@@ -191,9 +191,9 @@ class BackendReactPromptsTests(unittest.TestCase):
 
         self.assertIn("不可执行或不符合当前简单人类动作范围", prompt)
         self.assertIn("open_app", prompt)
-        self.assertIn("click、type_text、key_press enter", prompt)
-        self.assertIn("打开 App 请通过 observe 找到 Dock/App 图标或搜索结果", prompt)
-        self.assertIn("propose_act click", prompt)
+        self.assertIn("launch_app、click、type_text、key_press enter", prompt)
+        self.assertIn("打开 App 直接 propose_act launch_app", prompt)
+        self.assertIn("不要截图找图标", prompt)
 
     def test_simple_action_support_click_coordinates_and_enter_key_rules(self) -> None:
         react_prompts = self._react_prompts()
@@ -218,6 +218,22 @@ class BackendReactPromptsTests(unittest.TestCase):
             react_prompts._simple_human_action_support(BrainDecision.propose_act("type_text", {"text": "hi"})),
             (True, ""),
         )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("launch_app", {"app": "WeChat"})),
+            (True, ""),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(BrainDecision.propose_act("launch_app", {})),
+            (False, "launch_app missing app name"),
+        )
+
+    def test_production_coercion_turns_app_open_into_reviewable_native_launch(self) -> None:
+        decision = backend_app._coerce_decision_for_human_ops("打开微信", BrainDecision.observe("screen"))
+
+        self.assertEqual(decision.kind, DecisionKind.PROPOSE_ACT)
+        self.assertEqual(decision.payload["action_type"], "launch_app")
+        self.assertEqual(decision.payload["arguments"]["app"], "WeChat")
+        self.assertFalse(decision.payload["arguments"]["continue_after_approval"])
 
 
 if __name__ == "__main__":

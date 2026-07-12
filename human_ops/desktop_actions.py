@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 
@@ -21,6 +22,77 @@ def _screen_coordinate(value: Any, fallback: int = 0) -> int:
         return int(round(float(value)))
     except (TypeError, ValueError):
         return fallback
+
+
+def _application_name_key(value: object) -> str:
+    return "".join(char for char in str(value or "").casefold() if char.isalnum())
+
+
+def _installed_macos_applications(*, runner=subprocess.run) -> list[dict[str, str]]:
+    try:
+        result = runner(
+            ["/usr/bin/mdfind", "kMDItemContentType == 'com.apple.application-bundle'"],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+    except Exception:
+        return []
+    if getattr(result, "returncode", 1) != 0:
+        return []
+    applications: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_path in str(getattr(result, "stdout", "") or "").splitlines():
+        path = Path(raw_path.strip())
+        if path.suffix.casefold() != ".app" or any(parent.suffix.casefold() == ".app" for parent in path.parents):
+            continue
+        key = str(path).casefold()
+        if not _application_name_key(path.stem) or key in seen:
+            continue
+        seen.add(key)
+        applications.append({"name": path.stem, "path": str(path)})
+    return sorted(
+        applications,
+        key=lambda item: (
+            0 if str(item["path"]).startswith("/Applications/") else 1,
+            str(item["path"]).casefold(),
+        ),
+    )
+
+
+def _resolve_installed_application(app_name: str, applications: list[dict[str, str]]) -> dict[str, str]:
+    target_key = _application_name_key(app_name)
+    exact = [item for item in applications if _application_name_key(item.get("name")) == target_key]
+    return exact[0] if exact else {}
+
+
+def execute_human_ops_launch_app(
+    payload: dict | None,
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+) -> dict[str, object]:
+    if not _is_macos(platform_name):
+        raise RuntimeError("Human Ops app launch is currently implemented through macOS Launch Services.")
+    data = payload if isinstance(payload, dict) else {}
+    app_name = str(data.get("app") or data.get("name") or data.get("label") or "").strip()
+    if not app_name:
+        raise RuntimeError("Human Ops app launch requires an application name.")
+    applications = _installed_macos_applications(runner=runner)
+    resolved = _resolve_installed_application(app_name, applications)
+    command = ["/usr/bin/open", resolved["path"]] if resolved else ["/usr/bin/open", "-a", app_name]
+    result = runner(command, capture_output=True, text=True, timeout=5, check=False)
+    if getattr(result, "returncode", 1) != 0:
+        detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "open failed").strip()
+        raise RuntimeError(f"macOS could not open {app_name}: {detail}")
+    return {
+        "launched": True,
+        "app": str(resolved.get("name") or app_name),
+        "application_path": str(resolved.get("path") or ""),
+        "application_count": len(applications),
+        "method": "launch_services",
+    }
 
 
 class _CGPoint(ctypes.Structure):

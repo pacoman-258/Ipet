@@ -160,6 +160,10 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             [data["text"] for name, data in events if name == "phase" and data.get("phase") == "search"],
             ["正在搜索：Ipet latest"],
         )
+        self.assertEqual(
+            [data["category"] for name, data in events if name == "phase" and data.get("phase") == "search"],
+            ["searching"],
+        )
         self.assertNotIn("display_segment", [name for name, _data in events])
         self.assertEqual(events[-1][1]["usage"], {"input_tokens": 21, "output_tokens": 2, "total_tokens": 23})
 

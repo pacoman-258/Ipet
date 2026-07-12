@@ -58,6 +58,19 @@ class DesktopActionBridge:
             runner=runner,
         )
 
+    def execute_human_ops_launch_app(
+        self,
+        payload: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=subprocess.run,
+    ) -> dict[str, object]:
+        return self.desktop_actions_module.execute_human_ops_launch_app(
+            payload,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
     def execute_human_ops_key_press(
         self,
         payload: dict | None,

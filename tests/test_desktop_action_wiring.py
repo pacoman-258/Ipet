@@ -38,6 +38,7 @@ class DesktopActionWiringTests(unittest.TestCase):
         bridge.cg_point_type = object
         bridge.execute_human_ops_click.return_value = {"clicked": True}
         bridge.execute_human_ops_type_text.return_value = {"typed": True}
+        bridge.execute_human_ops_launch_app.return_value = {"launched": True}
         bridge.execute_human_ops_key_press.return_value = {"pressed": True}
         bridge.applescript_string.return_value = '"hello"'
         current_default_clicker = {"value": None}
@@ -55,6 +56,7 @@ class DesktopActionWiringTests(unittest.TestCase):
         entries["_post_core_graphics_click"](12, 34)
         click_result = entries["execute_human_ops_click"]({"x": 12}, platform_name="darwin", runner=runner)
         type_result = entries["execute_human_ops_type_text"]({"text": "hi"}, platform_name="darwin", runner=runner)
+        launch_result = entries["execute_human_ops_launch_app"]({"app": "WeChat"}, platform_name="darwin", runner=runner)
         key_result = entries["execute_human_ops_key_press"]({"key": "enter"}, platform_name="darwin", runner=runner)
         self.assertEqual(entries["_applescript_string"]("hello"), '"hello"')
         entries["_process_pending_qt_events"]()
@@ -63,6 +65,7 @@ class DesktopActionWiringTests(unittest.TestCase):
 
         self.assertEqual(click_result, {"clicked": True})
         self.assertEqual(type_result, {"typed": True})
+        self.assertEqual(launch_result, {"launched": True})
         self.assertEqual(key_result, {"pressed": True})
         self.assertEqual(entries["execute_human_ops_click"].__module__, "main")
         default_event_clicker = inspect.signature(entries["execute_human_ops_click"]).parameters["event_clicker"].default
@@ -78,6 +81,11 @@ class DesktopActionWiringTests(unittest.TestCase):
         )
         bridge.execute_human_ops_type_text.assert_called_once_with(
             {"text": "hi"},
+            platform_name="darwin",
+            runner=runner,
+        )
+        bridge.execute_human_ops_launch_app.assert_called_once_with(
+            {"app": "WeChat"},
             platform_name="darwin",
             runner=runner,
         )
@@ -135,6 +143,7 @@ class DesktopActionWiringTests(unittest.TestCase):
         deps = main._build_desktop_command_router_dependencies()
         self.assertIs(deps.execute_human_ops_click, main.execute_human_ops_click)
         self.assertIs(deps.execute_human_ops_type_text, main.execute_human_ops_type_text)
+        self.assertIs(deps.execute_human_ops_launch_app, main.execute_human_ops_launch_app)
         self.assertIs(deps.execute_human_ops_key_press, main.execute_human_ops_key_press)
         self.assertIs(deps.hide_window_for_desktop_click, main._hide_window_for_desktop_click)
         self.assertIs(deps.restore_window_after_desktop_click, main._restore_window_after_desktop_click)

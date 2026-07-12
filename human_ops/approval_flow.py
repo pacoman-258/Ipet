@@ -89,7 +89,16 @@ def stream_human_ops_proposal_decision(
         record["status"] = "approved"
         action_type = str(proposal.payload.get("action_type") or "").strip()
         phase_name = "human_ops_click" if action_type == "click" else "human_ops_action"
-        yield deps.sse("phase", {"name": phase_name, "status": "running", "text": label})
+        yield deps.sse(
+            "phase",
+            {
+                "category": "acting",
+                "name": phase_name,
+                "status": "running",
+                "text": label,
+                "source": "human_ops",
+            },
+        )
         try:
             execution = await deps.perform_human_ops_action(proposal.approve())
             if action_type == "click":
@@ -98,6 +107,8 @@ def stream_human_ops_proposal_decision(
                 final_text = f"已执行输入：{label}。"
             elif action_type == "key_press":
                 final_text = f"已执行按键：{label}。"
+            elif action_type == "launch_app":
+                final_text = f"已打开应用：{label}。"
             else:
                 final_text = f"已执行操作：{label}。"
             record["status"] = "executed"
@@ -112,18 +123,26 @@ def stream_human_ops_proposal_decision(
             human_ops_config = (
                 private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
             )
+            verification_task = deps.post_approval_observe_prompt(
+                str(record.get("user_text") or ""),
+                proposal,
+            )
             yield deps.sse(
                 "phase",
-                {"name": "human_ops_observe", "status": "running", "text": "Human Ops: observe after approved action"},
+                {
+                    "category": "verifying",
+                    "name": "human_ops_observe",
+                    "status": "running",
+                    "text": "Body 正在检查动作后的界面状态",
+                    "task": verification_task,
+                    "source": "body",
+                },
             )
             try:
                 observation = await deps.perform_human_ops_observe(
                     BrainDecision.observe(
                         "screen",
-                        observe_prompt=deps.post_approval_observe_prompt(
-                            str(record.get("user_text") or ""),
-                            proposal,
-                        ),
+                        observe_prompt=verification_task,
                     ),
                     human_ops_config,
                 )
@@ -161,9 +180,10 @@ def stream_human_ops_proposal_decision(
                             yield deps.sse(
                                 "phase",
                                 {
+                                    "category": "planning",
                                     "name": "brain_react",
                                     "status": "running",
-                                    "text": "Brain ReAct: unsupported continuation action correction",
+                                    "text": "Brain 正在调整后续动作",
                                 },
                             )
                             followup_text = deps.unsupported_simple_action_prompt(
@@ -185,7 +205,14 @@ def stream_human_ops_proposal_decision(
                         )
                         yield deps.sse(
                             "phase",
-                            {"name": "human_ops_review", "status": "waiting", "text": "Human Ops: waiting for review"},
+                            {
+                                "category": "waiting_approval",
+                                "name": "human_ops_review",
+                                "status": "waiting",
+                                "status_id": f"approval:{next_proposal_id}",
+                                "text": "Human Ops 正在等待你的批准",
+                                "source": "human_ops",
+                            },
                         )
                         yield deps.sse("approval_required", deps.proposal_event_payload(next_proposal_id, next_proposal))
                         return
@@ -197,7 +224,12 @@ def stream_human_ops_proposal_decision(
                         continuation_budget -= 1
                         yield deps.sse(
                             "phase",
-                            {"name": "brain_react", "status": "running", "text": "Brain ReAct: continue after approval"},
+                            {
+                                "category": "planning",
+                                "name": "brain_react",
+                                "status": "running",
+                                "text": "Brain 正在根据执行结果规划下一步",
+                            },
                         )
                         followup_text = deps.react_followup_prompt(
                             user_text=original_user_text,
@@ -213,7 +245,18 @@ def stream_human_ops_proposal_decision(
                         continuation_budget -= 1
                         yield deps.sse(
                             "phase",
-                            {"name": "human_ops_observe", "status": "running", "text": "Human Ops: observe continuation"},
+                            {
+                                "category": "verifying",
+                                "name": "human_ops_observe",
+                                "status": "running",
+                                "text": "Body 正在验证当前界面是否符合预期",
+                                "task": str(
+                                    next_decision.payload.get("observe_prompt")
+                                    or next_decision.payload.get("question")
+                                    or next_decision.summary
+                                ).strip(),
+                                "source": "body",
+                            },
                         )
                         try:
                             observation = await deps.perform_human_ops_observe(next_decision, human_ops_config)
@@ -247,9 +290,10 @@ def stream_human_ops_proposal_decision(
                         yield deps.sse(
                             "phase",
                             {
+                                "category": "planning",
                                 "name": "brain_react",
                                 "status": "running",
-                                "text": "Brain ReAct: unfinished continuation correction",
+                                "text": "Brain 正在补全尚未完成的后续步骤",
                             },
                         )
                         followup_text = deps.react_followup_prompt(

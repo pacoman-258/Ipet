@@ -117,6 +117,51 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertIn(r'keystroke "收到 \"OK\""', calls[0][0][-1])
         self.assertEqual(calls[0][1]["timeout"], 5)
 
+    def test_launch_app_reads_macos_application_list_then_opens_resolved_bundle(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append((args, kwargs))
+            if args[0] == "/usr/bin/mdfind":
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="/Applications/WeChat.app\n/Applications/Other.app/Contents/Helper.app\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        result = desktop_actions.execute_human_ops_launch_app(
+            {"app": "WeChat"},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(calls[0][0][0], "/usr/bin/mdfind")
+        self.assertEqual(calls[1][0], ["/usr/bin/open", "/Applications/WeChat.app"])
+        self.assertEqual(result["app"], "WeChat")
+        self.assertEqual(result["application_count"], 1)
+        self.assertEqual(result["method"], "launch_services")
+
+    def test_launch_app_resolves_netease_music_bundle_name(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            stdout = "/Applications/NeteaseMusic.app\n" if args[0] == "/usr/bin/mdfind" else ""
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+        result = desktop_actions.execute_human_ops_launch_app(
+            {"app": "NeteaseMusic"},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(calls[1], ["/usr/bin/open", "/Applications/NeteaseMusic.app"])
+        self.assertEqual(result["app"], "NeteaseMusic")
+
     def test_key_press_enter_and_return_use_key_code_36(self) -> None:
         desktop_actions = _desktop_actions_module()
         scripts = []
@@ -152,6 +197,8 @@ class DesktopActionsModuleTests(unittest.TestCase):
             desktop_actions.execute_human_ops_type_text({}, platform_name="linux")
         with self.assertRaisesRegex(RuntimeError, "Human Ops key press is currently implemented through macOS"):
             desktop_actions.execute_human_ops_key_press({}, platform_name="linux")
+        with self.assertRaisesRegex(RuntimeError, "Human Ops app launch is currently implemented through macOS"):
+            desktop_actions.execute_human_ops_launch_app({"app": "WeChat"}, platform_name="linux")
 
     def test_hide_and_restore_window_use_injected_qapplication(self) -> None:
         desktop_actions = _desktop_actions_module()

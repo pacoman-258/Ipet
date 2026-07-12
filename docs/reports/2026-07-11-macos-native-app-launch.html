@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>macOS 原生应用启动 Human Ops 能力</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 15px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #0f172a; }
+    section { margin: 24px 0; padding: 18px 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    code { padding: 2px 5px; border-radius: 5px; background: #f1f5f9; }
+    .ok { color: #047857; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>macOS 原生应用启动 Human Ops 能力</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>打开应用不再截图寻找 Dock 坐标或模拟点击，改为读取 macOS 应用 bundle 列表并通过 Launch Services 启动，同时保留 Human Ops 批准边界。</p>
+  </section>
+
+  <section>
+    <h2>Worker / subagent split</h2>
+    <p>单 worker 完成；未使用 subagent。Brain 负责产生或被纠正为 <code>launch_app</code>，Human Ops 负责批准，桌面主机负责应用解析与执行，QA 负责协议和路由回归。</p>
+  </section>
+
+  <section>
+    <h2>Files changed</h2>
+    <ul>
+      <li>Brain 与意图：<code>brain/llm.py</code>、<code>backend/computer_use_context.py</code>、<code>backend/react_prompts.py</code>、<code>backend/app_adapters.py</code></li>
+      <li>Human Ops：<code>human_ops/proposals.py</code>、<code>human_ops/approval_flow.py</code>、<code>human_ops/desktop_actions.py</code></li>
+      <li>桌面桥与路由：<code>backend/desktop_command_client.py</code>、<code>app/desktop_action_bridge.py</code>、<code>app/desktop_action_wiring.py</code>、<code>app/desktop_command_wiring.py</code>、<code>app/desktop_command_router.py</code>、<code>main.py</code></li>
+      <li>相关测试、<code>docs/WORKFLOW.md</code> 与本报告</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved effect</h2>
+    <ul>
+      <li>打开应用请求直接形成需要批准的 <code>launch_app</code> proposal，无红点点击预览。</li>
+      <li>即使模型返回旧式 observe/click，生产适配层也会在纯应用启动意图下改写为 <code>launch_app</code>。</li>
+      <li>批准后使用 <code>mdfind</code> 读取 application bundle 元数据，匹配精确或唯一应用路径，再用 <code>/usr/bin/open</code> 启动。</li>
+      <li>应用列表不可用或无唯一匹配时降级为 <code>open -a</code>；整个启动动作不截图、不模拟鼠标，也不需要 Accessibility 事件权限。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p class="ok">全量回归 702 项全部通过。</p>
+    <ul>
+      <li>Brain / Human Ops / proposal 协议覆盖 <code>launch_app</code> 与批准要求。</li>
+      <li>桌面动作测试验证先读取应用列表，再打开解析后的 bundle 路径。</li>
+      <li>桌面命令路由测试验证启动应用不会走隐藏窗口与虚拟点击分支。</li>
+      <li>Python 语法检查与 <code>git diff --check</code> 通过。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Remaining work</h2>
+    <p>未执行真实应用启动冒烟测试，因为它会改变桌面应用状态，需要单独批准。</p>
+  </section>
+
+  <section>
+    <h2>Recommended next step</h2>
+    <p>在用户批准后，用一个无敏感数据的应用执行真实 <code>launch_app</code> 冒烟测试，并从 macOS 进程状态确认启动结果。</p>
+  </section>
+</body>
+</html>

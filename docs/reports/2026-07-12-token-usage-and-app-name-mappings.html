@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet Token Usage 与 macOS 应用名称映射修复</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>Token Usage 与 macOS 应用名称映射修复</h1>
+  <p><strong>日期：</strong>2026-07-12</p>
+  <h2>Goal</h2>
+  <p>修正 Codex token 计数异常，并让“网易云音乐”等本地化应用名称可靠映射到真实 macOS 应用包名。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p><code>brain/llm.py</code>、<code>backend/computer_use_context.py</code>、对应 Brain、意图识别和桌面动作测试，以及本报告。</p>
+  <h2>Achieved effect</h2>
+  <p>Codex app-server usage 现在优先采用协议中的整轮 <code>tokenUsage.total</code>，仅在旧协议缺失时回退 <code>last</code>。应用启动别名增加网易云音乐、腾讯会议、库乐队、Keynote 讲演、Numbers 表格、Pages 文稿、Safari 浏览器和 iMovie 剪辑；批准后继续通过应用列表精确解析真实 <code>.app</code> 路径，不使用截图或虚拟点击。</p>
+  <h2>Verification</h2>
+  <p>针对性测试 53 项通过，Python 编译检查与 diff 格式检查通过；全量回归共 703 项通过。应用清单与本地化名称通过 macOS 应用目录、<code>Info.plist</code> 和中文 <code>InfoPlist.strings</code> 只读核对。未实际启动应用。</p>
+  <h2>Remaining work</h2>
+  <p>没有必需代码工作。真实启动烟雾测试会改变应用状态，需要单独批准后执行。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet 后分别发起普通 Codex 对话和“打开网易云音乐”，确认整轮 token 数与 Human Ops 审批卡片符合预期；批准后验证网易云音乐被打开。</p>
+</body>
+</html>

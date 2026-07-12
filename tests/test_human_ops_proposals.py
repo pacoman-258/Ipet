@@ -60,6 +60,18 @@ class HumanOpsProposalTests(unittest.TestCase):
 
         self.assertEqual(inherited.payload["arguments"]["expected_text"], "收到，马上处理")
 
+    def test_launch_app_proposal_is_reviewable_without_click_preview(self) -> None:
+        proposal = build_human_ops_act_proposal(
+            BrainDecision.propose_act("launch_app", {"app": "WeChat", "label": "WeChat"}),
+            user_text="打开微信",
+        )
+
+        payload = proposal_event_payload("launch-1", proposal)
+        self.assertTrue(proposal.requires_review)
+        self.assertEqual(payload["action_type"], "launch_app")
+        self.assertEqual(payload["tools"][0]["summary"], "打开应用 WeChat")
+        self.assertIsNone(payload["preview"])
+
 
 if __name__ == "__main__":
     unittest.main()

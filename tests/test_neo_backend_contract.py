@@ -572,7 +572,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开 Dock 里的 Chrome", "session_id": "neo-react-think-observe"},
+                json={"text": "点击 Dock 里的 Chrome 图标", "session_id": "neo-react-think-observe"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -585,6 +585,12 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertIn("brain_react", phase_names)
         self.assertIn("human_ops_observe", phase_names)
         self.assertIn("human_ops_review", phase_names)
+        phases = [data for name, data in events if name == "phase"]
+        observe_phase = next(data for data in phases if data.get("name") == "human_ops_observe")
+        review_phase = next(data for data in phases if data.get("name") == "human_ops_review")
+        self.assertEqual(observe_phase["category"], "observing")
+        self.assertIn("Chrome 图标", observe_phase["task"])
+        self.assertEqual(review_phase["category"], "waiting_approval")
         approvals = [data for name, data in events if name == "approval_required"]
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["preview"]["x"], 382)
@@ -627,7 +633,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开 Dock 里的 Chrome", "session_id": "neo-react-correct-say"},
+                json={"text": "点击 Dock 里的 Chrome 图标", "session_id": "neo-react-correct-say"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -674,7 +680,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开 Dock 里的 Chrome", "session_id": "neo-react-budget"},
+                json={"text": "点击 Dock 里的 Chrome 图标", "session_id": "neo-react-budget"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -687,15 +693,14 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(done["decision"]["payload"]["goal"]["status"], "blocked")
         self.assertIn("还缺少", done["text"])
 
-    def test_open_app_request_is_desktop_action_and_observe_asks_for_clickable_entry(self) -> None:
+    def test_open_app_request_is_native_human_ops_action_without_click_coordinates(self) -> None:
         self.assertTrue(backend_app._looks_like_desktop_action_request("打开微信"))
-        self.assertTrue(backend_app._looks_like_click_request("打开微信"))
+        self.assertFalse(backend_app._looks_like_click_request("打开微信"))
 
-        prompt = backend_app._default_observe_prompt_for_request("打开微信", "打开微信")
+        decision = backend_app._coerce_decision_for_human_ops("打开微信", BrainDecision.observe("screen"))
 
-        self.assertIn("可点击", prompt)
-        self.assertIn("x 和 y", prompt)
-        self.assertIn("macOS", prompt)
+        self.assertEqual(decision.payload["action_type"], "launch_app")
+        self.assertEqual(decision.payload["arguments"]["app"], "WeChat")
 
     def test_wechat_reply_request_is_desktop_action_without_forcing_click_coordinates(self) -> None:
         user_text = "根据张三的微信聊天信息回复张三"
@@ -1164,7 +1169,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信", "session_id": "neo-surface-affordance"},
+                json={"text": "点击 Dock 里的微信图标", "session_id": "neo-surface-affordance"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -1240,7 +1245,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信", "session_id": "neo-hidden-dock-reveal"},
+                json={"text": "点击屏幕底边显示隐藏 Dock", "session_id": "neo-hidden-dock-reveal"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -1322,7 +1327,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信并根据张三聊天信息回复张三", "session_id": "neo-screen-edge-coordinate-incomplete"},
+                json={"text": "点击屏幕底边显示隐藏 Dock", "session_id": "neo-screen-edge-coordinate-incomplete"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -2132,7 +2137,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertIsNone(enter_approval["preview"])
         self.assertIn("回车", enter_approval["tools"][0]["summary"])
 
-    def test_chat_stream_corrects_unsupported_desktop_action_to_simple_human_action(self) -> None:
+    def test_chat_stream_sends_launch_app_directly_to_human_ops_review(self) -> None:
         backend_app.CONFIG_PATH.write_text(
             json.dumps(
                 {
@@ -2160,23 +2165,7 @@ class NeoBackendContractTests(unittest.TestCase):
             provider="openai_compatible",
             model="neo-model",
         )
-        corrected = SimpleNamespace(
-            text="Click WeChat in Dock",
-            decision=BrainDecision.propose_act(
-                "click",
-                {"x": 520, "y": 930, "label": "Dock 微信图标"},
-                goal={
-                    "objective": "打开微信并根据张三聊天信息回复张三",
-                    "status": "handoff_review",
-                    "stage": "launch_app",
-                    "next": "locate_contact",
-                },
-            ),
-            provider="openai_compatible",
-            model="neo-model",
-        )
-
-        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(side_effect=[unsupported, corrected])) as run_mock:
+        with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(return_value=unsupported)) as run_mock:
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
@@ -2185,15 +2174,12 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
 
-        self.assertEqual(run_mock.await_count, 2)
-        correction_prompt = run_mock.await_args_list[1].kwargs["user_text"]
-        self.assertIn("launch_app", correction_prompt)
-        self.assertIn("click、type_text、key_press enter", correction_prompt)
+        self.assertEqual(run_mock.await_count, 1)
         approvals = [data for name, data in _sse_events(body) if name == "approval_required"]
         self.assertEqual(len(approvals), 1)
-        self.assertEqual(approvals[0]["action_type"], "click")
-        self.assertEqual(approvals[0]["preview"]["marker"], "red_dot")
-        self.assertNotIn("launch_app", [approval["action_type"] for approval in approvals])
+        self.assertEqual(approvals[0]["action_type"], "launch_app")
+        self.assertIsNone(approvals[0]["preview"])
+        self.assertIn("打开应用", approvals[0]["tools"][0]["summary"])
 
     def test_chat_stream_corrects_click_without_complete_coordinates_before_review(self) -> None:
         backend_app.CONFIG_PATH.write_text(
@@ -2243,7 +2229,7 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信并根据张三聊天信息回复张三", "session_id": "neo-click-coordinate-correction"},
+                json={"text": "点击 Dock 微信图标并根据张三聊天信息回复张三", "session_id": "neo-click-coordinate-correction"},
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -2628,21 +2614,6 @@ class NeoBackendContractTests(unittest.TestCase):
             provider="openai_compatible",
             model="neo-model",
         )
-        dock_click = SimpleNamespace(
-            text="Click WeChat in Dock",
-            decision=BrainDecision.propose_act(
-                "click",
-                {"x": 520, "y": 930, "label": "Dock 微信图标"},
-                goal={
-                    "objective": "打开微信并根据张三聊天信息回复张三",
-                    "status": "handoff_review",
-                    "stage": "launch_app",
-                    "next": "locate_contact",
-                },
-            ),
-            provider="openai_compatible",
-            model="neo-model",
-        )
         contact_click = SimpleNamespace(
             text="Click Zhang San thread",
             decision=BrainDecision.propose_act(
@@ -2718,21 +2689,6 @@ class NeoBackendContractTests(unittest.TestCase):
             provider="openai_compatible",
             model="neo-model",
         )
-        dock_observation = {
-            "text": "Dock 中可见微信图标，可点击中心点的 macOS 屏幕坐标为 x=520, y=930。",
-            "observations": [{"claim": "Dock 微信图标可点击"}],
-            "unknowns": [],
-            "surface": {"kind": "desktop_gui", "region": "dock", "confidence": 0.86},
-            "affordances": [
-                {
-                    "kind": "app_icon",
-                    "label": "微信",
-                    "supports": ["click_to_open"],
-                    "location": {"x": 520, "y": 930},
-                    "confidence": 0.82,
-                }
-            ],
-        }
         wechat_app_observation = {
             "text": "微信已打开，左侧联系人“张三”的聊天条目可点击，中心点为 x=240, y=310。",
             "observations": [{"claim": "张三聊天条目可点击"}],
@@ -2796,13 +2752,12 @@ class NeoBackendContractTests(unittest.TestCase):
         with mock.patch.object(
             backend_app,
             "run_brain_turn",
-            new=mock.AsyncMock(side_effect=[initial_observe, dock_click, contact_click, focus_input, type_reply, enter_send, done_completion]),
+            new=mock.AsyncMock(side_effect=[initial_observe, contact_click, focus_input, type_reply, enter_send, done_completion]),
         ) as run_mock, mock.patch.object(
             backend_app,
             "_perform_human_ops_observe",
             new=mock.AsyncMock(
                 side_effect=[
-                    dock_observation,
                     wechat_app_observation,
                     chat_observation,
                     focused_observation,
@@ -2815,7 +2770,7 @@ class NeoBackendContractTests(unittest.TestCase):
             "_perform_human_ops_action",
             new=mock.AsyncMock(
                 side_effect=[
-                    {"clicked": True, "target": "Dock 微信图标"},
+                    {"launched": True, "app": "WeChat"},
                     {"clicked": True, "target": "张三聊天条目"},
                     {"clicked": True, "target": "微信聊天输入框"},
                     {"typed": True, "text": draft_text},
@@ -2831,9 +2786,9 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
             approval_events = [data for name, data in _sse_events(body) if name == "approval_required"]
-            self.assertEqual([approval_events[-1]["action_type"]], ["click"])
+            self.assertEqual([approval_events[-1]["action_type"]], ["launch_app"])
             proposal_id = approval_events[-1]["proposal_id"]
-            action_sequence: list[str] = ["click"]
+            action_sequence: list[str] = ["launch_app"]
             enter_proposal_id = ""
             for expected_next_action in ("click", "click", "type_text", "key_press", ""):
                 with self.client.stream(
@@ -2858,9 +2813,9 @@ class NeoBackendContractTests(unittest.TestCase):
                 if expected_next_action == "key_press":
                     enter_proposal_id = proposal_id
 
-        self.assertEqual(action_sequence, ["click", "click", "click", "type_text", "key_press"])
-        self.assertEqual(run_mock.await_count, 7)
-        self.assertEqual(observe_mock.await_count, 6)
+        self.assertEqual(action_sequence, ["launch_app", "click", "click", "type_text", "key_press"])
+        self.assertEqual(run_mock.await_count, 6)
+        self.assertEqual(observe_mock.await_count, 5)
         self.assertEqual(action_mock.await_count, 5)
         enter_proposal = backend_app.HUMAN_OPS_PENDING_PROPOSALS[enter_proposal_id]["proposal"]
         self.assertEqual(enter_proposal.payload["arguments"]["expected_text"], draft_text)

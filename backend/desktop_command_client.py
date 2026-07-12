@@ -106,6 +106,12 @@ async def perform_human_ops_action(
         label = str(args.get("label") or args.get("target") or "输入位置").strip() or "输入位置"
         result = await send_command("human_ops_type_text", {"text": text, "label": label}, timeout_sec=5)
         return {"typed": True, "text": text, "label": label, **result}
+    if action_type == "launch_app":
+        app_name = str(args.get("app") or args.get("name") or args.get("label") or "").strip()
+        if not app_name:
+            raise RuntimeError("Human Ops app launch requires an application name.")
+        result = await send_command("human_ops_launch_app", {"app": app_name, "label": app_name}, timeout_sec=8)
+        return {"launched": True, "app": app_name, **result}
     if action_type == "key_press":
         key = str(args.get("key") or "enter").strip().lower() or "enter"
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"

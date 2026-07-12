@@ -21,6 +21,8 @@
       typeof deps.removeEmptyPendingThoughtGroup === "function" ? deps.removeEmptyPendingThoughtGroup : () => {};
     const appendWorklogPhase =
       typeof deps.appendWorklogPhase === "function" ? deps.appendWorklogPhase : () => {};
+    const finishWorklogProcess =
+      typeof deps.finishWorklogProcess === "function" ? deps.finishWorklogProcess : () => {};
     const appendApprovalBubble =
       typeof deps.appendApprovalBubble === "function" ? deps.appendApprovalBubble : () => {};
     const updateWorklogFinalText =
@@ -134,6 +136,24 @@
 
       if (eventName === "done") {
         context.full = payload.text || context.full;
+        const goalStatus = String(payload?.decision?.payload?.goal?.status || "").trim().toLowerCase();
+        const blocked =
+          ["blocked", "need_user"].includes(goalStatus) ||
+          payload?.approved === false ||
+          payload?.execution?.ok === false;
+        const terminalCategory = blocked ? "blocked" : "completed";
+        const terminalText = blocked ? "任务未能继续，已说明缺少的条件" : "任务完成，结果已验证";
+        const terminalTurn = appendWorklogPhase(
+          {
+            category: terminalCategory,
+            status: terminalCategory,
+            text: terminalText,
+            source: blocked ? "human_ops" : "brain",
+            transient: false,
+          },
+          context.thoughtSessionId,
+        );
+        finishWorklogProcess(terminalTurn, terminalCategory);
         if (payload.usage) {
           setChatTokenUsage(payload.usage);
         }
@@ -166,6 +186,17 @@
       }
 
       if (eventName === "error") {
+        const blockedTurn = appendWorklogPhase(
+          {
+            category: "blocked",
+            status: "blocked",
+            text: String(payload.message || "聊天流返回错误"),
+            source: "human_ops",
+            transient: false,
+          },
+          context.thoughtSessionId,
+        );
+        finishWorklogProcess(blockedTurn, "blocked");
         clearActiveThoughtSession(context.thoughtSessionId);
         throw new Error(payload.message || "聊天流返回错误");
       }

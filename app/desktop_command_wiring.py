@@ -20,6 +20,7 @@ class DesktopCommandRouterWiringDependencies:
     qfiledialog: object
     execute_human_ops_click: Callable[[dict | None], dict[str, object]]
     execute_human_ops_type_text: Callable[[dict | None], dict[str, object]]
+    execute_human_ops_launch_app: Callable[[dict | None], dict[str, object]]
     execute_human_ops_key_press: Callable[[dict | None], dict[str, object]]
     hide_window_for_desktop_click: Callable[[object], bool]
     restore_window_after_desktop_click: Callable[[object, bool], None]
@@ -68,6 +69,7 @@ def create_desktop_command_router(
         pick_image_file_func=pick_image_file_func,
         execute_human_ops_click=deps.execute_human_ops_click,
         execute_human_ops_type_text=deps.execute_human_ops_type_text,
+        execute_human_ops_launch_app=deps.execute_human_ops_launch_app,
         execute_human_ops_key_press=deps.execute_human_ops_key_press,
         hide_window_for_desktop_click=deps.hide_window_for_desktop_click,
         restore_window_after_desktop_click=deps.restore_window_after_desktop_click,

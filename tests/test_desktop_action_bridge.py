@@ -36,6 +36,7 @@ class DesktopActionBridgeTests(unittest.TestCase):
         desktop_actions._post_core_graphics_click = mock.Mock()
         desktop_actions.execute_human_ops_click.return_value = {"clicked": True}
         desktop_actions.execute_human_ops_type_text.return_value = {"typed": True}
+        desktop_actions.execute_human_ops_launch_app.return_value = {"launched": True}
         desktop_actions.execute_human_ops_key_press.return_value = {"pressed": True}
         clicker = mock.Mock()
         runner = mock.Mock()
@@ -51,10 +52,12 @@ class DesktopActionBridgeTests(unittest.TestCase):
             event_clicker=clicker,
         )
         type_result = bridge.execute_human_ops_type_text({"text": "hi"}, platform_name="darwin", runner=runner)
+        launch_result = bridge.execute_human_ops_launch_app({"app": "WeChat"}, platform_name="darwin", runner=runner)
         key_result = bridge.execute_human_ops_key_press({"key": "enter"}, platform_name="darwin", runner=runner)
 
         self.assertEqual(click_result, {"clicked": True})
         self.assertEqual(type_result, {"typed": True})
+        self.assertEqual(launch_result, {"launched": True})
         self.assertEqual(key_result, {"pressed": True})
         desktop_actions._screen_coordinate.assert_called_once_with("41.8", fallback=7)
         desktop_actions._post_core_graphics_click.assert_called_once_with(12, 34)
@@ -66,6 +69,11 @@ class DesktopActionBridgeTests(unittest.TestCase):
         )
         desktop_actions.execute_human_ops_type_text.assert_called_once_with(
             {"text": "hi"},
+            platform_name="darwin",
+            runner=runner,
+        )
+        desktop_actions.execute_human_ops_launch_app.assert_called_once_with(
+            {"app": "WeChat"},
             platform_name="darwin",
             runner=runner,
         )

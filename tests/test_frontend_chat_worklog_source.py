@@ -53,6 +53,7 @@ class FrontendChatWorklogSourceTests(unittest.TestCase):
             "appendThoughtPhase",
             "ensureAssistantWorklogTurn",
             "appendWorklogPhase",
+            "finishWorklogProcess",
             "updateWorklogFinalText",
             "appendAssistantHistoryBlock",
             "appendApprovalBubble",
@@ -85,6 +86,7 @@ class FrontendChatWorklogSourceTests(unittest.TestCase):
             "appendThoughtPhase",
             "ensureAssistantWorklogTurn",
             "appendWorklogPhase",
+            "finishWorklogProcess",
             "updateWorklogFinalText",
             "appendAssistantHistoryBlock",
             "appendApprovalBubble",
@@ -95,6 +97,7 @@ class FrontendChatWorklogSourceTests(unittest.TestCase):
         for facade_use in (
             "phaseLabel: facade.phaseLabel,",
             "appendWorklogPhase: facade.appendWorklogPhase,",
+            "finishWorklogProcess: facade.finishWorklogProcess,",
             "appendApprovalBubble: facade.appendApprovalBubble,",
             "appendAssistantHistoryBlock: facade.appendAssistantHistoryBlock,",
         ):
@@ -102,6 +105,26 @@ class FrontendChatWorklogSourceTests(unittest.TestCase):
         self.assertNotIn("let assistantWorklogCounter = 0;", index_source)
         self.assertNotIn("const approvalBubbleRefs = new Map();", index_source)
         self.assertNotIn("function buildAssistantWorklogTurn", index_source)
+
+    def test_worklog_uses_unified_execution_categories_timing_and_auto_collapse(self) -> None:
+        source = CHAT_WORKLOG_JS.read_text(encoding="utf-8")
+
+        for category in (
+            "planning",
+            "searching",
+            "observing",
+            "acting",
+            "waiting_approval",
+            "verifying",
+            "blocked",
+            "completed",
+        ):
+            self.assertIn(f'"{category}"', source)
+        self.assertIn('processDetailsEl.className = "worklog-process";', source)
+        self.assertIn("setInterval(() => {", source)
+        self.assertIn("settleWorklogStatus", source)
+        self.assertIn('target.processDetailsEl.open = false;', source)
+        self.assertIn("Brain → Observe：", source)
 
 
 if __name__ == "__main__":

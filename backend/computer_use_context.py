@@ -40,6 +40,29 @@ _COMMON_APP_LABELS = (
     "finder",
     "访达",
 )
+_APP_LAUNCH_ALIASES = {
+    "微信": "WeChat",
+    "wechat": "WeChat",
+    "网易云音乐": "NeteaseMusic",
+    "网易云": "NeteaseMusic",
+    "腾讯会议": "TencentMeeting",
+    "库乐队": "GarageBand",
+    "keynote讲演": "Keynote",
+    "numbers表格": "Numbers",
+    "pages文稿": "Pages",
+    "safari浏览器": "Safari",
+    "imovie 剪辑": "iMovie",
+    "imovie剪辑": "iMovie",
+    "谷歌浏览器": "Google Chrome",
+    "google chrome": "Google Chrome",
+    "chrome": "Google Chrome",
+    "苹果浏览器": "Safari",
+    "safari": "Safari",
+    "系统设置": "System Settings",
+    "设置": "System Settings",
+    "访达": "Finder",
+    "finder": "Finder",
+}
 _DESKTOP_OBSERVE_TERMS = (
     "看屏幕",
     "观察屏幕",
@@ -93,6 +116,17 @@ def _looks_like_app_launch_request(user_text: str) -> bool:
     return any(text.startswith(term) and len(text.replace(term, "").strip()) > 0 for term in ("open ", "launch "))
 
 
+def _app_launch_target(user_text: str) -> str:
+    text = str(user_text or "").strip()
+    match = re.search(r"(?i)(?:打开|启动|切到|open\s+|launch\s+)([^，,。；;\n]{1,80})", text)
+    if not match:
+        return ""
+    target = re.split(r"(?:然后|并且|并|再|后)", match.group(1), maxsplit=1)[0]
+    target = re.sub(r"(?i)(?:这个|一下|应用程序|应用|app)$", "", target.strip(" \t：:‘’“”\"'"))
+    normalized = target.strip().lower()
+    return _APP_LAUNCH_ALIASES.get(normalized, target.strip())
+
+
 def _looks_like_chat_reply_request(user_text: str) -> bool:
     text = str(user_text or "").strip().lower()
     if not text:
@@ -107,7 +141,7 @@ def _looks_like_click_request(user_text: str) -> bool:
     explicit_click = any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
         target in text for target in _DESKTOP_TARGET_TERMS
     )
-    return explicit_click or _looks_like_app_launch_request(text)
+    return explicit_click
 
 
 def _has_partial_coordinate_pair(text: str) -> bool:

@@ -18,10 +18,26 @@ class ComputerUseContextTests(unittest.TestCase):
                 self.assertFalse(context_helpers._looks_like_desktop_action_request(text))
                 self.assertFalse(context_helpers._looks_like_click_request(text))
 
-        for text in ("帮我打开微信", "点击按钮"):
-            with self.subTest(text=text):
-                self.assertTrue(context_helpers._looks_like_desktop_action_request(text))
-                self.assertTrue(context_helpers._looks_like_click_request(text))
+        self.assertTrue(context_helpers._looks_like_desktop_action_request("帮我打开微信"))
+        self.assertTrue(context_helpers._looks_like_app_launch_request("帮我打开微信"))
+        self.assertEqual(context_helpers._app_launch_target("帮我打开微信"), "WeChat")
+        self.assertFalse(context_helpers._looks_like_click_request("帮我打开微信"))
+        localized_app_names = {
+            "打开网易云音乐": "NeteaseMusic",
+            "启动腾讯会议": "TencentMeeting",
+            "打开库乐队": "GarageBand",
+            "打开Keynote讲演": "Keynote",
+            "打开Numbers表格": "Numbers",
+            "打开Pages文稿": "Pages",
+            "打开Safari浏览器": "Safari",
+            "打开iMovie 剪辑": "iMovie",
+        }
+        for request, app_name in localized_app_names.items():
+            with self.subTest(request=request):
+                self.assertEqual(context_helpers._app_launch_target(request), app_name)
+
+        self.assertTrue(context_helpers._looks_like_desktop_action_request("点击按钮"))
+        self.assertTrue(context_helpers._looks_like_click_request("点击按钮"))
 
     def test_app_intent_wrappers_delegate_to_computer_use_context_helpers(self) -> None:
         with mock.patch.object(context_helpers, "_looks_like_desktop_observe_request", return_value=True) as helper:

@@ -112,7 +112,12 @@ class _FakeAppServerProcess:
                 {"id": 3, "result": {}},
                 {
                     "method": "thread/tokenUsage/updated",
-                    "params": {"tokenUsage": {"last": {"inputTokens": 1200, "outputTokens": 3}}},
+                    "params": {
+                        "tokenUsage": {
+                            "last": {"inputTokens": 1200, "outputTokens": 3},
+                            "total": {"inputTokens": 1700, "outputTokens": 8, "totalTokens": 1708},
+                        }
+                    },
                 },
                 {
                     "method": "turn/completed",
@@ -148,7 +153,7 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
                 completion = await complete_with_provider(config, [BrainMessage(role="user", content="hi")])
 
         self.assertEqual(completion.text, '{"kind":"say","text":"OK"}')
-        self.assertEqual(completion.usage, {"input_tokens": 1200, "output_tokens": 3, "total_tokens": 1203})
+        self.assertEqual(completion.usage, {"input_tokens": 1700, "output_tokens": 8, "total_tokens": 1708})
         self.assertEqual(spawn.await_args.args[:3], ("/mock/codex", "app-server", "--stdio"))
         requests = [json.loads(value) for chunk in process.stdin.writes for value in chunk.decode("utf-8").splitlines()]
         thread_params = requests[1]["params"]
