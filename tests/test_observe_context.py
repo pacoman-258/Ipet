@@ -21,6 +21,57 @@ class ObserveContextTests(unittest.TestCase):
         self.assertIn("image-to-screen scale: x=0.765625, y=0.765412", context)
         self.assertIn("screen-to-image scale: x=1.306122, y=1.306485", context)
 
+    def test_direct_brain_image_coordinates_are_converted_to_screen_points(self) -> None:
+        decision = BrainDecision.propose_act(
+            "click",
+            {
+                "target_app": "WeChat",
+                "x": 960,
+                "y": 624,
+                "coordinate_space": "image_pixels",
+                "label": "聊天输入框",
+            },
+        )
+        observation = {
+            "analysis_route": "brain",
+            "frame": {
+                "image_width": 1920,
+                "image_height": 1248,
+                "display_layout": [{"x": 0, "y": 0, "width": 1470, "height": 956}],
+            },
+        }
+
+        normalized = observe_context.normalize_observed_click_coordinates(decision, observation)
+        arguments = normalized.payload["arguments"]
+
+        self.assertEqual(arguments["x"], 735)
+        self.assertEqual(arguments["y"], 478)
+        self.assertEqual(arguments["coordinate_space"], "macos_screen_points")
+        self.assertEqual(arguments["source_coordinate_space"], "image_pixels")
+
+    def test_direct_brain_coordinates_default_to_image_pixels_and_reject_out_of_bounds(self) -> None:
+        observation = {
+            "analysis_route": "brain",
+            "frame": {
+                "image_width": 1000,
+                "image_height": 800,
+                "display_layout": [{"x": -500, "y": 0, "width": 500, "height": 400}],
+            },
+        }
+        converted = observe_context.normalize_observed_click_coordinates(
+            BrainDecision.propose_act("click", {"target_app": "Finder", "x": 500, "y": 400}),
+            observation,
+        )
+        rejected = observe_context.normalize_observed_click_coordinates(
+            BrainDecision.propose_act("click", {"target_app": "Finder", "x": 1000, "y": 400}),
+            observation,
+        )
+
+        self.assertEqual(converted.payload["arguments"]["x"], -250)
+        self.assertEqual(converted.payload["arguments"]["y"], 200)
+        self.assertNotIn("x", rejected.payload["arguments"])
+        self.assertIn("outside", rejected.payload["arguments"]["coordinate_error"])
+
     def test_goal_missing_coordinates_narrows_observe_prompt(self) -> None:
         decision = BrainDecision.observe(
             "screen",
@@ -39,6 +90,16 @@ class ObserveContextTests(unittest.TestCase):
         self.assertIn("微信图标", prompt)
         self.assertIn("x 和 y", prompt)
         self.assertIn("不要描述其他内容", prompt)
+
+    def test_open_website_fallback_does_not_force_click_coordinates(self) -> None:
+        prompt = observe_context.default_observe_prompt_for_request(
+            "打开 B 站并观看视频",
+            "B 站",
+        )
+
+        self.assertNotIn("可点击中心点", prompt)
+        self.assertNotIn("x 和 y", prompt)
+        self.assertIn("主要可见内容", prompt)
 
     def test_frame_with_observe_prompt_preserves_goal_objective_for_screen_target(self) -> None:
         decision = BrainDecision.observe(

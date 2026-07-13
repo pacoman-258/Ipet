@@ -11,6 +11,11 @@ from typing import Callable
 
 import requests
 from app import desktop_runtime as _desktop_runtime
+from body.qwen_tts import (
+    QWEN_TTS_PROJECT_DIR,
+    qwen_tts_health_url,
+    qwen_tts_python,
+)
 
 
 class DesktopServiceLifecycle:
@@ -70,6 +75,8 @@ class DesktopServiceLifecycle:
         self.backend_started_by_app = False
         self.asr_process = None
         self.asr_started_by_app = False
+        self.qwen_tts_process = None
+        self.qwen_tts_started_by_app = False
         self._asr_warmup_monitor_lock = self.threading.Lock()
         self._asr_warmup_monitor_thread = None
 
@@ -226,6 +233,64 @@ class DesktopServiceLifecycle:
         else:
             self.print("ASR 服务未在预期时间内就绪，语音输入可能不可用。")
 
+    def _qwen_tts_is_healthy(self) -> bool:
+        try:
+            response = self.requests.get(qwen_tts_health_url(), timeout=0.15)
+            return bool(response.ok)
+        except Exception:
+            return False
+
+    def start_qwen_tts_service_async(self) -> None:
+        # Popen returns without waiting for model initialization.  Starting it
+        # on the desktop thread avoids losing a daemon worker during early Qt
+        # shutdown, while the heavyweight model stays in its own process.
+        self.ensure_qwen_tts_service()
+
+    def ensure_qwen_tts_service(self) -> None:
+        if self._qwen_tts_is_healthy():
+            return
+        if self.qwen_tts_process is not None and self.qwen_tts_process.poll() is None:
+            return
+
+        project_dir = QWEN_TTS_PROJECT_DIR
+        qwen_python = qwen_tts_python()
+        if not project_dir.is_dir() or not qwen_python.is_file():
+            self.print(f"Qwen TTS 本地运行环境不可用: {project_dir}")
+            return
+
+        log_path = self.truncate_service_log(self.service_log_path("qwen-tts"))
+        command = [
+            str(qwen_python),
+            "-m",
+            "uvicorn",
+            "app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8000",
+            "--log-level",
+            "warning",
+        ]
+        creationflags = 0
+        if self.os.name == "nt":
+            creationflags = getattr(self.subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+                self.subprocess,
+                "CREATE_NEW_PROCESS_GROUP",
+                0,
+            )
+        try:
+            with Path(log_path).open("a", encoding="utf-8") as qwen_log:
+                self.qwen_tts_process = self.subprocess.Popen(
+                    command,
+                    cwd=str(project_dir),
+                    stdout=qwen_log,
+                    stderr=self.subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+            self.qwen_tts_started_by_app = True
+        except Exception as exc:
+            self.print(f"启动 Qwen TTS 服务失败: {exc}")
+
     def request_asr_warmup(self) -> None:
         chat_cfg = self.config.get("chat", {})
         asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
@@ -344,6 +409,20 @@ class DesktopServiceLifecycle:
         if proc.poll() is not None:
             self.asr_process = None
             self.asr_started_by_app = False
+
+    def stop_qwen_tts_service(self) -> None:
+        proc = self.qwen_tts_process
+        if not proc or not self.qwen_tts_started_by_app:
+            return
+        if proc.poll() is not None:
+            self.qwen_tts_process = None
+            self.qwen_tts_started_by_app = False
+            return
+        try:
+            self.stop_managed_process(proc, started_by_app=True)
+        finally:
+            self.qwen_tts_process = None
+            self.qwen_tts_started_by_app = False
             return
         try:
             self.stop_managed_process(proc, started_by_app=True)

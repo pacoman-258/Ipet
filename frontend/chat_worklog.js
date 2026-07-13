@@ -38,6 +38,7 @@
       "waiting_approval",
       "verifying",
       "blocked",
+      "stopped",
       "completed",
     ]);
     const executionCategoryLabels = {
@@ -48,6 +49,7 @@
       waiting_approval: "等待批准",
       verifying: "验证",
       blocked: "受阻",
+      stopped: "已停止",
       completed: "完成",
     };
 
@@ -271,6 +273,9 @@
       const phase = String(payload?.phase || "").trim().toLowerCase();
       const name = String(payload?.name || "").trim().toLowerCase();
       const status = String(payload?.status || "").trim().toLowerCase();
+      if (status === "stopped") {
+        return "stopped";
+      }
       if (status === "blocked" || status === "failed") {
         return "blocked";
       }
@@ -339,7 +344,7 @@
       }
       const now = Date.now();
       rowEl.classList.remove("is-running", "is-waiting");
-      rowEl.classList.add(category === "blocked" ? "is-blocked" : "is-completed");
+      rowEl.classList.add(["blocked", "stopped"].includes(category) ? "is-blocked" : "is-completed");
       rowEl.dataset.status = category;
       if (rowEl._worklogDurationEl) {
         rowEl._worklogDurationEl.textContent = formatWorklogDuration(now - rowEl._worklogStartedAt);
@@ -500,7 +505,7 @@
       target.terminalCategory = category;
       stopWorklogTimer(target);
       updateWorklogSummary(target);
-      if (category === "completed") {
+      if (["completed", "stopped"].includes(category)) {
         target.processDetailsEl.open = false;
       }
       return target;

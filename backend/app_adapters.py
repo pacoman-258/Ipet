@@ -99,11 +99,11 @@ def _candidate_location_for_app_label(frame: dict[str, Any], app_label: str) -> 
     return _computer_use_context_helpers._candidate_location_for_app_label(frame, app_label)
 
 
-def _infer_chat_context(text: str, target_hint: str = "", *, is_wechat_surface: bool = False) -> dict[str, Any]:
+def _infer_chat_context(text: str, target_hint: str = "", *, is_chat_surface: bool = False) -> dict[str, Any]:
     return _computer_use_context_helpers._infer_chat_context(
         text,
         target_hint,
-        is_wechat_surface=is_wechat_surface,
+        is_chat_surface=is_chat_surface,
     )
 
 
@@ -159,15 +159,7 @@ def _fallback_after_observe_brain_error(observation_text: str, user_text: str) -
 
 
 def _coerce_decision_for_human_ops(user_text: str, decision: BrainDecision) -> BrainDecision:
-    return _react_prompt_helpers._coerce_decision_for_human_ops(
-        user_text,
-        decision,
-        looks_like_desktop_observe_request=_looks_like_desktop_observe_request,
-        looks_like_desktop_action_request=_looks_like_desktop_action_request,
-        looks_like_app_launch_request=_looks_like_app_launch_request,
-        app_launch_target=_app_launch_target,
-        looks_like_chat_reply_request=_looks_like_chat_reply_request,
-    )
+    return _react_prompt_helpers._coerce_decision_for_human_ops(user_text, decision)
 
 
 def _decision_kind(decision: BrainDecision) -> DecisionKind:
@@ -202,6 +194,7 @@ def _react_followup_prompt(
     observation_text: str = "",
     coordinate_context: str = "",
     computer_use_context: str = "",
+    brain_observed_image: bool = False,
     correction: bool = False,
 ) -> str:
     return _react_prompt_helpers._react_followup_prompt(
@@ -211,6 +204,7 @@ def _react_followup_prompt(
         observation_text=observation_text,
         coordinate_context=coordinate_context,
         computer_use_context=computer_use_context,
+        brain_observed_image=brain_observed_image,
         correction=correction,
     )
 
@@ -267,6 +261,13 @@ def _format_coordinate_scale(value: Any) -> str:
 
 def _observe_coordinate_context_from_frame(frame: dict[str, Any]) -> str:
     return _observe_context_helpers.observe_coordinate_context_from_frame(frame)
+
+
+def _normalize_observed_click_coordinates(
+    decision: BrainDecision,
+    observation: dict[str, Any] | None,
+) -> BrainDecision:
+    return _observe_context_helpers.normalize_observed_click_coordinates(decision, observation)
 
 
 def _default_observe_prompt_for_request(user_text: str, target: str) -> str:
@@ -400,6 +401,7 @@ APP_COMPAT_EXPORTS: dict[str, Any] = {
         "_observation_text_from_result",
         "_observe_click_coordinate_status",
         "_observe_coordinate_context_from_frame",
+        "_normalize_observed_click_coordinates",
         "_observe_decision_requests_click",
         "_observe_model_analyzer_config",
         "_observe_prompt_from_decision",

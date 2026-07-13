@@ -107,11 +107,12 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertEqual(payload["target_app"], "Google Chrome")
         self.assertEqual(payload["capture_scope"], "application")
 
-    def test_observe_model_disabled_reports_model_requirement(self) -> None:
+    def test_observe_model_disabled_routes_captured_image_to_brain(self) -> None:
         async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
             return {
                 "frame": {
                     "capture_backend": "macos_screencapture",
+                    "data_url": "data:image/png;base64,AA==",
                     "active_observation": {"target_hint": "点击 Dock 栏里的设置"},
                 }
             }
@@ -128,8 +129,25 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("需要配置 Human Ops observe 模型", result["text"])
-        self.assertIn("observe_model disabled", result["unknowns"])
+        self.assertIn("由 Brain 模型直接观察", result["text"])
+        self.assertEqual(result["analysis_route"], "brain")
+        self.assertEqual(result["unknowns"], [])
+
+    def test_observe_model_disabled_reports_missing_capture_data(self) -> None:
+        async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
+            return {"frame": {"capture_backend": "macos_screencapture"}}
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("screen"),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(send_desktop_command=send_desktop_command),
+            )
+        )
+
+        self.assertEqual(result["analysis_route"], "unavailable")
+        self.assertIn("截图数据不可用", result["text"])
+        self.assertIn("captured image unavailable", result["unknowns"])
 
     def test_enabled_observe_marks_incomplete_coordinate_unknowns(self) -> None:
         async def send_desktop_command(_command_type, _payload=None, *, timeout_sec=8.0):
@@ -190,7 +208,7 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         send_mock.assert_awaited_once()
         self.assertEqual(send_mock.await_args.args[0], "active_vision_capture")
         self.assertEqual(send_mock.await_args.kwargs["timeout_sec"], 14)
-        self.assertIn("observe_model disabled", result["unknowns"])
+        self.assertIn("captured image unavailable", result["unknowns"])
 
 
 if __name__ == "__main__":

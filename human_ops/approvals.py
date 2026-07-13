@@ -23,6 +23,7 @@ _STATE_CHANGING_ACTIONS = {
     "focus_window",
     "clipboard_write",
     "wait",
+    "playwright",
 }
 
 

@@ -9,6 +9,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from .models import TTSRequest
+from .tts import is_qwen_tts_local_provider
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ async def synthesize_tts_response(request: TTSRequest, *, deps: AudioRouteDepend
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="text is required.")
     if not deps.tts_available(request.provider, request.provider_url):
+        if is_qwen_tts_local_provider(request.provider):
+            raise HTTPException(status_code=503, detail="TTS异常")
         raise HTTPException(status_code=503, detail=f"TTS provider is unavailable: {request.provider}")
     try:
         deps.cleanup_old_audio(deps.audio_cache_dir)
@@ -50,6 +53,8 @@ async def synthesize_tts_response(request: TTSRequest, *, deps: AudioRouteDepend
             provider_url=request.provider_url,
         )
     except Exception as exc:
+        if is_qwen_tts_local_provider(request.provider):
+            raise HTTPException(status_code=503, detail="TTS异常") from exc
         raise HTTPException(status_code=503, detail=f"TTS synthesis failed: {exc}") from exc
     return {
         "ok": True,

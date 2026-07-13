@@ -54,6 +54,19 @@ class FrontendSpeechSourceTests(unittest.TestCase):
         ):
             self.assertIn(f"function {name}", source)
 
+    def test_qwen_tts_failure_uses_a_concise_unavailable_message(self) -> None:
+        source = SPEECH_JS.read_text(encoding="utf-8")
+        self.assertIn('state.chat?.tts_provider === "qwen_tts_local"', source)
+        self.assertIn('return "TTS异常";', source)
+
+    def test_speech_starts_per_sentence_and_prepares_the_next_audio_while_playing(self) -> None:
+        source = SPEECH_JS.read_text(encoding="utf-8")
+        self.assertIn("const completedSentence = /[^。！？!?；;\\n]*[。！？!?；;\\n]+", source)
+        self.assertIn("function requestNextTTSChunk", source)
+        self.assertIn("let preparedAudioQueue = [];", source)
+        self.assertIn("requestNextTTSChunk();", source)
+        self.assertIn("preparedAudioQueue.push(prepared);", source)
+
     def test_index_wires_speech_work_through_facade_registry(self) -> None:
         sections_source = CONTROLLER_GRAPH_APP_SECTIONS_JS.read_text(encoding="utf-8")
         index_source = INDEX_JS.read_text(encoding="utf-8")

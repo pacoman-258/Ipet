@@ -94,14 +94,19 @@ class DesktopActionBridgeTests(unittest.TestCase):
 
         bridge = module.DesktopActionBridge(desktop_actions, qapplication=None)
 
-        result = bridge.execute_human_ops_type_text(
-            {"text": '收到 "OK"', "label": "微信聊天输入框"},
-            platform_name="darwin",
-            runner=runner,
-        )
+        with mock.patch.object(desktop_actions, "_post_core_graphics_text") as event_typer:
+            result = bridge.execute_human_ops_type_text(
+                {"text": 'https://example.com', "label": "浏览器地址栏"},
+                platform_name="darwin",
+                runner=runner,
+            )
 
-        self.assertEqual(result, {"typed": True, "text": '收到 "OK"', "label": "微信聊天输入框", "method": "system_events"})
-        self.assertIn(r'keystroke "收到 \"OK\""', calls[0][0][-1])
+        self.assertEqual(
+            result,
+            {"typed": True, "text": "https://example.com", "label": "浏览器地址栏", "method": "core_graphics_unicode"},
+        )
+        event_typer.assert_called_once_with("https://example.com")
+        self.assertEqual(calls, [])
 
     def test_qt_event_helpers_use_injected_qapplication(self) -> None:
         module = importlib.import_module("app.desktop_action_bridge")

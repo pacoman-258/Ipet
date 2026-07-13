@@ -143,7 +143,8 @@ class BackendAppProposalAdaptersTests(unittest.TestCase):
         self.assertIn("用户原始复杂任务：帮我回复张三", prompt)
         self.assertIn("草稿已经在输入框里", prompt)
         self.assertIn("context for wechat", prompt)
-        self.assertIn("请像会用电脑的人类一样继续当前任务阶段", prompt)
+        self.assertIn("请独立判断原始目标是否已经完成", prompt)
+        self.assertIn("不要把任何动作类型套进预设顺序", prompt)
 
 
 if __name__ == "__main__":

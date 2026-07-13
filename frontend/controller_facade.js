@@ -115,6 +115,7 @@
     "continueApproval": ["chatSubmit", "continueApproval"],
     "streamChat": ["chatSubmit", "streamChat"],
     "submitChatInput": ["chatSubmit", "submitChatInput"],
+    "stopTask": ["chatSubmit", "stopTask"],
     "applyModelTransform": ["petScene", "applyModelTransform"],
     "bindModelInteraction": ["petScene", "bindModelInteraction"],
     "setupStageInteraction": ["petScene", "setupStageInteraction"],

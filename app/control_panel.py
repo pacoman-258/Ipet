@@ -193,6 +193,7 @@ class ControlPanel(QWidget):
         self.chat_tts_provider_combo = QComboBox()
         self.chat_tts_provider_combo.addItem("edge_tts")
         self.chat_tts_provider_combo.addItem("custom_http")
+        self.chat_tts_provider_combo.addItem("qwen_tts_local")
         self.chat_tts_preset_combo = QComboBox()
         self.chat_tts_preset_combo.addItem("选择预设...", "")
         for preset_key, preset in CUSTOM_HTTP_TTS_PRESETS.items():
@@ -428,7 +429,7 @@ class ControlPanel(QWidget):
         voice_text = str(config.get("chat", {}).get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
         self.chat_voice_input.setText(voice_text)
         provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
-        provider = provider if provider in ("edge_tts", "custom_http") else "edge_tts"
+        provider = provider if provider in ("edge_tts", "custom_http", "qwen_tts_local") else "edge_tts"
         self.chat_tts_provider_combo.setCurrentText(provider)
         self.chat_tts_preset_combo.setCurrentIndex(0)
         self.chat_tts_provider_url_input.setText(str(config.get("chat", {}).get("tts_provider_url", "")).strip())

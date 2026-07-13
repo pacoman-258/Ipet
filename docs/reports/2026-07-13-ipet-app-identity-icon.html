@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ipet 应用名称与图标报告</title>
+  </head>
+  <body>
+    <h1>Ipet 应用名称与图标</h1>
+    <dl>
+      <dt>目标</dt><dd>将启动后的 Qt 应用命名为 Ipet，并使用用户提供图片左上角头像制作应用图标。</dd>
+      <dt>工作拆分</dt><dd>单人完成图标裁剪、Qt 身份接入、回归测试与报告。</dd>
+      <dt>变更文件</dt><dd>assets/ipet-app-icon.png；app/qt_bindings.py；main.py；相关测试；docs/WORKFLOW.md；本报告。</dd>
+      <dt>达成效果</dt><dd>Qt 进程名称、显示名称和主窗口标题均为 Ipet；应用及其窗口加载同一项目图标。</dd>
+      <dt>剩余工作</dt><dd>源码运行时的 Dock 图标由 Qt 设置；若日后制作原生 .app 安装包，打包配置还应复用此图标。</dd>
+      <dt>建议下一步</dt><dd>重启 Ipet，确认 Dock、菜单栏及窗口切换器均显示 Ipet 与新头像图标。</dd>
+    </dl>
+  </body>
+</html>

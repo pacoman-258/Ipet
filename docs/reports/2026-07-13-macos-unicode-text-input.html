@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet macOS Unicode 文本输入修复</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; color: #263238; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #17324d; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3f7; }
+  </style>
+</head>
+<body>
+  <h1>macOS Unicode 文本输入修复</h1>
+  <p><strong>日期：</strong>2026-07-13</p>
+  <h2>Goal</h2>
+  <p>修复 Human Ops 批准输入 URL 后，<code>https://</code> 被当前键盘布局或输入法错误输入成 <code>httpsa//</code> 的问题。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成；未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <p><code>human_ops/desktop_actions.py</code>、桌面动作与入口回归测试，以及本报告。</p>
+  <h2>Achieved effect</h2>
+  <p>macOS 文本输入优先使用 CoreGraphics 的 <code>CGEventKeyboardSetUnicodeString</code>，按 UTF-16 原样发送文本，不经过键盘布局，也不修改剪贴板。原生事件不可用时保留 AppleScript <code>keystroke</code> 降级，并在双重失败时同时报告原因。</p>
+  <h2>Verification</h2>
+  <p>URL <code>https://example.com/a:b</code> 的冒号和斜杠按完整原字符串进入原生输入器；桌面动作相关测试 88 项通过，Python 编译与 diff 格式检查通过，全量回归 730 项通过。</p>
+  <h2>Remaining work</h2>
+  <p>未向真实应用输入文本；真实烟雾测试会改变应用焦点和输入内容，需要单独批准。运行中的旧 Ipet 进程需要重启后加载修复。</p>
+  <h2>Recommended next step</h2>
+  <p>重启 Ipet，在浏览器地址栏输入一个包含 <code>https://</code>、路径和查询参数的 URL，批准后确认文本逐字一致，再继续提交或导航。</p>
+</body>
+</html>

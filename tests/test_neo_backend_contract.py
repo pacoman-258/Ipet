@@ -693,14 +693,14 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(done["decision"]["payload"]["goal"]["status"], "blocked")
         self.assertIn("还缺少", done["text"])
 
-    def test_open_app_request_is_native_human_ops_action_without_click_coordinates(self) -> None:
+    def test_open_target_request_does_not_override_brain_surface_choice(self) -> None:
         self.assertTrue(backend_app._looks_like_desktop_action_request("打开微信"))
         self.assertFalse(backend_app._looks_like_click_request("打开微信"))
+        model_decision = BrainDecision.observe("screen")
 
-        decision = backend_app._coerce_decision_for_human_ops("打开微信", BrainDecision.observe("screen"))
+        decision = backend_app._coerce_decision_for_human_ops("打开 B 站并观看视频", model_decision)
 
-        self.assertEqual(decision.payload["action_type"], "launch_app")
-        self.assertEqual(decision.payload["arguments"]["app"], "WeChat")
+        self.assertIs(decision, model_decision)
 
     def test_wechat_reply_request_is_desktop_action_without_forcing_click_coordinates(self) -> None:
         user_text = "根据张三的微信聊天信息回复张三"
@@ -712,8 +712,9 @@ class NeoBackendContractTests(unittest.TestCase):
 
         self.assertIn("微信", prompt)
         self.assertIn("联系人", prompt)
-        self.assertIn("聊天内容", prompt)
-        self.assertIn("输入框", prompt)
+        self.assertIn("可见消息", prompt)
+        self.assertIn("可操作入口", prompt)
+        self.assertIn("不替 Brain 选择固定操作顺序", prompt)
         self.assertNotIn("可点击中心点", prompt)
 
     def test_observe_result_extracts_surface_and_affordance_for_dock_app_icon(self) -> None:
@@ -1483,7 +1484,7 @@ class NeoBackendContractTests(unittest.TestCase):
 
         calls: list[str] = []
 
-        async def fake_run_brain_turn(config, *, user_text, request_system_prompt=""):
+        async def fake_run_brain_turn(config, *, user_text, request_system_prompt="", **_kwargs):
             calls.append(user_text)
             if len(calls) == 1:
                 return SimpleNamespace(
@@ -1504,7 +1505,7 @@ class NeoBackendContractTests(unittest.TestCase):
 
         frame = {
             "mime_type": "image/jpeg",
-            "data_url": "data:image/jpeg;base64,screen",
+            "data_url": "data:image/jpeg;base64,AA==",
             "image_width": 1920,
             "image_height": 1249,
             "display_layout": [{"x": 0, "y": 0, "width": 1470, "height": 956}],
@@ -1655,7 +1656,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(active["screen_resolution"], {"width": 1728, "height": 1117})
         self.assertIn("聊天窗口", result["text"])
 
-    def test_click_observe_without_observe_model_reports_model_requirement(self) -> None:
+    def test_click_observe_without_observe_model_routes_image_to_brain(self) -> None:
         frame = {
             "mime_type": "image/png",
             "data_url": "data:image/png;base64,iVBORw0KGgo=",
@@ -1674,10 +1675,11 @@ class NeoBackendContractTests(unittest.TestCase):
                 )
             )
 
-        self.assertIn("需要配置 Human Ops observe 模型", result["text"])
-        self.assertIn("observe_model disabled", result["unknowns"])
+        self.assertIn("由 Brain 模型直接观察", result["text"])
+        self.assertEqual(result["analysis_route"], "brain")
+        self.assertEqual(result["unknowns"], [])
 
-    def test_non_click_observe_without_observe_model_reports_model_requirement(self) -> None:
+    def test_non_click_observe_without_observe_model_routes_image_to_brain(self) -> None:
         frame = {
             "mime_type": "image/png",
             "data_url": "data:image/png;base64,iVBORw0KGgo=",
@@ -1697,8 +1699,9 @@ class NeoBackendContractTests(unittest.TestCase):
             )
 
         self.assertIn("截图成功", result["text"])
-        self.assertIn("Human Ops observe 模型未启用", result["text"])
-        self.assertIn("observe_model disabled", result["unknowns"])
+        self.assertIn("由 Brain 模型直接观察", result["text"])
+        self.assertEqual(result["analysis_route"], "brain")
+        self.assertEqual(result["unknowns"], [])
 
     def test_observe_text_reports_empty_observe_model_result(self) -> None:
         text = backend_app._observation_text_from_result(
@@ -1862,8 +1865,8 @@ class NeoBackendContractTests(unittest.TestCase):
                 return SimpleNamespace(
                     payload={
                         **frame,
-                        "observe_answer": "Dock 中可见系统设置图标，可点击中心点大约是 x=452, y=1187。",
-                        "observations": [{"claim": "Dock 中可见系统设置图标，可点击中心点大约是 x=452, y=1187。", "source": "fake-vlm"}],
+                        "observe_answer": "Dock 中可见系统设置图标，可点击中心点大约是 x=452, y=1010。",
+                        "observations": [{"claim": "Dock 中可见系统设置图标，可点击中心点大约是 x=452, y=1010。", "source": "fake-vlm"}],
                         "analysis": {"status": "ok"},
                     },
                     status={"status": "ok"},
@@ -1882,7 +1885,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 452, "y": 1187, "label": "Dock 系统设置", "target_app": "Finder"},
+                {
+                    "x": 452,
+                    "y": 1010,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock 系统设置",
+                    "target_app": "Finder",
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2018,8 +2027,12 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         completion = SimpleNamespace(
-            text="我已经准备好啦，请批准我执行这个点击操作。",
-            decision=BrainDecision.say("我已经准备好啦，请批准我执行这个点击操作。"),
+            text="Observe Dock settings",
+            decision=BrainDecision.observe(
+                "Dock 设置",
+                observe_prompt="请找到 Dock 中系统设置图标的可点击中心点。",
+                target_app="Finder",
+            ),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2200,7 +2213,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertIsNone(approvals[0]["preview"])
         self.assertIn("打开应用", approvals[0]["tools"][0]["summary"])
         proposal = backend_app.HUMAN_OPS_PENDING_PROPOSALS[approvals[0]["proposal_id"]]["proposal"]
-        self.assertEqual(proposal.payload["arguments"]["app"], "NeteaseMusic")
+        self.assertEqual(proposal.payload["arguments"]["app"], "网易云音乐")
         self.assertEqual(proposal.payload["arguments"]["label"], "网易云音乐")
 
     def test_chat_stream_corrects_click_without_complete_coordinates_before_review(self) -> None:
@@ -2403,12 +2416,14 @@ class NeoBackendContractTests(unittest.TestCase):
         observe_decision = observe_mock.await_args.args[0]
         self.assertIn(draft_text, observe_decision.payload["observe_prompt"])
         self.assertIn("草稿", observe_decision.payload["observe_prompt"])
-        self.assertIn("回车", observe_decision.payload["observe_prompt"])
+        self.assertIn("发送入口或其他相关 affordance", observe_decision.payload["observe_prompt"])
+        self.assertIn("不替 Brain 决定下一步动作", observe_decision.payload["observe_prompt"])
         followup_prompt = run_mock.await_args_list[1].kwargs["user_text"]
         self.assertIn("chat_context", followup_prompt)
         self.assertIn("send_ready", followup_prompt)
         self.assertIn("recent_messages", followup_prompt)
-        self.assertIn("不要反复观察", followup_prompt)
+        self.assertIn("不要重复获取已经足够且一致的证据", followup_prompt)
+        self.assertIn("不要把任何动作类型套进预设顺序", followup_prompt)
         approvals = [data for name, data in _sse_events(approved_body) if name == "approval_required"]
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["action_type"], "key_press")
@@ -2624,16 +2639,16 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         draft_text = "收到，我下午3点带资料。"
-        initial_observe = SimpleNamespace(
-            text="Observe Dock",
-            decision=BrainDecision.observe(
-                "screen",
-                observe_prompt="请观察 Dock 里是否有微信图标，并给出可点击中心点。",
+        initial_launch = SimpleNamespace(
+            text="Launch WeChat",
+            decision=BrainDecision.propose_act(
+                "launch_app",
+                {"app": "WeChat", "label": "微信", "continue_after_approval": True},
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
-                    "status": "in_progress",
-                    "stage": "launch_app",
-                    "next": "click_dock_wechat",
+                    "status": "handoff_review",
+                    "stage": "open_wechat",
+                    "next": "locate_contact",
                 },
             ),
             provider="openai_compatible",
@@ -2777,7 +2792,7 @@ class NeoBackendContractTests(unittest.TestCase):
         with mock.patch.object(
             backend_app,
             "run_brain_turn",
-            new=mock.AsyncMock(side_effect=[initial_observe, contact_click, focus_input, type_reply, enter_send, done_completion]),
+            new=mock.AsyncMock(side_effect=[initial_launch, contact_click, focus_input, type_reply, enter_send, done_completion]),
         ) as run_mock, mock.patch.object(
             backend_app,
             "_perform_human_ops_observe",
@@ -2861,11 +2876,10 @@ class NeoBackendContractTests(unittest.TestCase):
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
-                "click",
+                "launch_app",
                 {
-                    "x": 520,
-                    "y": 930,
-                    "label": "Dock 微信图标",
+                    "app": "WeChat",
+                    "label": "微信",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -2912,7 +2926,11 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
             proposal_id = [data for name, data in _sse_events(body) if name == "approval_required"][-1]["proposal_id"]
-            with mock.patch.object(backend_app, "_perform_human_ops_action", new=mock.AsyncMock(return_value={"clicked": True})), mock.patch.object(
+            with mock.patch.object(
+                backend_app,
+                "_perform_human_ops_action",
+                new=mock.AsyncMock(return_value={"launched": True, "app": "WeChat"}),
+            ), mock.patch.object(
                 backend_app, "_perform_human_ops_observe", new=mock.AsyncMock(return_value=observe_result)
             ) as observe_mock:
                 with self.client.stream(
@@ -2951,11 +2969,10 @@ class NeoBackendContractTests(unittest.TestCase):
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
-                "click",
+                "launch_app",
                 {
-                    "x": 520,
-                    "y": 930,
-                    "label": "Dock 微信图标",
+                    "app": "WeChat",
+                    "label": "微信",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -3013,7 +3030,11 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
             proposal_id = [data for name, data in _sse_events(body) if name == "approval_required"][-1]["proposal_id"]
-            with mock.patch.object(backend_app, "_perform_human_ops_action", new=mock.AsyncMock(return_value={"clicked": True})), mock.patch.object(
+            with mock.patch.object(
+                backend_app,
+                "_perform_human_ops_action",
+                new=mock.AsyncMock(return_value={"launched": True, "app": "WeChat"}),
+            ), mock.patch.object(
                 backend_app, "_perform_human_ops_observe", new=mock.AsyncMock(return_value=observe_result)
             ):
                 with self.client.stream(
@@ -3048,11 +3069,10 @@ class NeoBackendContractTests(unittest.TestCase):
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
-                "click",
+                "launch_app",
                 {
-                    "x": 520,
-                    "y": 930,
-                    "label": "Dock 微信图标",
+                    "app": "WeChat",
+                    "label": "微信",
                 },
                 goal={
                     "objective": "打开微信并回复联系人",
@@ -3100,7 +3120,11 @@ class NeoBackendContractTests(unittest.TestCase):
             proposal_id = [data for name, data in _sse_events(body) if name == "approval_required"][-1]["proposal_id"]
             first_proposal = backend_app.HUMAN_OPS_PENDING_PROPOSALS[proposal_id]["proposal"]
             self.assertTrue(first_proposal.payload["arguments"]["continue_after_approval"])
-            with mock.patch.object(backend_app, "_perform_human_ops_action", new=mock.AsyncMock(return_value={"clicked": True})), mock.patch.object(
+            with mock.patch.object(
+                backend_app,
+                "_perform_human_ops_action",
+                new=mock.AsyncMock(return_value={"launched": True, "app": "WeChat"}),
+            ), mock.patch.object(
                 backend_app, "_perform_human_ops_observe", new=mock.AsyncMock(return_value=observe_result)
             ):
                 with self.client.stream(
@@ -3135,6 +3159,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision=BrainDecision.propose_act(
                 "click",
                 {
+                    "target_app": "WeChat",
                     "x": 240,
                     "y": 310,
                     "label": "张三聊天条目",
@@ -3179,7 +3204,11 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
             proposal_id = [data for name, data in _sse_events(body) if name == "approval_required"][-1]["proposal_id"]
-            with mock.patch.object(backend_app, "_perform_human_ops_action", new=mock.AsyncMock(return_value={"clicked": True})), mock.patch.object(
+            with mock.patch.object(
+                backend_app,
+                "_perform_human_ops_action",
+                new=mock.AsyncMock(return_value={"clicked": True, "target_app": "WeChat"}),
+            ), mock.patch.object(
                 backend_app, "_perform_human_ops_observe", new=mock.AsyncMock(return_value=observe_result)
             ) as observe_mock:
                 with self.client.stream(
@@ -3214,11 +3243,10 @@ class NeoBackendContractTests(unittest.TestCase):
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
-                "click",
+                "launch_app",
                 {
-                    "x": 520,
-                    "y": 930,
-                    "label": "Dock 微信图标",
+                    "app": "WeChat",
+                    "label": "微信",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -3298,7 +3326,11 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
             proposal_id = [data for name, data in _sse_events(body) if name == "approval_required"][-1]["proposal_id"]
-            with mock.patch.object(backend_app, "_perform_human_ops_action", new=mock.AsyncMock(return_value={"clicked": True})), mock.patch.object(
+            with mock.patch.object(
+                backend_app,
+                "_perform_human_ops_action",
+                new=mock.AsyncMock(return_value={"launched": True, "app": "WeChat"}),
+            ), mock.patch.object(
                 backend_app,
                 "_perform_human_ops_observe",
                 new=mock.AsyncMock(side_effect=[post_click_observation, contact_observation]),

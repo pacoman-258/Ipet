@@ -112,6 +112,11 @@ class _LiveRouteDependencyContext:
             "_observation_has_reviewable_click_affordance",
             observation,
         )
+        self.normalize_observed_click_coordinates = lambda decision, observation: self._call(
+            "_normalize_observed_click_coordinates",
+            decision,
+            observation,
+        )
         self.react_followup_prompt = lambda **kwargs: self._call("_react_followup_prompt", **kwargs)
         self.computer_use_context_text = lambda observation: self._call("_computer_use_context_text", observation)
         self.goal_status = lambda decision, *, operation_request: self._call(

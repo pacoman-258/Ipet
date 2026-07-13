@@ -28,7 +28,8 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         self.assertIn("刚才输入的草稿是“收到，马上处理”", prompt)
         self.assertIn("聊天输入框中是否已经出现这段草稿", prompt)
         self.assertIn("草稿文字是否完整", prompt)
-        self.assertIn("key_press enter 是否是合适的下一步", prompt)
+        self.assertIn("发送入口或其他相关 affordance", prompt)
+        self.assertIn("不替 Brain 决定下一步动作", prompt)
 
     def test_enter_observe_prompt_checks_expected_text_send_result(self) -> None:
         proposal = ReviewableProposal.act(
@@ -67,18 +68,20 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         self.assertIn("上一项已批准并执行", prompt)
         self.assertIn("张三聊天条目", prompt)
         self.assertIn('"clicked": true', prompt)
-        self.assertIn("执行后观察：", prompt)
+        self.assertIn("执行后验证：", prompt)
         self.assertIn("已经进入张三会话。", prompt)
         self.assertIn("Structured computer-use context", prompt)
-        self.assertIn("请像会用电脑的人类一样继续当前任务阶段", prompt)
+        self.assertIn("请独立判断原始目标是否已经完成", prompt)
+        self.assertIn("不要重复获取已经足够且一致的证据", prompt)
+        self.assertIn("不要把任何动作类型套进预设顺序", prompt)
 
     def test_long_prompt_body_lives_in_human_ops_module_not_backend_app(self) -> None:
         backend_source = (ROOT_DIR / "backend" / "app.py").read_text(encoding="utf-8")
         prompt_source = (ROOT_DIR / "human_ops" / "approval_prompts.py").read_text(encoding="utf-8")
 
-        self.assertNotIn("请像会用电脑的人类一样继续当前任务阶段", backend_source)
+        self.assertNotIn("请独立判断原始目标是否已经完成", backend_source)
         self.assertNotIn("聊天输入框中是否已经出现这段草稿", backend_source)
-        self.assertIn("请像会用电脑的人类一样继续当前任务阶段", prompt_source)
+        self.assertIn("请独立判断原始目标是否已经完成", prompt_source)
         self.assertIn("聊天输入框中是否已经出现这段草稿", prompt_source)
 
 

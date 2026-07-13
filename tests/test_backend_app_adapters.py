@@ -24,6 +24,7 @@ class BackendAppAdaptersSplitTests(unittest.TestCase):
             "_observation_text_from_result",
             "_observe_model_analyzer_config",
             "_perform_human_ops_observe",
+            "_normalize_observed_click_coordinates",
         )
 
         for name in expected_names:
@@ -89,7 +90,7 @@ class BackendAppAdaptersSplitTests(unittest.TestCase):
         send_mock.assert_awaited_once()
         self.assertEqual(send_mock.await_args.args[0], "active_vision_capture")
         self.assertEqual(send_mock.await_args.kwargs["timeout_sec"], 14)
-        self.assertIn("observe_model disabled", result["unknowns"])
+        self.assertIn("captured image unavailable", result["unknowns"])
 
 
 if __name__ == "__main__":

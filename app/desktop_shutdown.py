@@ -26,6 +26,7 @@ class DesktopShutdownController:
         self._dispose_channel()
 
         owner.stop_asr_service()
+        owner.stop_qwen_tts_service()
         owner.stop_backend_service()
 
     def _stop_config_poll_timer(self) -> None:

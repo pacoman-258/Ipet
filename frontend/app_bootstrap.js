@@ -52,6 +52,7 @@
     const resetChatSkillsToDefault =
       typeof deps.resetChatSkillsToDefault === "function" ? deps.resetChatSkillsToDefault : () => {};
     const submitChatInput = typeof deps.submitChatInput === "function" ? deps.submitChatInput : async () => {};
+    const stopTask = typeof deps.stopTask === "function" ? deps.stopTask : async () => {};
     const matchesPushToTalkKey =
       typeof deps.matchesPushToTalkKey === "function" ? deps.matchesPushToTalkKey : () => false;
     const shouldHandlePushToTalk =
@@ -178,6 +179,10 @@
       chatSkillsResetEl.addEventListener("click", () => resetChatSkillsToDefault());
       updateShellButtons();
       chatSendEl.addEventListener("click", async () => {
+        if (["streaming", "awaiting_approval", "stopping"].includes(getChatState())) {
+          await stopTask();
+          return;
+        }
         await submitChatInput();
       });
       chatInputEl.addEventListener("keydown", async (event) => {
@@ -203,6 +208,12 @@
         stopSpeaking(true);
       });
       runtimeWindow.addEventListener("keydown", async (event) => {
+        const stopShortcut = event.key === "Escape" || (event.metaKey && event.key === ".");
+        if (stopShortcut && ["streaming", "awaiting_approval", "stopping"].includes(getChatState())) {
+          event.preventDefault();
+          await stopTask();
+          return;
+        }
         if (!matchesPushToTalkKey(event) || !shouldHandlePushToTalk(event)) {
           return;
         }

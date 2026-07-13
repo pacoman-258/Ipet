@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -17,6 +18,12 @@ from brain.llm import (
     list_provider_models,
     normalize_provider,
     run_brain_turn,
+)
+
+
+PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII="
 )
 
 
@@ -157,11 +164,27 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(spawn.await_args.args[:3], ("/mock/codex", "app-server", "--stdio"))
         requests = [json.loads(value) for chunk in process.stdin.writes for value in chunk.decode("utf-8").splitlines()]
         thread_params = requests[1]["params"]
-        self.assertIn("text-only inference backend for Ipet", thread_params["baseInstructions"])
+        self.assertIn("multimodal inference backend for Ipet", thread_params["baseInstructions"])
         self.assertEqual(thread_params["developerInstructions"], "")
         self.assertEqual(thread_params["config"]["web_search"], "disabled")
         self.assertTrue(all(value is False for value in thread_params["config"]["features"].values()))
         self.assertEqual(thread_params["config"]["tools"], {"view_image": False, "web_search": False})
+
+    async def test_codex_provider_attaches_brain_image_and_removes_temporary_file(self) -> None:
+        process = _FakeAppServerProcess()
+
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch("brain.llm.asyncio.create_subprocess_exec", new=mock.AsyncMock(return_value=process)):
+                await complete_with_provider(
+                    BrainProviderConfig(provider="codex", model="gpt-account"),
+                    [BrainMessage(role="user", content="观察并决定下一步", image_data_url=PNG_DATA_URL)],
+                )
+
+        requests = [json.loads(value) for chunk in process.stdin.writes for value in chunk.decode("utf-8").splitlines()]
+        turn_input = requests[-1]["params"]["input"]
+        self.assertEqual(turn_input[0]["type"], "text")
+        self.assertEqual(turn_input[1]["type"], "localImage")
+        self.assertFalse(os.path.exists(turn_input[1]["path"]))
 
     async def test_codex_web_search_streams_native_search_and_browse_activity(self) -> None:
         process = _FakeAppServerProcess(
@@ -384,6 +407,20 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["temperature"], 0.25)
         self.assertEqual(request["json"]["max_tokens"], 2048)
 
+    async def test_openai_compatible_attaches_image_to_last_user_message(self) -> None:
+        client = _RecordingClient({"choices": [{"message": {"content": "看到了"}}]})
+
+        await complete_with_provider(
+            BrainProviderConfig(provider="openai_compatible", endpoint="https://llm.example/v1"),
+            [BrainMessage(role="user", content="观察并决定", image_data_url=PNG_DATA_URL)],
+            client=client,
+        )
+
+        content = client.requests[0]["json"]["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "观察并决定"})
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(content[1]["image_url"]["url"], PNG_DATA_URL)
+
     async def test_ollama_uses_api_chat_shape(self) -> None:
         client = _RecordingClient({"message": {"content": "本地模型回复"}})
         config = BrainProviderConfig(
@@ -410,6 +447,19 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["options"]["num_predict"], 512)
         self.assertFalse(request["json"]["stream"])
 
+    async def test_ollama_attaches_raw_base64_image(self) -> None:
+        client = _RecordingClient({"message": {"content": "看到了"}})
+
+        await complete_with_provider(
+            BrainProviderConfig(provider="ollama", endpoint="http://127.0.0.1:11434"),
+            [BrainMessage(role="user", content="观察并决定", image_data_url=PNG_DATA_URL)],
+            client=client,
+        )
+
+        message = client.requests[0]["json"]["messages"][0]
+        self.assertEqual(message["content"], "观察并决定")
+        self.assertEqual(message["images"], [PNG_DATA_URL.split(",", 1)[1]])
+
     async def test_anthropic_compatible_uses_messages_shape(self) -> None:
         client = _RecordingClient({"content": [{"type": "text", "text": "Claude 风格回复"}]})
         config = BrainProviderConfig(
@@ -435,6 +485,20 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["system"], "persona")
         self.assertEqual(request["json"]["messages"], [{"role": "user", "content": "hi"}])
         self.assertEqual(request["json"]["temperature"], 0.1)
+
+    async def test_anthropic_compatible_attaches_base64_image_source(self) -> None:
+        client = _RecordingClient({"content": [{"type": "text", "text": "看到了"}]})
+
+        await complete_with_provider(
+            BrainProviderConfig(provider="anthropic_compatible", endpoint="https://anthropic.example"),
+            [BrainMessage(role="user", content="观察并决定", image_data_url=PNG_DATA_URL)],
+            client=client,
+        )
+
+        content = client.requests[0]["json"]["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "观察并决定"})
+        self.assertEqual(content[1]["source"]["media_type"], "image/png")
+        self.assertEqual(content[1]["source"]["data"], PNG_DATA_URL.split(",", 1)[1])
 
     async def test_google_aistudio_uses_generate_content_shape_with_only_api_key(self) -> None:
         client = _RecordingClient({"candidates": [{"content": {"parts": [{"text": "Gemini 回复"}]}}]})
@@ -463,6 +527,20 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["contents"], [{"role": "user", "parts": [{"text": "hi"}]}])
         self.assertEqual(request["json"]["generationConfig"]["temperature"], 0.2)
         self.assertEqual(request["json"]["generationConfig"]["maxOutputTokens"], 768)
+
+    async def test_google_aistudio_attaches_inline_brain_image(self) -> None:
+        client = _RecordingClient({"candidates": [{"content": {"parts": [{"text": "看到了"}]}}]})
+
+        await complete_with_provider(
+            BrainProviderConfig(provider="google_aistudio", model="gemini-test", api_key="secret"),
+            [BrainMessage(role="user", content="观察并决定", image_data_url=PNG_DATA_URL)],
+            client=client,
+        )
+
+        parts = client.requests[0]["json"]["contents"][0]["parts"]
+        self.assertEqual(parts[0], {"text": "观察并决定"})
+        self.assertEqual(parts[1]["inline_data"]["mime_type"], "image/png")
+        self.assertEqual(parts[1]["inline_data"]["data"], PNG_DATA_URL.split(",", 1)[1])
 
     async def test_google_aistudio_accepts_host_only_endpoint_for_generate_content(self) -> None:
         client = _RecordingClient({"candidates": [{"content": {"parts": [{"text": "Gemini 回复"}]}}]})

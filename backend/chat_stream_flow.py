@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
 from brain.decisions import BrainDecision, DecisionKind
 from brain.llm import ENDPOINTLESS_PROVIDERS, BrainLLMError
+from .task_control import TASK_CONTROL
 
 
 MAX_RECENT_CONVERSATION_MESSAGES = 20
@@ -221,6 +222,10 @@ class ChatStreamFlowDependencies:
     computer_use_context_text: Callable[[dict[str, Any] | None], str]
     goal_status: Callable[..., str]
     goal_is_terminal: Callable[[str], bool]
+    pending_proposals: dict[str, dict[str, Any]] = field(default_factory=dict)
+    normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] = (
+        lambda decision, observation: decision
+    )
 
 
 async def stream_chat_response(
@@ -237,7 +242,9 @@ async def stream_chat_response(
         retry_from_assistant_turn = int(request_payload.get("retry_from_assistant_turn") or 0)
     except (TypeError, ValueError):
         retry_from_assistant_turn = 0
-    turn_id = uuid4().hex
+    turn_id = str(request_payload.get("task_id") or uuid4().hex).strip() or uuid4().hex
+    TASK_CONTROL.start(turn_id, session_id)
+    TASK_CONTROL.bind_current_task(turn_id)
     private_config = deps.normalize_private_config()
     brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
     human_ops_config = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
@@ -251,7 +258,9 @@ async def stream_chat_response(
     usage_totals: dict[str, int] = {}
 
     async def run_brain(**kwargs: Any) -> Any:
+        TASK_CONTROL.check(turn_id, next_action="Brain 调用")
         completion = await deps.run_brain_turn(brain_config, **kwargs)
+        TASK_CONTROL.check(turn_id, next_action="处理 Brain 结果")
         usage = completion.usage if isinstance(getattr(completion, "usage", None), dict) else {}
         for key, value in usage.items():
             try:
@@ -371,8 +380,10 @@ async def stream_chat_response(
     operation_request = deps.looks_like_desktop_action_request(text)
 
     while True:
+        TASK_CONTROL.check(turn_id, next_action="ReAct 后续步骤")
         decision = deps.coerce_decision_for_human_ops(text, decision)
         decision = with_observation_target_app(decision, last_observation)
+        decision = deps.normalize_observed_click_coordinates(decision, last_observation)
         decision_kind = deps.decision_kind(decision)
         react_trace.append(
             {
@@ -428,6 +439,8 @@ async def stream_chat_response(
                 session_id=session_id,
                 user_text=text,
             )
+            if proposal_id in deps.pending_proposals:
+                deps.pending_proposals[proposal_id]["task_id"] = turn_id
             yield deps.sse(
                 "phase",
                 {
@@ -481,6 +494,7 @@ async def stream_chat_response(
             continue
 
         if decision_kind == DecisionKind.OBSERVE:
+            TASK_CONTROL.check(turn_id, next_action="Observe 分析")
             yield deps.sse(
                 "phase",
                 {
@@ -498,6 +512,7 @@ async def stream_chat_response(
             )
             try:
                 observation = await deps.perform_human_ops_observe(decision, human_ops_config)
+                TASK_CONTROL.check(turn_id, next_action="处理 Observe 结果")
             except Exception as exc:
                 observation = {
                     "text": f"观察失败：{deps.sanitize_brain_error(exc, brain_config)}",
@@ -505,6 +520,13 @@ async def stream_chat_response(
                     "unknowns": [str(exc)],
                 }
             last_observation = observation
+            observation_frame = observation.get("frame") if isinstance(observation.get("frame"), dict) else {}
+            brain_observed_image = str(observation.get("analysis_route") or "") == "brain"
+            brain_image_data_url = (
+                str(observation_frame.get("data_url") or "")
+                if brain_observed_image
+                else ""
+            )
             observation_text = str(observation.get("text") or decision.summary or reply).strip() or "我看了一下屏幕。"
             coordinate_context = str(observation.get("coordinate_context") or "").strip()
             coordinate_status = observation.get("coordinate_status") if isinstance(observation.get("coordinate_status"), dict) else {}
@@ -538,25 +560,49 @@ async def stream_chat_response(
                 observation_text=observation_text,
                 coordinate_context=coordinate_context,
                 computer_use_context=deps.computer_use_context_text(observation),
+                brain_observed_image=bool(brain_image_data_url),
             )
             try:
                 completion = await run_brain(
                     user_text=followup_text,
                     request_system_prompt=str(request_payload.get("system_prompt") or ""),
+                    image_data_url=brain_image_data_url,
                 )
                 decision = deps.decision_from_completion(completion)
+                if not str(completion.text or "").strip() and not str(decision.summary or "").strip():
+                    reply = deps.fallback_after_observe_brain_error(observation_text, text)
+                    decision = BrainDecision.say(
+                        reply,
+                        goal={
+                            "objective": text,
+                            "status": "blocked",
+                            "evidence": [observation_text],
+                            "missing": ["Brain 后续整理结果"],
+                            "next": "stop",
+                        },
+                    )
+                    break
                 reply = str(completion.text or decision.summary)
                 provider = completion.provider
                 used_model = completion.model
-            except BrainLLMError:
-                reply = deps.fallback_after_observe_brain_error(observation_text, text)
+            except BrainLLMError as exc:
+                if brain_image_data_url:
+                    detail = deps.sanitize_brain_error(exc, brain_config)
+                    reply = (
+                        f"Brain 无法直接读取当前截图：{detail}。"
+                        "请改用支持图片输入的 Brain 模型，或在 Human Ops 中启用独立 observe 模型。"
+                    )
+                    missing = ["支持图片输入的 Brain 模型或独立 observe 模型"]
+                else:
+                    reply = deps.fallback_after_observe_brain_error(observation_text, text)
+                    missing = ["Brain 后续整理结果"]
                 decision = BrainDecision.say(
                     reply,
                     goal={
                         "objective": text,
                         "status": "blocked",
                         "evidence": [observation_text],
-                        "missing": ["Brain 后续整理结果"],
+                        "missing": missing,
                         "next": "stop",
                     },
                 )

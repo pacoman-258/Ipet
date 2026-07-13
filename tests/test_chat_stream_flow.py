@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from brain.decisions import BrainDecision, DecisionKind
+from brain.llm import BrainLLMError
 from backend.chat_stream_flow import (
     MAX_CONVERSATION_HISTORY_CHARS,
     MAX_RECENT_CONVERSATION_MESSAGES,
@@ -13,7 +14,9 @@ from backend.chat_stream_flow import (
     _TEMPORARY_HISTORIES,
     _bounded_conversation_history,
     stream_chat_response,
+    with_observation_target_app,
 )
+from backend.observe_context import normalize_observed_click_coordinates
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -72,6 +75,21 @@ class TopicStoreSpy:
 class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         _TEMPORARY_HISTORIES.clear()
+
+    def test_generic_chat_surface_uses_observed_app_without_assuming_wechat(self) -> None:
+        decision = BrainDecision.propose_act("click", {"x": 20, "y": 30, "label": "私信入口"})
+
+        enriched = with_observation_target_app(
+            decision,
+            {"surface": {"kind": "chat_gui", "app": "Google Chrome"}},
+        )
+        unresolved = with_observation_target_app(
+            decision,
+            {"surface": {"kind": "chat_gui"}},
+        )
+
+        self.assertEqual(enriched.payload["arguments"]["target_app"], "Google Chrome")
+        self.assertNotIn("target_app", unresolved.payload["arguments"])
 
     def _dependencies(self, topic_store: TopicStoreSpy, **overrides: Any) -> ChatStreamFlowDependencies:
         async def run_brain_turn(*_args: Any, **_kwargs: Any) -> Any:
@@ -304,6 +322,164 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertNotIn("conversation_history", calls[1])
+
+    async def test_disabled_observe_model_sends_captured_image_directly_to_brain(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls: list[dict[str, Any]] = []
+        prompt_calls: list[dict[str, Any]] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            decision = (
+                BrainDecision.observe("screen", observe_prompt="请读取当前窗口")
+                if len(calls) == 1
+                else BrainDecision.say("当前窗口是设置页。")
+            )
+            return SimpleNamespace(
+                text=decision.summary,
+                decision=decision,
+                provider="openai_compatible",
+                model="vision-model",
+            )
+
+        async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "text": "截图将由 Brain 直接观察。",
+                "analysis_route": "brain",
+                "frame": {"data_url": "data:image/png;base64,AA=="},
+                "coordinate_context": "screen coordinates",
+                "surface": {"kind": "desktop_gui"},
+                "affordances": [],
+            }
+
+        def react_followup_prompt(**kwargs: Any) -> str:
+            prompt_calls.append(kwargs)
+            return "请直接查看附图并决定下一步"
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"model_endpoint": "https://llm.example", "model_name": "vision-model"},
+                "human_ops": {"observe_model": {"enabled": False}},
+            },
+            run_brain_turn=run_brain_turn,
+            perform_human_ops_observe=perform_observe,
+            react_followup_prompt=react_followup_prompt,
+        )
+
+        await _collect_events(stream_chat_response({"text": "看看屏幕", "session_id": "brain-vision"}, deps))
+
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("image_data_url", calls[0])
+        self.assertEqual(calls[1]["image_data_url"], "data:image/png;base64,AA==")
+        self.assertTrue(prompt_calls[0]["brain_observed_image"])
+        self.assertNotIn("conversation_history", calls[1])
+
+    async def test_direct_brain_click_image_pixels_are_normalized_before_approval(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+        captured_decisions: list[BrainDecision] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            decision = (
+                BrainDecision.observe("screen", observe_prompt="定位按钮中心")
+                if calls == 1
+                else BrainDecision.propose_act(
+                    "click",
+                    {
+                        "target_app": "System Settings",
+                        "x": 960,
+                        "y": 624,
+                        "coordinate_space": "image_pixels",
+                        "label": "确认按钮",
+                    },
+                )
+            )
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="test", model="vision")
+
+        async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "text": "截图将由 Brain 直接观察。",
+                "analysis_route": "brain",
+                "frame": {
+                    "data_url": "data:image/png;base64,AA==",
+                    "image_width": 1920,
+                    "image_height": 1248,
+                    "display_layout": [{"x": 0, "y": 0, "width": 1470, "height": 956}],
+                },
+            }
+
+        def create_proposal(decision: BrainDecision, **_kwargs: Any) -> tuple[str, object]:
+            captured_decisions.append(decision)
+            return "coordinate-proposal", object()
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"model_endpoint": "https://llm.example", "model_name": "vision"},
+                "human_ops": {"observe_model": {"enabled": False}},
+            },
+            run_brain_turn=run_brain_turn,
+            perform_human_ops_observe=perform_observe,
+            looks_like_desktop_action_request=lambda _text: True,
+            create_human_ops_act_proposal=create_proposal,
+            proposal_event_payload=lambda proposal_id, _proposal: {"proposal_id": proposal_id},
+            normalize_observed_click_coordinates=normalize_observed_click_coordinates,
+        )
+
+        events = await _collect_events(stream_chat_response({"text": "点击确认", "session_id": "coords"}, deps))
+
+        arguments = captured_decisions[0].payload["arguments"]
+        self.assertEqual((arguments["x"], arguments["y"]), (735, 478))
+        self.assertEqual(arguments["coordinate_space"], "macos_screen_points")
+        self.assertEqual(events[-1], ("approval_required", {"proposal_id": "coordinate-proposal"}))
+
+    async def test_direct_brain_image_failure_is_blocked_with_actionable_model_guidance(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                decision = BrainDecision.observe("screen")
+                return SimpleNamespace(
+                    text=decision.summary,
+                    decision=decision,
+                    provider="openai_compatible",
+                    model="text-model",
+                )
+            raise BrainLLMError("model does not support image input")
+
+        async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "text": "截图将由 Brain 直接观察。",
+                "analysis_route": "brain",
+                "frame": {"data_url": "data:image/png;base64,AA=="},
+                "observations": [],
+                "unknowns": [],
+            }
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"model_endpoint": "https://llm.example", "model_name": "text-model"},
+                "human_ops": {"observe_model": {"enabled": False}},
+            },
+            run_brain_turn=run_brain_turn,
+            perform_human_ops_observe=perform_observe,
+            sanitize_brain_error=lambda exc, _config: str(exc),
+        )
+
+        events = await _collect_events(stream_chat_response({"text": "看看屏幕"}, deps))
+
+        done = events[-1][1]
+        self.assertIn("Brain 无法直接读取当前截图", done["text"])
+        self.assertIn("model does not support image input", done["text"])
+        self.assertIn("启用独立 observe 模型", done["text"])
+        self.assertEqual(done["decision"]["payload"]["goal"]["status"], "blocked")
 
     async def test_temporary_mode_keeps_only_recent_in_process_history_without_topic_store_io(self) -> None:
         topic_store = TopicStoreSpy()

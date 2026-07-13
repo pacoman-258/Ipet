@@ -7,7 +7,11 @@ from typing import Any
 
 from brain.decisions import BrainDecision
 from human_ops.approvals import ReviewableProposal
-from human_ops.approval_flow import HumanOpsApprovalFlowDependencies, stream_human_ops_proposal_decision
+from human_ops.approval_flow import (
+    HumanOpsApprovalFlowDependencies,
+    execution_verification,
+    stream_human_ops_proposal_decision,
+)
 from human_ops.proposals import proposal_event_payload
 
 
@@ -59,6 +63,44 @@ def _goal_status(decision: BrainDecision, *, operation_request: bool) -> str:
 
 
 class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
+    def test_execution_verification_uses_native_evidence_before_visual_fallback(self) -> None:
+        click = ReviewableProposal.act(
+            action_type="click",
+            summary="点击输入框",
+            payload={"target_app": "WeChat", "x": 20, "y": 30},
+        )
+        send = ReviewableProposal.act(
+            action_type="key_press",
+            summary="发送消息",
+            payload={"target_app": "WeChat", "key": "enter", "expected_text": "你好"},
+        )
+
+        click_result = execution_verification(
+            click,
+            {"clicked": True, "focused": True, "frontmost_app": "WeChat"},
+        )
+        send_result = execution_verification(
+            send,
+            {"pressed": True, "focused": True, "frontmost_app": "WeChat"},
+        )
+        playwright = ReviewableProposal.act(
+            action_type="playwright",
+            summary="打开网页",
+            payload={"profile": "工作", "operation": "open", "url": "https://example.com"},
+        )
+        playwright_result = execution_verification(
+            playwright,
+            {"playwright_done": True, "output": "page snapshot"},
+        )
+
+        self.assertEqual(click_result["status"], "verified")
+        self.assertFalse(click_result["requires_visual"])
+        self.assertEqual(send_result["status"], "insufficient")
+        self.assertTrue(send_result["requires_visual"])
+        self.assertIn("expected message", send_result["reason"])
+        self.assertEqual(playwright_result["status"], "verified")
+        self.assertFalse(playwright_result["requires_visual"])
+
     def _dependencies(self, pending: dict[str, dict[str, Any]], **overrides: Any) -> HumanOpsApprovalFlowDependencies:
         async def perform_action(proposal: ReviewableProposal) -> dict[str, Any]:
             args = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
@@ -154,17 +196,22 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "status": "pending",
             }
         }
-        calls: dict[str, Any] = {"action": 0, "observe_prompt": "", "brain_prompt": "", "create": None}
+        calls: dict[str, Any] = {"action": 0, "observe": 0, "brain_prompt": "", "create": None}
 
         async def perform_action(approved_proposal: ReviewableProposal) -> dict[str, Any]:
             calls["action"] += 1
             self.assertTrue(approved_proposal.approved)
-            return {"typed": True, "text": "你好"}
+            return {
+                "typed": True,
+                "focused": True,
+                "frontmost_app": "WeChat",
+                "target_app": "WeChat",
+                "text": "你好",
+            }
 
         async def perform_observe(decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
-            calls["observe_prompt"] = decision.payload.get("observe_prompt")
-            self.assertEqual(decision.payload.get("target_app"), "WeChat")
-            return {"text": "聊天框里已经出现“你好”，可以按回车发送。", "observations": [], "unknowns": []}
+            calls["observe"] += 1
+            raise AssertionError(f"structured verification should avoid visual observe: {decision}")
 
         async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
             calls["brain_prompt"] = user_text
@@ -206,8 +253,9 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(calls["action"], 1)
-        self.assertEqual(calls["observe_prompt"], "执行后观察 回复消息")
-        self.assertIn("聊天框里已经出现", calls["brain_prompt"])
+        self.assertEqual(calls["observe"], 0)
+        self.assertIn("平台原生状态验证通过", calls["brain_prompt"])
+        self.assertIn("本阶段未截图", calls["brain_prompt"])
         created_decision, session_id, user_text = calls["create"]
         self.assertEqual(created_decision.payload["action_type"], "key_press")
         self.assertEqual(session_id, "neo-session")
@@ -218,11 +266,65 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_names[-2:], ["phase", "approval_required"])
         phase_payloads = [data for name, data in events if name == "phase"]
         self.assertEqual([data["category"] for data in phase_payloads], ["acting", "verifying", "waiting_approval"])
+        self.assertEqual(phase_payloads[1]["name"], "human_ops_structured_verify")
         self.assertEqual(phase_payloads[1]["task"], "执行后观察 回复消息")
         self.assertEqual(phase_payloads[-1]["status_id"], "approval:next-proposal")
         self.assertEqual(events[-1][1]["proposal_id"], "next-proposal")
         self.assertEqual(events[-1][1]["action_type"], "key_press")
         self.assertNotIn("done", event_names)
+
+    async def test_post_approval_capture_is_attached_to_brain_when_observe_model_is_disabled(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：设置",
+            payload={
+                "target_app": "System Settings",
+                "x": 10,
+                "y": 20,
+                "label": "设置",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "proposal-image": {
+                "proposal": proposal,
+                "session_id": "neo-session",
+                "user_text": "打开设置项",
+                "status": "pending",
+            }
+        }
+        brain_calls: list[dict[str, Any]] = []
+
+        async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "text": "截图将由 Brain 直接观察。",
+                "analysis_route": "brain",
+                "frame": {"data_url": "data:image/png;base64,AA=="},
+                "coordinate_context": "screen coordinates",
+                "observations": [],
+                "unknowns": [],
+            }
+
+        async def run_brain_turn(_config: dict[str, Any], **kwargs: Any):
+            brain_calls.append(kwargs)
+            decision = BrainDecision.say("设置项已打开。", goal={"status": "done"})
+            return SimpleNamespace(text=decision.summary, decision=decision)
+
+        deps = self._dependencies(
+            pending,
+            proposal_continue_after_approval=lambda _proposal: True,
+            perform_human_ops_observe=perform_observe,
+            run_brain_turn=run_brain_turn,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision("proposal-image", {"approved": True}, deps)
+        )
+
+        self.assertEqual(brain_calls[0]["image_data_url"], "data:image/png;base64,AA==")
+        self.assertIn("Brain 直接观察图片", brain_calls[0]["user_text"])
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["text"], "设置项已打开。")
 
 
 if __name__ == "__main__":

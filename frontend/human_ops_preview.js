@@ -32,6 +32,7 @@
       const qtBridge = getQtBridge();
       if (qtBridge && typeof qtBridge.showClickPreview === "function") {
         qtBridge.showClickPreview(JSON.stringify(preview));
+        return;
       }
       const previewInsideWindow =
         viewportX >= size / 2 &&

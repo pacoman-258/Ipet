@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>发布近期改动</title>
+</head>
+<body>
+  <h1>发布近期改动</h1>
+  <section>
+    <h2>目标</h2>
+    <p>整理并验证 Neo Aspect 工作区近期改动，提交到当前分支并推送到远端。</p>
+  </section>
+  <section>
+    <h2>Worker / 子代理拆分</h2>
+    <p>主代理负责范围确认、测试、报告、提交和推送；本轮未启用子代理。</p>
+  </section>
+  <section>
+    <h2>文件变更</h2>
+    <ul>
+      <li>Body、Brain、Human Ops、Backend、Frontend、桌面宿主和设置页面的近期实现与契约测试。</li>
+      <li>Playwright 能力、任务停止控制、Qwen TTS、本地应用图标及对应测试。</li>
+      <li>近期任务 HTML 报告；新增忽略规则，排除本地 <code>.playwright-cli/</code> 调试产物。</li>
+      <li>更新 TTS UI 契约测试，使其匹配按句预合成并在流结束时 flush 的实现。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>已达成效果</h2>
+    <p>完整回归通过：761 个测试全部通过。工作区中的浏览器日志与页面快照未纳入提交范围。</p>
+  </section>
+  <section>
+    <h2>剩余工作</h2>
+    <p>提交并推送仍需完成；推送后需要确认远端分支包含本地领先的提交和本轮新提交。</p>
+  </section>
+  <section>
+    <h2>推荐下一步</h2>
+    <p>推送后做一次真实桌面烟雾测试：启动应用，验证 Qwen TTS、按句播报、Human Ops 浏览器动作审批和停止按钮闭环。</p>
+  </section>
+</body>
+</html>

@@ -54,6 +54,7 @@ EXPECTED_COMPAT_EXPORTS = {
     "_looks_like_desktop_action_request",
     "_looks_like_desktop_observe_request",
     "_looks_like_visual_observation_failure",
+    "_normalize_observed_click_coordinates",
     "_observation_has_reviewable_click_affordance",
     "_observation_text_from_result",
     "_observe_click_coordinate_status",

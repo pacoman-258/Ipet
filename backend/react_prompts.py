@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from brain.decisions import BrainDecision, DecisionKind
+from human_ops.playwright_actions import playwright_command
 
 
 def _click_coordinate_clarification_text(observation_text: str) -> str:
@@ -39,59 +40,11 @@ def _fallback_after_observe_brain_error(
 
 
 def _coerce_decision_for_human_ops(
-    user_text: str,
+    _user_text: str,
     decision: BrainDecision,
-    *,
-    looks_like_desktop_observe_request: Callable[[str], bool],
-    looks_like_desktop_action_request: Callable[[str], bool],
-    looks_like_app_launch_request: Callable[[str], bool] | None = None,
-    app_launch_target: Callable[[str], str] | None = None,
-    looks_like_chat_reply_request: Callable[[str], bool] | None = None,
 ) -> BrainDecision:
-    app_name = (
-        app_launch_target(user_text)
-        if looks_like_app_launch_request is not None
-        and app_launch_target is not None
-        and looks_like_app_launch_request(user_text)
-        else ""
-    )
-    payload = decision.payload if isinstance(decision.payload, dict) else {}
-    is_launch_proposal = (
-        _decision_kind(decision) == DecisionKind.PROPOSE_ACT
-        and str(payload.get("action_type") or "").strip() == "launch_app"
-    )
-    if app_name and is_launch_proposal:
-        arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
-        if str(arguments.get("app") or "").strip() == app_name:
-            return decision
-        normalized_arguments = dict(arguments)
-        normalized_arguments["app"] = app_name
-        normalized_arguments.setdefault("label", str(arguments.get("app") or app_name).strip())
-        return BrainDecision.propose_act("launch_app", normalized_arguments, goal=_decision_goal(decision) or None)
-    if app_name:
-        continue_after_approval = bool(
-            looks_like_chat_reply_request is not None and looks_like_chat_reply_request(user_text)
-        )
-        return BrainDecision.propose_act(
-            "launch_app",
-            {
-                "app": app_name,
-                "label": app_name,
-                "continue_after_approval": continue_after_approval,
-            },
-            goal={
-                "objective": str(user_text or "").strip(),
-                "status": "handoff_review",
-                "stage": "launch_app",
-                "next": "observe" if continue_after_approval else "done",
-            },
-        )
-    if _decision_kind(decision) != DecisionKind.SAY:
-        return decision
-    if _decision_goal(decision):
-        return decision
-    if looks_like_desktop_observe_request(user_text) or looks_like_desktop_action_request(user_text):
-        return BrainDecision.observe(str(user_text or "screen")[:120])
+    # Product intent belongs to Brain. This boundary may validate a proposed action later,
+    # but must not replace the model's chosen surface or action from user-text keywords.
     return decision
 
 
@@ -148,6 +101,7 @@ def _react_followup_prompt(
     observation_text: str = "",
     coordinate_context: str = "",
     computer_use_context: str = "",
+    brain_observed_image: bool = False,
     correction: bool = False,
 ) -> str:
     goal = _decision_goal(decision)
@@ -167,17 +121,30 @@ def _react_followup_prompt(
     if observation_text:
         coordinate_block = f"\n\n{coordinate_context.strip()}\n" if str(coordinate_context or "").strip() else ""
         computer_use_block = f"\n\n{computer_use_context.strip()}\n" if str(computer_use_context or "").strip() else ""
+        if brain_observed_image:
+            observation_intro = (
+                "当前用户消息附带了 Body 刚捕获的屏幕截图。请由你直接观察图片；"
+                "下面的文字只有截图状态和结构化系统证据，不是另一个视觉模型的结论：\n"
+            )
+            decision_instruction = (
+                "请把图片、坐标上下文与结构化系统证据作为同一份上下文，直接决定下一步。"
+                "需要点击时，先在所附原始截图中判断目标中心，propose_act 使用截图像素 x/y，"
+                '并明确写 coordinate_space="image_pixels"；后端会确定性换算为 macOS 屏幕点。'
+            )
+        else:
+            observation_intro = "你刚才让 observe 模型查看了屏幕。observe 用自然语言回答如下：\n"
+            decision_instruction = "请基于这个观察结果决定下一步。不要因为格式问题要求 observe 输出 JSON。"
         return (
             f"{base}"
-            "你刚才让 observe 模型查看了屏幕。observe 用自然语言回答如下：\n"
+            f"{observation_intro}"
             f"{observation_text}"
             f"{coordinate_block}"
             f"{computer_use_block}\n"
-            "请基于这个观察结果决定下一步。不要因为格式问题要求 observe 输出 JSON。"
+            f"{decision_instruction}"
             "如果用户只是问屏幕内容，请用 say 直接回答。"
-            "如果用户要求点击，请确保 propose_act 的 x/y 是 macOS screen coordinates。"
-            "如果 observe 的坐标像是截图/图像像素，先按上面的 image-to-screen scale 换算。"
-            "如果 Structured computer-use context 里已有 surface 和 affordance，优先用 affordance 选择下一步最小动作。"
+            "如果用户要求点击且没有直接附图，请确保 propose_act 的 x/y 是 macOS screen coordinates，"
+            '并写 coordinate_space="macos_screen_points"。'
+            "Structured computer-use context 里的 surface 和 affordance 是当前证据，请与用户目标和观察结果一起判断。"
             "如果观察结果说看不到或不确定，请用 goal.status=blocked 或 need_user 的 say 如实告诉用户。"
         )
     return (
@@ -213,6 +180,12 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
     if action_type == "launch_app":
         app_name = str(arguments.get("app") or arguments.get("name") or arguments.get("label") or "").strip()
         return (True, "") if app_name else (False, "launch_app missing app name")
+    if action_type == "playwright":
+        try:
+            playwright_command(arguments)
+        except ValueError as exc:
+            return False, str(exc)
+        return True, ""
     return False, action_type or "unknown"
 
 
@@ -241,10 +214,17 @@ def _unsupported_simple_action_prompt(
         f"上一轮 Brain 返回了不可执行或不符合当前简单人类动作范围的 propose_act：{unsupported_action}。\n"
         f"上一轮 Brain 决定：{decision.to_dict()}\n"
         f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
-        "当前 Human Ops 只能审批并执行这些动作：launch_app、click、type_text、key_press enter。"
-        "打开 App 直接 propose_act launch_app，并在 arguments.app 中给出应用名；不要截图找图标或改成 click；"
+        "当前 Human Ops 能审批并执行这些动作：playwright、launch_app、click、type_text、key_press enter。"
+        "浏览器任务若尚未得到用户对 Playwright 或人类操作方式的明确选择，应先用 goal.status=need_user 的 say 询问；不要默认替用户选择。"
+        "用户选择 playwright 后，它支持 attach、open、snapshot、click、fill、type、press、导航和标签页操作，"
+        "但必须先由用户明确 Chrome 个人资料显示名，并在每个 playwright proposal 的 arguments.profile 中原样携带；缺少时用 goal.status=need_user 的 say 询问，不得猜默认资料。"
+        "open 会精确解析真实 Chrome 资料：可验证时复用唯一活跃且允许远程调试的窗口，否则从原资料只读初始化 Ipet 私有登录态快照；找不到时使用执行器返回的可选名称让用户重选。"
+        "用户明确只要已打开的 Chrome 原窗口时使用 attach；attach 要求所选资料唯一活跃并允许远程调试，失败必须如实报告。"
+        "click/fill 的 ref 必须来自同一 Playwright 会话的最新 snapshot。"
+        "用户选择人类操作后，再使用桌面观察、点击、输入或回车；当前任务内不要重复询问已经明确的选择。"
+        "launch_app 只用于 Brain 已判断目标是本地应用并明确给出 arguments.app 的情况；"
         "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
         "聚焦输入框也用 click；输入文本用 type_text；发送/确认用 key_press enter。"
-        "请重新选择一个下一步 JSON：observe、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter，"
+        "请重新选择一个下一步 JSON：observe、propose_act playwright、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter，"
         "或带 terminal goal.status 的 say/stop。"
     )

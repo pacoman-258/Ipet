@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from human_ops import ReviewableProposal
+from human_ops.playwright_actions import execute_playwright_action
 
 from . import desktop_command_client as _desktop_command_client_helpers
 
@@ -15,6 +16,7 @@ class AppActionAdapterDependencies:
     send_desktop_command: Callable[..., Awaitable[dict[str, Any]]]
     perform_human_ops_click: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
     perform_human_ops_action: Callable[..., Awaitable[dict[str, Any]]] | None = None
+    perform_playwright_action: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
     command_timeout_sec: float = 8.0
 
 
@@ -65,6 +67,9 @@ async def perform_human_ops_action(
     if action_type == "click":
         click_handler = deps.perform_human_ops_click or perform_human_ops_click
         return await click_handler(proposal, deps=deps) if click_handler is perform_human_ops_click else await click_handler(proposal)
+    if action_type == "playwright":
+        playwright_handler = deps.perform_playwright_action or execute_playwright_action
+        return await playwright_handler(proposal)
     action_handler = deps.perform_human_ops_action or _desktop_command_client_helpers.perform_human_ops_action
     return await action_handler(
         proposal,
@@ -89,11 +94,27 @@ async def request_native_human_ops_approval(
         or (args.get("app") if action_type == "launch_app" else "")
         or ""
     ).strip()
-    target_line = f"\n目标应用：{target_app}" if target_app else "\n目标界面：macOS 桌面"
+    if action_type == "playwright":
+        operation = str(args.get("operation") or "browser").strip() or "browser"
+        target = str(args.get("url") or args.get("ref") or args.get("label") or "当前浏览器会话").strip()
+        profile = str(args.get("profile") or "未选择").strip() or "未选择"
+        target_line = f"\nPlaywright 操作：{operation}\n个人资料：{profile}\n目标：{target}"
+        impact = (
+            "批准后，Ipet 会在该个人资料对应的隔离 Playwright 会话中只执行这一项操作；"
+            "open 会精确匹配该 Chrome 资料：若它是唯一活跃且允许远程调试的资料就复用原窗口，"
+            "否则只读复制 cookies 与网页存储到 Ipet 私有持久快照，绝不写回原 Chrome 资料；"
+            "attach 只连接唯一活跃且允许远程调试的所选资料。"
+            "首次运行可能通过 npx 获取 @playwright/cli，并可能访问目标网络地址；不会执行任意网页脚本。"
+        )
+    else:
+        target_line = f"\n目标应用：{target_app}" if target_app else "\n目标界面：macOS 桌面"
+        impact = (
+            "批准后，Ipet 会先切换并验证目标界面，再执行这一项动作。"
+            "该操作会改变应用焦点或界面状态；不会在本审批之外执行其他动作。"
+        )
     message = (
         f"{proposal.summary}{target_line}\n\n"
-        "批准后，Ipet 会先切换并验证目标界面，再执行这一项动作。"
-        "该操作会改变应用焦点或界面状态；不会在本审批之外执行其他动作。"
+        f"{impact}"
     )
     return await send_desktop_command(
         "human_ops_native_approval",

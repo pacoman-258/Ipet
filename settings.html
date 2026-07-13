@@ -69,6 +69,7 @@
               <select id="chat-tts-provider">
                 <option value="edge_tts">Edge TTS</option>
                 <option value="custom_http">自定义 HTTP</option>
+                <option value="qwen_tts_local">qwenTTS 本地（音色克隆）</option>
               </select>
             </label>
             <label class="field">
@@ -272,7 +273,7 @@
           <div class="form-grid two-col">
             <label class="toggle-line wide">
               <input id="ops-observe-model-enabled" type="checkbox" />
-              <span>observe 使用独立模型</span>
+              <span>observe 使用独立模型（关闭时由 Brain 直接看图）</span>
             </label>
             <label class="field">
               <span>observe API 格式</span>
@@ -292,7 +293,7 @@
               <span>observe 模型发现</span>
               <div class="button-row wrap model-fetch-actions">
                 <button id="ops-observe-fetch-models-btn" class="ghost-button" type="button">拉取 observe 模型</button>
-                <span id="ops-observe-model-status" class="inline-status">可单独配置更快的观察模型</span>
+                <span id="ops-observe-model-status" class="inline-status">默认由 Brain 直接观察；也可单独配置更快的视觉模型</span>
               </div>
               <div id="ops-observe-model-list" class="model-option-list" aria-live="polite"></div>
             </div>
@@ -434,12 +435,12 @@
     </aside>
 
     <nav class="desktop-dock" aria-label="设置 Dock">
-      <button class="dock-item active" data-window-target="overview" data-title="总览" title="总览"><span class="dock-glyph">▦</span><strong>总览</strong></button>
+      <button class="dock-item active" data-window-target="overview" data-title="总览" title="总览"><span class="dock-glyph">⚙</span><strong>总览</strong></button>
       <button class="dock-item" data-window-target="body" data-title="Body" title="Body"><span class="dock-glyph">B</span><strong>身体</strong></button>
-      <button class="dock-item" data-window-target="brain" data-title="Brain" title="Brain"><span class="dock-glyph">Ψ</span><strong>大脑</strong></button>
-      <button class="dock-item" data-window-target="human-ops" data-title="Human Ops" title="Human Ops"><span class="dock-glyph">●</span><strong>操作</strong></button>
-      <button class="dock-item" data-window-target="memory" data-title="Memory" title="Memory"><span class="dock-glyph">◇</span><strong>记忆</strong></button>
-      <button class="dock-item" data-window-target="skills" data-title="Skills" title="Skills"><span class="dock-glyph">S</span><strong>技能</strong></button>
+      <button class="dock-item" data-window-target="brain" data-title="Brain" title="Brain"><span class="dock-glyph">🧠</span><strong>大脑</strong></button>
+      <button class="dock-item" data-window-target="human-ops" data-title="Human Ops" title="Human Ops"><span class="dock-glyph">☺</span><strong>操作</strong></button>
+      <button class="dock-item" data-window-target="memory" data-title="Memory" title="Memory"><span class="dock-glyph">📖</span><strong>记忆</strong></button>
+      <button class="dock-item" data-window-target="skills" data-title="Skills" title="Skills"><span class="dock-glyph">☭</span><strong>技能</strong></button>
       <button class="dock-item" data-window-target="diagnostics" data-title="Diagnostics" title="Diagnostics"><span class="dock-glyph">⌁</span><strong>诊断</strong></button>
     </nav>
   </div>

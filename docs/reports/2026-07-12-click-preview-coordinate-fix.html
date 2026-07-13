@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Click preview and coordinate correction</title>
+  <style>
+    body { max-width: 920px; margin: 36px auto; padding: 0 24px; font: 15px/1.65 system-ui, sans-serif; color: #202124; }
+    h1, h2 { line-height: 1.25; } code { background: #f2f4f7; padding: 2px 5px; border-radius: 4px; }
+    .ok { color: #137333; } .note { color: #8a4b08; }
+  </style>
+</head>
+<body>
+  <h1>Click preview and coordinate correction</h1>
+
+  <h2>Goal</h2>
+  <p>消除审批预览中的重复红点，并修正 Brain 直接观察截图时把图片像素误当作 macOS 屏幕坐标的问题。</p>
+
+  <h2>Worker / subagent split</h2>
+  <p>单 worker 完成；未启用 subagent。</p>
+
+  <h2>Files changed</h2>
+  <p><code>frontend/human_ops_preview.js</code>、<code>brain/llm.py</code>、<code>backend/observe_context.py</code>、ReAct 与路由依赖模块、Human Ops 续推模块、工作流与架构文档，以及对应测试。</p>
+
+  <h2>Achieved effect</h2>
+  <ul>
+    <li>桌面模式下 Qt 覆盖层成为唯一红点绘制者，DOM 红点仅在没有 Qt 桥接时降级显示。</li>
+    <li>Brain 直接看图时返回 <code>image_pixels</code>；后端在审批前按截图尺寸、屏幕原点和比例转换成 <code>macos_screen_points</code>。</li>
+    <li>未知坐标空间、截图越界点和屏幕越界点不再进入可执行审批。</li>
+    <li class="ok">定向回归 50 项通过；完整回归 723 项全部通过。</li>
+  </ul>
+
+  <h2>Remaining work</h2>
+  <p class="note">本轮没有执行真实桌面点击，因此尚未用实际显示器排列、Retina 缩放和目标应用完成有副作用的端到端验证。</p>
+
+  <h2>Recommended next step</h2>
+  <p>在用户明确批准真实桌面测试后，使用一个可撤销的目标完成“截图定位 → 单红点预览 → 批准 → 点击 → 结构化状态验证”烟雾测试。</p>
+</body>
+</html>

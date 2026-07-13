@@ -221,8 +221,8 @@
         neo.human_ops.observe_model.enabled
           ? `observe · ${neo.human_ops.observe_model.model_name || "独立模型"}`
           : neo.human_ops.require_act_review
-            ? "动作需批准"
-            : "动作审批关闭",
+            ? "Brain 直接观察 · 动作需批准"
+            : "Brain 直接观察 · 动作审批关闭",
       ],
       ["Memory", neo.memory.long_term_enabled ? "长期记忆开启" : "长期记忆关闭"],
       ["Skills", neo.skills.review_required ? "保存前审阅" : "审阅关闭"],

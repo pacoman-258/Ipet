@@ -143,6 +143,7 @@ Signal = _QT_BINDINGS.Signal
 Slot = _QT_BINDINGS.Slot
 QAction = _QT_BINDINGS.QAction
 QColor = _QT_BINDINGS.QColor
+QIcon = _QT_BINDINGS.QIcon
 QGuiApplication = _QT_BINDINGS.QGuiApplication
 QImage = _QT_BINDINGS.QImage
 QPainter = _QT_BINDINGS.QPainter
@@ -161,6 +162,8 @@ from app.control_panel import ControlPanel
 from app.window_interaction import WindowInteractionController
 
 ROOT_DIR = Path(__file__).resolve().parent
+APP_DISPLAY_NAME = "Ipet"
+APP_ICON_PATH = ROOT_DIR / "assets" / "ipet-app-icon.png"
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
 SERVICE_LOG_DIR = ROOT_DIR / ".service-logs"
 FORCE_OPAQUE_WINDOW = os.environ.get("PET_FORCE_OPAQUE", "0") == "1"
@@ -187,6 +190,19 @@ def _build_settings_window_controller(owner) -> SettingsWindowController:
         web_attribute=QWebEngineSettings.WebAttribute,
         webgl_enabled=_should_enable_webgl,
     )
+
+
+def _application_icon():
+    return QIcon(str(APP_ICON_PATH))
+
+
+def apply_application_identity(app) -> None:
+    """Keep Qt's process, menu, Dock, and window identity aligned."""
+    app.setApplicationName(APP_DISPLAY_NAME)
+    set_display_name = getattr(app, "setApplicationDisplayName", None)
+    if callable(set_display_name):
+        set_display_name(APP_DISPLAY_NAME)
+    app.setWindowIcon(_application_icon())
 
 
 def _build_desktop_browser_setup_dependencies() -> DesktopBrowserSetupDependencies:
@@ -702,6 +718,8 @@ capture_active_vision_frame_payload = _active_vision_wiring.create_capture_activ
 class DesktopPet(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowTitle(APP_DISPLAY_NAME)
+        self.setWindowIcon(_application_icon())
         self.config = load_config()
         self.desktop_command_router = self._build_desktop_command_router()
         self._config_mtime = self._config_mtime_token()
@@ -758,6 +776,7 @@ class DesktopPet(QMainWindow):
         self.apply_window_geometry_from_config()
 
         self.refresh_motion_list(prefer_reset=False)
+        self.start_qwen_tts_service_async()
         self.ensure_backend_service()
         self.ensure_asr_service()
         self.vision_controller.apply_config(self.config)
@@ -939,6 +958,9 @@ class DesktopPet(QMainWindow):
     def ensure_asr_service(self) -> None:
         self.service_lifecycle.ensure_asr_service()
 
+    def start_qwen_tts_service_async(self) -> None:
+        self.service_lifecycle.start_qwen_tts_service_async()
+
     def request_asr_warmup(self) -> None:
         self.service_lifecycle.request_asr_warmup()
 
@@ -956,6 +978,9 @@ class DesktopPet(QMainWindow):
 
     def stop_asr_service(self) -> None:
         self.service_lifecycle.stop_asr_service()
+
+    def stop_qwen_tts_service(self) -> None:
+        self.service_lifecycle.stop_qwen_tts_service()
 
     def shutdown_desktop(self) -> None:
         _desktop_shutdown_controller_for(self).shutdown_desktop()
@@ -1036,6 +1061,7 @@ if __name__ == "__main__":
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QApplication(sys.argv)
+    apply_application_identity(app)
     app.setQuitOnLastWindowClosed(True)
     pet = DesktopPet()
     pet.show()

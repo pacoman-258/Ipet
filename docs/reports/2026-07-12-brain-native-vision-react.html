@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain 原生视觉 ReAct 链路优化</title>
+  <style>
+    body { max-width: 940px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 15px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #0f172a; }
+    section { margin: 24px 0; padding: 18px 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    code { padding: 2px 5px; border-radius: 5px; background: #f1f5f9; }
+    .ok { color: #047857; font-weight: 700; }
+    .note { color: #92400e; }
+  </style>
+</head>
+<body>
+  <h1>Brain 原生视觉 ReAct 链路优化</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>重点优化未启用独立视觉模型的场景：让具备图像输入能力的 Brain 模型直接接收 Body 截图，同时完成视觉理解与下一步决策，避免独立 VLM 转写造成的上下文损耗、额外模型调用和重复 token。</p>
+  </section>
+
+  <section>
+    <h2>Worker / subagent split</h2>
+    <p>单 worker 完成，未使用 subagent。Brain 负责多模态 provider 请求和结构化下一步决策；Body/Human Ops 仍负责截图、权限、审批和动作执行；后端 ReAct 仅连接截图与下一次 Brain 调用；QA 覆盖 provider、首次观察和批准后续链。</p>
+  </section>
+
+  <section>
+    <h2>Files changed</h2>
+    <ul>
+      <li>Brain：<code>brain/llm.py</code></li>
+      <li>观察与 ReAct：<code>backend/human_ops_observe.py</code>、<code>backend/chat_stream_flow.py</code>、<code>backend/react_prompts.py</code>、<code>backend/app_adapters.py</code>、<code>human_ops/approval_flow.py</code></li>
+      <li>设置说明：<code>settings.html</code>、<code>settings.js</code></li>
+      <li>测试：<code>tests/test_brain_llm_providers.py</code>、<code>tests/test_backend_human_ops_observe.py</code>、<code>tests/test_chat_stream_flow.py</code>、<code>tests/test_backend_react_prompts.py</code>、<code>tests/test_human_ops_approval_flow.py</code></li>
+      <li>文档：<code>docs/architecture.md</code>、<code>docs/WORKFLOW.md</code> 与本报告。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Achieved effect</h2>
+    <ul>
+      <li>独立 observe 模型关闭时，Body 只负责捕获受限截图；截图直接附到紧邻的下一次 Brain 调用。</li>
+      <li>Brain 在同一 provider/model 路径中读取原始图像、坐标合同、原始目标和上一结构化决定，并直接返回下一步 <code>BrainDecision</code>。</li>
+      <li>移除默认路径中的“独立 VLM 分析一次，再由 Brain 解析一次”双模型推理；每次观察减少一次模型调用和一份中间自然语言结果。</li>
+      <li>图片只进入当前请求，不写入 conversation history、Memory、日志或之后的 text-only follow-up；批准后续链也遵循相同的一次性附图规则。</li>
+      <li>OpenAI-compatible、Ollama、Anthropic-compatible、Google AI Studio 与 Codex 均使用各自原生图片输入格式。</li>
+      <li>Codex 临时图片位于系统临时目录，调用结束后删除；Codex 工具仍保持关闭，图片只是请求输入。</li>
+      <li>显式启用独立 observe 模型时保留旧兼容路径；Brain 模型不支持图片时失败关闭，并提示改用视觉 Brain 或独立 observe 模型。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p class="ok">完整回归 720 项全部通过；定向语法与契约回归 63 项通过。</p>
+    <ul>
+      <li>五类 provider 的图片 payload 和 Codex 临时文件清理均有单元测试。</li>
+      <li>首次 ReAct observe 与批准后观察均验证图片只附到紧邻的 Brain 调用。</li>
+      <li>直接 Brain 视觉 prompt 不再声称独立 observe 模型已经给出结论。</li>
+      <li>不支持图片的 Brain 会返回带脱敏 provider 错误和可执行设置建议的 <code>blocked</code> 结果，不会误报观察成功。</li>
+      <li>Python 语法检查、<code>settings.js</code> 语法检查与 <code>git diff --check</code> 均通过。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Remaining work</h2>
+    <p>未调用真实远端模型，也未捕获真实用户屏幕；不同 OpenAI-compatible 服务是否实现标准图像消息格式仍由对应服务能力决定。Codex app-server 当前仍按既有设计使用短生命周期线程，本轮通过稳定结构化前缀和一次性图片输入避免重复中转，不承诺 provider 私有 KV cache 的生命周期。</p>
+  </section>
+
+  <section>
+    <h2>Recommended next step</h2>
+    <p>在用户明确批准真实屏幕观察后，分别用一个视觉 Brain provider 和一个不支持图片的模型做冒烟测试：前者确认 observe 后直接产生准确 <code>say</code> 或可审批动作，后者确认错误清晰且不会误报观察成功。</p>
+  </section>
+</body>
+</html>

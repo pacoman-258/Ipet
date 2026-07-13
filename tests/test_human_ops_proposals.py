@@ -72,6 +72,21 @@ class HumanOpsProposalTests(unittest.TestCase):
         self.assertEqual(payload["tools"][0]["summary"], "打开应用 WeChat")
         self.assertIsNone(payload["preview"])
 
+    def test_playwright_proposal_names_operation_and_target(self) -> None:
+        proposal = build_human_ops_act_proposal(
+            BrainDecision.propose_act(
+                "playwright",
+                {"profile": "个人", "operation": "open", "url": "https://www.youtube.com", "label": "YouTube"},
+            ),
+            user_text="打开 YouTube",
+        )
+
+        payload = proposal_event_payload("pw-1", proposal)
+        self.assertTrue(proposal.requires_review)
+        self.assertEqual(payload["action_type"], "playwright")
+        self.assertEqual(payload["tools"][0]["summary"], "Playwright open：YouTube · 个人资料：个人")
+        self.assertIsNone(payload["preview"])
+
 
 if __name__ == "__main__":
     unittest.main()

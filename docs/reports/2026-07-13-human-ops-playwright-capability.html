@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Human Ops Playwright 能力报告</title>
+  <style>
+    body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 920px; margin: 40px auto; padding: 0 24px; color: #172033; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f1f4f8; padding: .12em .35em; border-radius: 4px; }
+    .ok { color: #087443; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <h1>Human Ops Playwright 能力</h1>
+  <p><strong>日期：</strong>2026-07-13</p>
+
+  <h2>目标</h2>
+  <p>让 Human Ops 能审批并执行受限 Playwright 浏览器动作；告诉 Brain 对浏览器页面任务优先考虑 Playwright，同时保留用户明确要求或 Playwright 无法覆盖时的原生/虚拟操作降级路径。</p>
+
+  <h2>Worker / subagent split</h2>
+  <p>本轮由主 agent 单独完成；未使用 subagent。</p>
+
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>human_ops/playwright_actions.py</code>：安全参数合同、CLI 定位、隔离会话与异步执行。</li>
+    <li><code>human_ops/approvals.py</code>、<code>human_ops/proposals.py</code>、<code>human_ops/approval_flow.py</code>、<code>human_ops/approval_prompts.py</code>：审批、展示和结构化验证。</li>
+    <li><code>backend/app_action_adapters.py</code>、<code>backend/react_prompts.py</code>：执行适配与 ReAct 动作校验。</li>
+    <li><code>brain/llm.py</code>：浏览器优先、用户覆盖和能力不足降级提示。</li>
+    <li><code>docs/WORKFLOW.md</code>、<code>docs/architecture.md</code>：行为与安全边界。</li>
+    <li><code>tests/test_playwright_actions.py</code> 及相关 Human Ops / Brain / backend 回归测试。</li>
+  </ul>
+
+  <h2>Achieved effect</h2>
+  <p>Playwright 现在是一类独立的 Human Ops 审批动作。允许的操作限于 HTTP(S) 打开页面、快照、基于 <code>e&lt;number&gt;</code> ref 的点击/填充、文字/按键、导航和标签页；任意 JavaScript、raw CLI、文件 URL 和猜测选择器都会失败关闭。执行结果把页面输出交回 Brain，不会为了验证默认切换 macOS 焦点或截图。</p>
+  <p>审批通知会说明首次运行可能由 <code>npx</code> 获取 <code>@playwright/cli</code>，以及目标页面可能触发网络访问。</p>
+
+  <h2>Verification</h2>
+  <p class="ok">针对性回归：125 tests passed；完整回归：741 tests passed。</p>
+  <p><code>py_compile</code> 与本轮文件的 <code>git diff --check</code> 均通过。</p>
+
+  <h2>Remaining work</h2>
+  <p>未自动下载或启动 Playwright，也未在用户浏览器账号上做真实登录烟雾测试；真实网络与浏览器副作用仍需在对应 Human Ops 审批时发生。</p>
+
+  <h2>Recommended next step</h2>
+  <p>用一个低风险公开页面执行一次完整的 open → snapshot → click 审批链，再单独验证需要现有 Chrome 登录态的任务是否应明确走原生浏览器降级路径。</p>
+</body>
+</html>

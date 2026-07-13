@@ -21,6 +21,7 @@ class QtBindings:
     Slot: Any
     QAction: Any
     QColor: Any
+    QIcon: Any
     QGuiApplication: Any
     QImage: Any
     QPainter: Any
@@ -85,6 +86,7 @@ def _load_binding(binding_name: str) -> QtBindings:
         Slot=slot,
         QAction=_required_attr(gui, "QAction", binding_name),
         QColor=_required_attr(gui, "QColor", binding_name),
+        QIcon=_required_attr(gui, "QIcon", binding_name),
         QGuiApplication=_required_attr(gui, "QGuiApplication", binding_name),
         QImage=_required_attr(gui, "QImage", binding_name),
         QPainter=_required_attr(gui, "QPainter", binding_name),

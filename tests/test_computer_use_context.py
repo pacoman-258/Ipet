@@ -103,6 +103,19 @@ class ComputerUseContextTests(unittest.TestCase):
             ],
         )
 
+    def test_generic_web_chat_is_not_coerced_to_wechat(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "B站私信聊天界面中可见联系人小明、搜索框和消息输入框。",
+            {"desktop_context": {"foreground_app": "Google Chrome"}},
+            "打开 B 站并查看私信",
+        )
+
+        self.assertEqual(context["surface"]["kind"], "chat_gui")
+        self.assertEqual(context["surface"]["app"], "Google Chrome")
+        self.assertNotEqual(context["surface"]["kind"], "wechat_gui")
+        search = next(item for item in context["affordances"] if item["kind"] == "search_field")
+        self.assertEqual(search["label"], "搜索框")
+
     def test_computer_use_context_text_includes_chat_context(self) -> None:
         context_text = context_helpers._computer_use_context_text(
             {

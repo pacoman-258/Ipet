@@ -9,6 +9,14 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import httpx
+from body.qwen_tts import (
+    QWEN_TTS_LANGUAGE,
+    QWEN_TTS_LOCAL_PROVIDER,
+    QWEN_TTS_MODEL,
+    QWEN_TTS_REFERENCE_AUDIO,
+    QWEN_TTS_REFERENCE_TEXT,
+    qwen_tts_clone_url,
+)
 
 try:
     import edge_tts
@@ -18,6 +26,7 @@ except Exception:
 DEFAULT_PROVIDER = "edge_tts"
 DEFAULT_AUDIO_DURATION_MS = 600
 DEFAULT_CUSTOM_HTTP_TIMEOUT_SEC = 60.0
+QWEN_TTS_LOCAL_TIMEOUT_SEC = 180.0
 
 MEDIA_TYPE_TO_SUFFIX = {
     "audio/aac": ".aac",
@@ -61,7 +70,11 @@ def normalize_provider(provider: str | None) -> str:
 
 
 def list_supported_providers() -> list[str]:
-    return ["edge_tts", "custom_http"]
+    return ["edge_tts", "custom_http", QWEN_TTS_LOCAL_PROVIDER]
+
+
+def is_qwen_tts_local_provider(provider: str | None) -> bool:
+    return normalize_provider(provider) == QWEN_TTS_LOCAL_PROVIDER
 
 
 def tts_available(provider: str | None = None, provider_url: str | None = None) -> bool:
@@ -70,6 +83,8 @@ def tts_available(provider: str | None = None, provider_url: str | None = None) 
         return edge_tts is not None
     if p == "custom_http":
         return bool(str(provider_url or "").strip())
+    if p == QWEN_TTS_LOCAL_PROVIDER:
+        return QWEN_TTS_REFERENCE_AUDIO.is_file()
     return False
 
 
@@ -392,6 +407,50 @@ async def _synthesize_custom_http(
     )
 
 
+async def _synthesize_qwen_tts_local(
+    *,
+    text: str,
+    cache_dir: Path,
+    file_id: str,
+    provider_url: str,
+) -> SynthesizedAudio:
+    if not QWEN_TTS_REFERENCE_AUDIO.is_file():
+        raise RuntimeError("Qwen TTS reference audio is unavailable.")
+
+    endpoint = qwen_tts_clone_url(provider_url)
+    timeout = httpx.Timeout(connect=2.0, read=QWEN_TTS_LOCAL_TIMEOUT_SEC, write=20.0, pool=2.0)
+    payload = {
+        "model": QWEN_TTS_MODEL,
+        "input": text,
+        "reference_text": QWEN_TTS_REFERENCE_TEXT,
+        "language": QWEN_TTS_LANGUAGE,
+    }
+    # The local service must not inherit a global SOCKS/HTTP proxy.  Some
+    # Ipet environments set ALL_PROXY while not installing httpx[socks].
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        with QWEN_TTS_REFERENCE_AUDIO.open("rb") as reference_audio:
+            response = await client.post(
+                endpoint,
+                data=payload,
+                files={"reference_audio": (QWEN_TTS_REFERENCE_AUDIO.name, reference_audio, "audio/mpeg")},
+            )
+        audio_bytes, duration_ms, suffix, media_type = await _extract_custom_http_audio(
+            client=client,
+            response=response,
+            request_url=endpoint,
+            text=text,
+        )
+
+    output_path = cache_dir / f"{file_id}{suffix}"
+    output_path.write_bytes(audio_bytes)
+    return SynthesizedAudio(
+        file_id=file_id,
+        path=output_path,
+        duration_ms=duration_ms,
+        media_type=media_type,
+    )
+
+
 async def synthesize_to_audio(
     *,
     text: str,
@@ -431,6 +490,14 @@ async def synthesize_to_audio(
             voice=voice,
             rate=rate,
             volume=volume,
+        )
+
+    if p == QWEN_TTS_LOCAL_PROVIDER:
+        return await _synthesize_qwen_tts_local(
+            text=text,
+            cache_dir=cache_dir,
+            file_id=file_id,
+            provider_url=provider_url,
         )
 
     raise RuntimeError(f"Unsupported TTS provider: {provider}")

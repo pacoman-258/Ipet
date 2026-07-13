@@ -69,6 +69,7 @@ class AppRouteDependencyContext:
     human_ops_continuation_prompt: Callable[..., str] | None = None
     with_inherited_enter_expected_text: Callable[..., BrainDecision] | None = None
     request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
+    normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] | None = None
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
@@ -154,6 +155,9 @@ def create_chat_stream_route_deps(context: AppRouteDependencyContext) -> _chat_s
         computer_use_context_text=context.computer_use_context_text or (lambda observation: ""),
         goal_status=context.goal_status or (lambda decision, *, operation_request: ""),
         goal_is_terminal=context.goal_is_terminal or (lambda status: False),
+        pending_proposals=context.pending_proposals if context.pending_proposals is not None else {},
+        normalize_observed_click_coordinates=context.normalize_observed_click_coordinates
+        or (lambda decision, observation: decision),
     )
 
 
@@ -161,7 +165,7 @@ def create_human_ops_decision_route_deps(
     context: AppRouteDependencyContext,
 ) -> _human_ops_decision_route_helpers.HumanOpsApprovalFlowDependencies:
     return _human_ops_decision_route_helpers.HumanOpsApprovalFlowDependencies(
-        pending_proposals=context.pending_proposals or {},
+        pending_proposals=context.pending_proposals if context.pending_proposals is not None else {},
         sse=context.sse or (lambda event, data: ""),
         proposal_tool_label=context.proposal_tool_label or (lambda proposal: ""),
         perform_human_ops_action=context.perform_human_ops_action or (lambda proposal: {}),
@@ -186,4 +190,6 @@ def create_human_ops_decision_route_deps(
         goal_status=context.goal_status or (lambda decision, *, operation_request: ""),
         goal_is_terminal=context.goal_is_terminal or (lambda status: False),
         request_native_approval=context.request_native_approval,
+        normalize_observed_click_coordinates=context.normalize_observed_click_coordinates
+        or (lambda decision, observation: decision),
     )

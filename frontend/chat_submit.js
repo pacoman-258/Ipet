@@ -58,6 +58,8 @@
         : () => {};
     const setActiveApprovalId =
       typeof deps.setActiveApprovalId === "function" ? deps.setActiveApprovalId : () => {};
+    const getActiveApprovalId =
+      typeof deps.getActiveApprovalId === "function" ? deps.getActiveApprovalId : () => "";
     const getPendingRetryEdit =
       typeof deps.getPendingRetryEdit === "function" ? deps.getPendingRetryEdit : () => null;
     const setReceivedStructuredSegment =
@@ -73,6 +75,51 @@
     const speechQueueLength =
       typeof speechController.queueLength === "function" ? () => speechController.queueLength() : () => 0;
     const isAsrBusy = typeof asrController.isBusy === "function" ? () => asrController.isBusy() : () => false;
+    let activeTaskId = "";
+    let activeAbortController = null;
+
+    function newTaskId() {
+      return globalThis.crypto?.randomUUID?.() || `task-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    async function stopTask() {
+      if (!activeTaskId || !["streaming", "awaiting_approval", "stopping"].includes(getChatState())) {
+        return;
+      }
+      setChatState("stopping");
+      stopSpeaking(false);
+      activeAbortController?.abort();
+      const taskId = activeTaskId;
+      const approvalId = getActiveApprovalId();
+      if (approvalId) removeApprovalBubble(approvalId);
+      let summary = { completed: [], not_executed: ["后续 Brain、Observe 与动作步骤"], uncertain: [] };
+      try {
+        const response = await fetch(`${backendBaseUrl()}/api/chat/tasks/${encodeURIComponent(taskId)}/stop`, {
+          method: "POST",
+        });
+        if (response.ok) {
+          summary = await response.json();
+        }
+      } catch (_) {}
+      const parts = ["已由用户停止。"];
+      if (summary.completed?.length) parts.push(`已完成：${summary.completed.join("、")}。`);
+      if (summary.not_executed?.length) parts.push(`未执行：${summary.not_executed.join("、")}。`);
+      if (summary.uncertain?.length) parts.push(`仍不确定：${summary.uncertain.join("、")}。`);
+      const stoppedTurn = chatWorklogController.appendWorklogPhase?.({
+        category: "stopped",
+        status: "stopped",
+        text: "已由用户停止",
+        source: "local_system",
+        transient: false,
+      });
+      chatWorklogController.finishWorklogProcess?.(stoppedTurn, "stopped");
+      appendMessage("pet", parts.join(" "), { speakerName: "系统" });
+      setActiveApprovalId("");
+      setPendingApprovalInputTurnId("");
+      activeAbortController = null;
+      activeTaskId = "";
+      setChatState("stopped");
+    }
 
     function backendBaseUrl() {
       return String(state.chat?.backend_url || "").replace(/\/$/, "");
@@ -90,6 +137,7 @@
       const currentChatMode = getCurrentChatMode();
       const currentMemoryMode = getCurrentMemoryMode();
       return {
+        task_id: activeTaskId,
         session_id: state.chat.session_id || "default",
         model: state.chat.model || "gpt-5.4",
         system_prompt: state.chat.system_prompt || "",
@@ -122,6 +170,7 @@
       const turnKey = String(turnId || "").trim();
       const nativeApproval = options?.native === true;
       const thoughtSessionId = chatWorklogController.resolveApprovalThoughtSessionId(turnKey);
+      activeAbortController = new AbortController();
       try {
         const endpoint = nativeApproval ? "native-decision" : "decision";
         const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/${endpoint}`, {
@@ -130,6 +179,7 @@
           body: nativeApproval
             ? JSON.stringify({})
             : JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
+          signal: activeAbortController.signal,
         });
         removeApprovalBubble(turnId);
         const result = await consumeChatStream(resp, { thoughtSessionId });
@@ -147,6 +197,7 @@
           chatInputEl.focus();
         }
       } catch (err) {
+        if (err?.name === "AbortError" && ["stopping", "stopped"].includes(getChatState())) return;
         chatWorklogController.deleteApprovalThoughtSessionId(turnKey);
         clearActiveThoughtSession(thoughtSessionId);
         appendMessage("error", `对话失败：${err?.message || String(err)}`, {
@@ -206,6 +257,8 @@
       beginSpeechStream();
       setReceivedStructuredSegment(false);
       setActiveApprovalId("");
+      activeTaskId = newTaskId();
+      activeAbortController = new AbortController();
       const thoughtSessionId = beginThoughtSession();
 
       try {
@@ -213,6 +266,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(buildChatStreamPayload(userText, retryFromAssistantTurn)),
+          signal: activeAbortController.signal,
         });
 
         const result = await consumeChatStream(resp, { thoughtSessionId });
@@ -221,6 +275,7 @@
           return;
         }
       } catch (err) {
+        if (err?.name === "AbortError" && ["stopping", "stopped"].includes(getChatState())) return;
         clearActiveThoughtSession(thoughtSessionId);
         appendMessage("error", `对话失败：${err?.message || String(err)}`, {
           speakerName: "系统",
@@ -249,6 +304,7 @@
 
     return {
       continueApproval,
+      stopTask,
       streamChat,
       submitChatInput,
     };

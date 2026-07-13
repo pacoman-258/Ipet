@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright 个人资料与窗口复用报告</title>
+  <style>
+    body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #172033; }
+    code { background: #f1f4f8; padding: .12em .35em; border-radius: 4px; }
+    .ok { color: #087443; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <h1>Playwright 个人资料与窗口复用</h1>
+  <p><strong>日期：</strong>2026-07-13</p>
+  <h2>Goal</h2>
+  <p>选择 Playwright 后询问用户使用哪个个人资料；同一资料已有 Ipet Playwright 会话窗口时复用该窗口。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成，未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>human_ops/playwright_actions.py</code>：个人资料校验、稳定会话映射与窗口复用。</li>
+    <li><code>brain/llm.py</code>、<code>backend/react_prompts.py</code>：个人资料询问和缺失资料纠正合同。</li>
+    <li><code>human_ops/proposals.py</code>、<code>backend/app_action_adapters.py</code>：审批中展示个人资料与复用影响。</li>
+    <li><code>docs/WORKFLOW.md</code>、<code>docs/architecture.md</code> 及相关测试。</li>
+  </ul>
+  <h2>Achieved effect</h2>
+  <p>Playwright proposal 必须携带用户明确选择的 <code>arguments.profile</code>。同名资料确定性映射到同一命名 CLI session，因此打开中的 Ipet Playwright 窗口会被复用；不同资料相互隔离。会话名只含资料名称的哈希，不暴露原名。</p>
+  <h2>Remaining work</h2>
+  <p>Playwright CLI 不能安全接管未由该命名会话启动的普通 Chrome 窗口；这种需求需要用户改选人类操作。</p>
+  <h2>Recommended next step</h2>
+  <p>分别用“个人”和“工作”资料执行页面打开，再重复选择“个人”，验证第二次沿用同一窗口与登录态。</p>
+  <h2>Verification</h2>
+  <p class="ok">针对性回归 45 项、完整回归 742 项全部通过；语法与差异格式检查通过。</p>
+</body>
+</html>

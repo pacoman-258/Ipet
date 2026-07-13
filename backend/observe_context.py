@@ -15,10 +15,9 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
 
 def _looks_like_click_request(user_text: str) -> bool:
     text = str(user_text or "").strip().lower()
-    explicit_click = any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
+    return any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
         target in text for target in _computer_use_context_helpers._DESKTOP_TARGET_TERMS
     )
-    return explicit_click or _computer_use_context_helpers._looks_like_app_launch_request(text)
 
 
 def image_resolution_from_frame(frame: dict[str, Any]) -> dict[str, int]:
@@ -115,14 +114,80 @@ def observe_coordinate_context_from_frame(frame: dict[str, Any]) -> str:
     )
 
 
+def normalize_observed_click_coordinates(
+    decision: BrainDecision,
+    observation: dict[str, Any] | None,
+) -> BrainDecision:
+    if decision.kind.value != "propose_act":
+        return decision
+    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    if str(payload.get("action_type") or "").strip() != "click":
+        return decision
+    arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    data = observation if isinstance(observation, dict) else {}
+    frame = data.get("frame") if isinstance(data.get("frame"), dict) else {}
+    if not frame:
+        return decision
+
+    next_arguments = dict(arguments)
+    raw_space = str(arguments.get("coordinate_space") or "").strip().lower()
+    if not raw_space:
+        raw_space = "image_pixels" if str(data.get("analysis_route") or "") == "brain" else "macos_screen_points"
+    image_spaces = {"image", "image_pixel", "image_pixels", "screenshot", "screenshot_pixels"}
+    screen_spaces = {"macos_screen_points", "screen", "screen_points"}
+    try:
+        x = float(arguments.get("x"))
+        y = float(arguments.get("y"))
+    except (TypeError, ValueError):
+        return decision
+
+    bounds = screen_bounds_from_frame(frame)
+    image = image_resolution_from_frame(frame)
+    if raw_space in image_spaces:
+        width = _coerce_int(image.get("width"))
+        height = _coerce_int(image.get("height"))
+        scale = coordinate_scale_for_frame(bounds, image)
+        if not scale or width <= 0 or height <= 0 or not (0 <= x < width and 0 <= y < height):
+            next_arguments.pop("x", None)
+            next_arguments.pop("y", None)
+            next_arguments["coordinate_error"] = "image coordinates are outside the captured screenshot"
+        else:
+            next_arguments["x"] = int(round(_coerce_int(bounds.get("x")) + x * scale["image_to_screen_x"]))
+            next_arguments["y"] = int(round(_coerce_int(bounds.get("y")) + y * scale["image_to_screen_y"]))
+            next_arguments["coordinate_space"] = "macos_screen_points"
+            next_arguments["source_coordinate_space"] = "image_pixels"
+    elif raw_space in screen_spaces:
+        origin_x = _coerce_int(bounds.get("x"))
+        origin_y = _coerce_int(bounds.get("y"))
+        width = _coerce_int(bounds.get("width"))
+        height = _coerce_int(bounds.get("height"))
+        if width > 0 and height > 0 and not (
+            origin_x <= x < origin_x + width and origin_y <= y < origin_y + height
+        ):
+            next_arguments.pop("x", None)
+            next_arguments.pop("y", None)
+            next_arguments["coordinate_error"] = "screen coordinates are outside the captured display bounds"
+        else:
+            next_arguments["x"] = int(round(x))
+            next_arguments["y"] = int(round(y))
+            next_arguments["coordinate_space"] = "macos_screen_points"
+    else:
+        next_arguments.pop("x", None)
+        next_arguments.pop("y", None)
+        next_arguments["coordinate_error"] = f"unsupported coordinate space: {raw_space}"
+
+    goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+    return BrainDecision.propose_act("click", next_arguments, goal=goal)
+
+
 def default_observe_prompt_for_request(user_text: str, target: str) -> str:
     text = str(user_text or target or "").strip()
     if _looks_like_click_request(text):
         return f"我需要找到“{text or target}”对应的可点击目标。请观看屏幕截图，用自然语言告诉我它是否可见、可见依据，以及可点击中心点的 macOS 屏幕坐标 x 和 y。"
     if _computer_use_context_helpers._looks_like_chat_reply_request(text):
         return (
-            f"我需要完成“{text or target}”这个聊天回复任务。请观察当前屏幕，用自然语言说明当前是否在微信或聊天界面，"
-            "目标联系人或会话是否可见，最近聊天内容是什么，是否有搜索框、联系人条目、聊天输入框或发送入口可用。"
+            f"我需要完成“{text or target}”这个聊天回复任务。请观察当前屏幕，用自然语言说明当前属于哪个应用、网页或聊天界面，"
+            "与目标相关的联系人、会话、可见消息和可操作入口有哪些。只报告可见证据，不替 Brain 选择固定操作顺序。"
         )
     if any(term in text for term in ("读", "文字", "内容", "写着", "显示")):
         return f"我需要读取当前屏幕中和“{text or target}”相关的可见文字和内容。请只根据截图用自然语言回答。"

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright 真实 Chrome 个人资料修复</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 20px; font: 16px/1.65 system-ui, sans-serif; color: #182235; }
+    h1, h2 { line-height: 1.25; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef3fa; }
+    .ok { color: #087443; }
+    .note { padding: 12px 16px; border-left: 4px solid #4b78d1; background: #f3f7ff; }
+  </style>
+</head>
+<body>
+  <h1>Playwright 真实 Chrome 个人资料修复</h1>
+
+  <h2>目标</h2>
+  <p>修复“用户选择了 Chrome 个人资料，但 Playwright 实际创建空白资料”的问题，并在证据足够时复用已经打开的所选 Chrome 窗口。</p>
+
+  <h2>Worker / subagent 分工</h2>
+  <p>主代理单独完成 Human Ops 执行器、Brain 合同、测试、文档与报告；本轮未启用 subagent。</p>
+
+  <h2>修改文件</h2>
+  <ul>
+    <li><code>human_ops/chrome_profiles.py</code>：解析 Chrome <code>Local State</code>、精确匹配资料、创建私有登录态快照、检查唯一活跃资料与 CDP。</li>
+    <li><code>human_ops/playwright_actions.py</code>：将 <code>open</code>/<code>attach</code> 接到真实资料解析、窗口复用和显式失败语义。</li>
+    <li><code>backend/app_action_adapters.py</code>、<code>backend/react_prompts.py</code>、<code>brain/llm.py</code>：更新审批披露和模型能力合同。</li>
+    <li><code>tests/test_playwright_actions.py</code> 及相关合同测试：覆盖资料匹配、登录态复制、原资料不变、未知资料、唯一窗口复用和多资料歧义。</li>
+    <li><code>docs/WORKFLOW.md</code>、<code>docs/architecture.md</code>、<code>.gitignore</code>：记录并隔离新的私有快照行为。</li>
+  </ul>
+
+  <h2>实现效果</h2>
+  <ul>
+    <li class="ok">资料显示名或 <code>Profile N</code> 目录名必须精确命中 Chrome 资料；不存在时返回可选名称，不再创建同名空资料。</li>
+    <li class="ok"><code>open</code> 在所选资料是唯一活跃资料且远程调试可用时复用原窗口；否则只读复制 cookies 和网页存储到 Ipet 私有持久快照。</li>
+    <li class="ok">原 Chrome 资料目录不交给 Playwright 直接启动，也不会被快照初始化写回。</li>
+    <li class="ok"><code>attach</code> 对未激活、多资料同时活跃和未开启远程调试分别显式失败。</li>
+    <li class="ok">审批通知会披露认证状态复制、持久保存、窗口复用、网络与首次 CLI 获取影响。</li>
+  </ul>
+
+  <h2>剩余工作</h2>
+  <p class="note">自动化测试只使用临时伪造资料，没有复制用户的真实 Chrome 数据，也没有启动真实浏览器。一次真实端到端烟雾测试会读取并复制所选资料的认证状态、启动 Chrome 并访问网络，因此必须在用户明确批准后执行。</p>
+
+  <h2>验证</h2>
+  <ul>
+    <li class="ok">Playwright、Brain、Human Ops 定向回归：53 项通过。</li>
+    <li class="ok">全量回归：750 项通过。</li>
+    <li class="ok">相关 Python 文件编译检查通过；<code>git diff --check</code> 通过。</li>
+  </ul>
+
+  <h2>建议下一步</h2>
+  <p>重启 Ipet 后，用 Chrome 中显示的精确资料名批准一次 Playwright <code>open</code>。若坚持复用现有窗口，请先在该资料打开 <code>chrome://inspect/#remote-debugging</code> 并启用远程调试，同时只保留该资料为活跃资料。</p>
+</body>
+</html>

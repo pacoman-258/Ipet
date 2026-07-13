@@ -1269,23 +1269,26 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertEqual(calls[1][0], "system_events")
         self.assertIn("click at {12, 34}", calls[1][1][-1])
 
-    def test_execute_human_ops_type_text_uses_system_events_keystroke(self) -> None:
+    def test_execute_human_ops_type_text_uses_core_graphics_unicode(self) -> None:
         calls = []
 
         def runner(args, **kwargs):
             calls.append((args, kwargs))
             return main.subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
-        result = main.execute_human_ops_type_text(
-            {"text": "收到，我马上处理。", "label": "微信聊天输入框"},
-            platform_name="darwin",
-            runner=runner,
-        )
+        with mock.patch("human_ops.desktop_actions._post_core_graphics_text") as event_typer:
+            result = main.execute_human_ops_type_text(
+                {"text": "https://example.com", "label": "浏览器地址栏"},
+                platform_name="darwin",
+                runner=runner,
+            )
 
-        self.assertEqual(result, {"typed": True, "text": "收到，我马上处理。", "label": "微信聊天输入框", "method": "system_events"})
-        self.assertEqual(calls[0][0][:2], ["osascript", "-e"])
-        self.assertIn("keystroke", calls[0][0][-1])
-        self.assertIn("收到，我马上处理。", calls[0][0][-1])
+        self.assertEqual(
+            result,
+            {"typed": True, "text": "https://example.com", "label": "浏览器地址栏", "method": "core_graphics_unicode"},
+        )
+        event_typer.assert_called_once_with("https://example.com")
+        self.assertEqual(calls, [])
 
     def test_execute_human_ops_key_press_enter_uses_key_code_36(self) -> None:
         calls = []

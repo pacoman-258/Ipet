@@ -86,6 +86,7 @@
       setActiveApprovalId: (value) => {
         graphState.activeApprovalId = String(value || "");
       },
+      getActiveApprovalId: () => graphState.activeApprovalId,
       getPendingRetryEdit: () => graphState.pendingRetryEdit,
       setPendingRetryEdit: (value) => {
         graphState.pendingRetryEdit = value || null;
@@ -199,6 +200,7 @@
       loadChatSkills: facade.loadChatSkills,
       resetChatSkillsToDefault: facade.resetChatSkillsToDefault,
       submitChatInput: facade.submitChatInput,
+      stopTask: facade.stopTask,
       matchesPushToTalkKey: facade.matchesPushToTalkKey,
       shouldHandlePushToTalk: facade.shouldHandlePushToTalk,
       clearPendingRetryEdit: facade.clearPendingRetryEdit,

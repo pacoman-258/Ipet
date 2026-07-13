@@ -152,6 +152,7 @@ class DesktopShutdownSplitTests(unittest.TestCase):
             channel=channel,
             on_web_loaded=object(),
             stop_asr_service=mock.Mock(),
+            stop_qwen_tts_service=mock.Mock(),
             stop_backend_service=mock.Mock(),
         )
 
@@ -170,6 +171,7 @@ class DesktopShutdownSplitTests(unittest.TestCase):
         self.assertEqual(browser.page_obj.web_channels, [None])
         channel.deleteLater.assert_called_once_with()
         owner.stop_asr_service.assert_called_once_with()
+        owner.stop_qwen_tts_service.assert_called_once_with()
         owner.stop_backend_service.assert_called_once_with()
 
     def test_controller_shutdown_guard_skips_second_cleanup(self) -> None:

@@ -24,15 +24,17 @@ def build_human_ops_continuation_prompt(
         f"用户原始复杂任务：{user_text}\n\n"
         f"上一项已批准并执行：{proposal.to_dict()}\n"
         f"执行结果：{json.dumps(execution, ensure_ascii=False)}\n\n"
-        "执行后观察：\n"
+        "执行后验证：\n"
         f"{observation_text}\n\n"
         f"{computer_use_block}"
-        "请像会用电脑的人类一样继续当前任务阶段。"
-        "识别当前 surface、可用 affordance、stage 和下一步最小动作。"
-        "如果 chat_context.recent_messages 已经提供足够聊天依据，请据此起草或发送回复，不要反复观察同一段消息。"
-        "如果已经有足够入口，请返回 propose_act；"
-        "需要输入回复时使用 type_text，需要发送/确认时使用 key_press enter；"
-        "只有缺少可操作入口时才返回 observe。"
+        "请独立判断原始目标是否已经完成、当前证据还缺什么，以及最小安全下一步。"
+        "surface、affordance 和 stage 是可用的状态描述，不是固定流程。"
+        "把执行返回值、平台原生状态、chat_context 和可见观察都当作证据；不要重复获取已经足够且一致的证据。"
+        "当前可审批动作能力包括：通过 Playwright 操作浏览器页面、打开已确认的本地应用、点击已定位目标、"
+        "向已确认焦点的输入位置输入文字，以及按 Enter/Return。浏览器任务应遵循用户已经选择的 Playwright 或人类操作方式；"
+        "如果上下文中还没有明确选择，先用 need_user 询问，不要默认替用户决定。"
+        "由你根据目标和证据在 think、observe、propose_act、need_user、blocked 或 done 中选择下一步；"
+        "observe 只用于补齐下一步确实依赖的可见状态，不要把任何动作类型套进预设顺序。"
     )
 
 
@@ -53,25 +55,25 @@ def build_post_approval_observe_prompt(
             draft_clause = f"刚才输入的草稿是“{draft}”。" if draft else ""
             return (
                 f"用户目标是“{task}”。刚才已执行获批动作：{label}。{draft_clause}"
-                "请观察执行后的屏幕状态：当前是否仍在微信目标联系人/会话里，"
+                "请观察执行后的屏幕状态：当前是否仍在目标应用或网页的目标联系人/会话里，"
                 "聊天输入框中是否已经出现这段草稿，草稿文字是否完整，"
-                "是否有发送入口，或是否可以用回车发送。"
-                "请用自然语言给出可见依据；如果可以发送，请说明 key_press enter 是否是合适的下一步。"
+                "以及当前可见的发送入口或其他相关 affordance。"
+                "请只用自然语言给出可见依据，不替 Brain 决定下一步动作。"
             )
         if action_type == "key_press" and str(args.get("key") or "enter").strip().lower() in {"enter", "return"}:
             expected_text = str(args.get("expected_text") or args.get("text") or args.get("draft") or "").strip()
             expected_clause = f"预期刚发送的回复是“{expected_text}”。" if expected_text else ""
             return (
                 f"用户目标是“{task}”。刚才已执行获批动作：{label}。{expected_clause}"
-                "请观察执行后的屏幕状态：当前是否仍在微信目标联系人/会话里，"
+                "请观察执行后的屏幕状态：当前是否仍在目标应用或网页的目标联系人/会话里，"
                 "聊天记录底部是否已经发送并出现这条回复，输入框是否已清空或回到可继续输入状态。"
                 "请用自然语言给出可见依据；重点判断这次回复是否已经发送成功。"
             )
         return (
             f"用户目标是“{task}”。刚才已执行获批动作：{label}。"
-            "请观察执行后的屏幕状态：当前是否在微信或目标联系人/会话里，"
+            "请观察执行后的屏幕状态：当前是否在目标应用或网页的目标联系人/会话里，"
             "最近聊天内容是什么，是否有聊天输入框可输入回复，输入框是否已聚焦或有光标，"
-            "是否有发送入口或可以用回车发送。"
+            "以及有哪些可见的发送入口或相关 affordance。"
             "请用自然语言给出可见依据；如果有可点击联系人、输入框或发送按钮，也说明位置和可操作入口。"
         )
     return (

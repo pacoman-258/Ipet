@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>用户中止权优先化</title></head>
+<body>
+  <h1>用户中止权优先化</h1>
+  <h2>目标</h2>
+  <p>为任务执行链添加高于 Brain、Observe 与 Human Ops 的本地停止能力，并明确区分拒绝单个审批和停止整个任务。</p>
+  <h2>工作拆分</h2>
+  <p>单一实现者完成后端任务控制、Human Ops 边界、前端交互、测试与文档；未启用子代理。</p>
+  <h2>修改文件</h2>
+  <p>backend/task_control.py、backend/chat_stream_flow.py、backend/chat_stream_routes.py、backend/app_route_dependencies.py、backend/human_ops_decision_routes.py、human_ops/approval_flow.py、frontend/chat_submit.js、frontend/chat_input_state.js、frontend/chat_worklog.js、frontend/app_bootstrap.js、frontend/controller_graph_sections.js、frontend/controller_graph_app_sections.js、frontend/controller_facade.js、frontend/index.css、tests/test_task_control.py、tests/test_frontend_chat_submit_source.py、docs/WORKFLOW.md。</p>
+  <h2>达成效果</h2>
+  <p>任务使用 running → stopping → stopped 状态；停止按钮和快捷键先本地中断流，再失效同任务待审批提案。Brain、ReAct、Observe 和动作续跑在安全边界检查停止状态。原子动作已经开始时不回滚，并记录不确定结果。停止工作记录明确显示“已由用户停止”并折叠。</p>
+  <h2>剩余工作</h2>
+  <p>部分第三方或系统级不可取消调用只能等待原子调用返回；当前实现会封锁其后续动作并标记不确定性。</p>
+  <h2>验证</h2>
+  <p><code>.venv/bin/python -m unittest discover -s tests -p 'test*.py' -q</code>：728 项通过。另执行 <code>git diff --check</code>，无空白错误。</p>
+  <h2>建议下一步</h2>
+  <p>在真实 macOS 桌面环境进行一次 Brain 流式输出停止、Observe 中停止、原生审批等待中停止和动作返回竞态烟雾测试。</p>
+</body>
+</html>

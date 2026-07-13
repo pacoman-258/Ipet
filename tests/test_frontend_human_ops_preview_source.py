@@ -107,6 +107,10 @@ class FrontendHumanOpsPreviewSourceTests(unittest.TestCase):
             "document.body.appendChild(dot);",
         ):
             self.assertIn(snippet, source)
+        self.assertIn(
+            'qtBridge.showClickPreview(JSON.stringify(preview));\n        return;',
+            source,
+        )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,17 @@ CONTROLLER_FACADE_JS = ROOT / "frontend" / "controller_facade.js"
 
 
 class FrontendChatSubmitSourceTests(unittest.TestCase):
+    def test_task_stop_is_local_first_and_uses_stable_task_id(self) -> None:
+        source = CHAT_SUBMIT_JS.read_text(encoding="utf-8")
+        self.assertIn("activeAbortController?.abort()", source)
+        self.assertIn("/api/chat/tasks/${encodeURIComponent(taskId)}/stop", source)
+        self.assertIn("task_id: activeTaskId", source)
+        self.assertIn('setChatState("stopping")', source)
+        self.assertIn('setChatState("stopped")', source)
+        bootstrap = (ROOT / "frontend" / "app_bootstrap.js").read_text(encoding="utf-8")
+        self.assertIn('event.key === "Escape"', bootstrap)
+        self.assertIn('event.metaKey && event.key === "."', bootstrap)
+
     def test_chat_submit_module_owns_submit_and_stream_actions(self) -> None:
         self.assertTrue(CHAT_SUBMIT_JS.exists(), "frontend/chat_submit.js should exist")
         source = CHAT_SUBMIT_JS.read_text(encoding="utf-8")

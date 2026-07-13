@@ -172,17 +172,66 @@ def _applescript_string(value: object) -> str:
     return json.dumps(str(value or ""), ensure_ascii=False)
 
 
+def _post_core_graphics_text(text: str) -> None:
+    value = str(text or "")
+    if not value:
+        return
+    app_services = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    preflight = getattr(app_services, "CGPreflightPostEventAccess", None)
+    if preflight is not None:
+        preflight.argtypes = []
+        preflight.restype = ctypes.c_bool
+        if not bool(preflight()):
+            raise RuntimeError("macOS event posting permission is not granted.")
+
+    encoded = value.encode("utf-16-le")
+    unit_count = len(encoded) // 2
+    units = (ctypes.c_uint16 * unit_count).from_buffer_copy(encoded)
+    app_services.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+    app_services.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+    app_services.CGEventKeyboardSetUnicodeString.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_uint16),
+    ]
+    app_services.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    app_services.CFRelease.argtypes = [ctypes.c_void_p]
+
+    key_down = app_services.CGEventCreateKeyboardEvent(None, 0, True)
+    key_up = app_services.CGEventCreateKeyboardEvent(None, 0, False)
+    if not key_down or not key_up:
+        if key_down:
+            app_services.CFRelease(key_down)
+        if key_up:
+            app_services.CFRelease(key_up)
+        raise RuntimeError("CoreGraphics could not create a keyboard event.")
+    try:
+        app_services.CGEventKeyboardSetUnicodeString(key_down, unit_count, units)
+        app_services.CGEventPost(0, key_down)
+        app_services.CGEventPost(0, key_up)
+    finally:
+        app_services.CFRelease(key_down)
+        app_services.CFRelease(key_up)
+
+
 def execute_human_ops_type_text(
     payload: dict | None,
     *,
     platform_name: str | None = None,
     runner=subprocess.run,
+    event_typer=None,
 ) -> dict[str, object]:
     if not _is_macos(platform_name):
         raise RuntimeError("Human Ops text input is currently implemented through macOS desktop event APIs.")
     data = payload if isinstance(payload, dict) else {}
     text = str(data.get("text") or "")
     label = str(data.get("label") or data.get("target") or "输入位置").strip() or "输入位置"
+    native_typer = event_typer or _post_core_graphics_text
+    try:
+        native_typer(text)
+        return {"typed": True, "text": text, "label": label, "method": "core_graphics_unicode"}
+    except Exception as exc:
+        event_error = str(exc).strip()
     script = f'tell application "System Events" to keystroke {_applescript_string(text)}'
     result = runner(
         ["osascript", "-e", script],
@@ -193,6 +242,8 @@ def execute_human_ops_type_text(
     )
     if getattr(result, "returncode", 1) != 0:
         detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "osascript failed").strip()
+        if event_error:
+            detail = f"CoreGraphics text input failed: {event_error}; System Events input failed: {detail}"
         raise RuntimeError(detail)
     return {"typed": True, "text": text, "label": label, "method": "system_events"}
 

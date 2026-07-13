@@ -4,12 +4,78 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from brain.decisions import BrainDecision, DecisionKind
+from backend.task_control import TASK_CONTROL, TaskStopped
 
 from .approvals import ReviewableProposal
 
 
 class HumanOpsProposalNotFound(LookupError):
     """Raised when a pending Human Ops proposal cannot be resolved."""
+
+
+def execution_verification(
+    proposal: ReviewableProposal,
+    execution: dict[str, Any] | None,
+) -> dict[str, Any]:
+    data = execution if isinstance(execution, dict) else {}
+    action_type = str(proposal.payload.get("action_type") or "").strip()
+    arguments = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
+    success_field = {
+        "launch_app": "launched",
+        "click": "clicked",
+        "type_text": "typed",
+        "key_press": "pressed",
+        "playwright": "playwright_done",
+    }.get(action_type, "")
+    checks = {
+        success_field: bool(data.get(success_field)) if success_field else False,
+        "focused": bool(data.get("focused")) if action_type in {"launch_app", "click", "type_text", "key_press"} else True,
+    }
+    contradictory = any(data.get(name) is False for name in checks)
+    missing = [name for name, passed in checks.items() if name and not passed]
+    key = str(arguments.get("key") or "enter").strip().lower()
+    expected_text = str(arguments.get("expected_text") or "").strip()
+    semantic_send_pending = action_type == "key_press" and key in {"enter", "return"} and bool(expected_text)
+    if contradictory:
+        status = "failed"
+        reason = "action result contradicts the expected native state"
+    elif missing:
+        status = "insufficient"
+        reason = f"missing native checks: {', '.join(missing)}"
+    elif semantic_send_pending:
+        status = "insufficient"
+        reason = "native key delivery cannot confirm that the expected message appeared"
+    else:
+        status = "verified"
+        reason = "action result and native focus state passed"
+    return {
+        "status": status,
+        "method": "action_result_and_native_state",
+        "action_type": action_type,
+        "checks": checks,
+        "frontmost_app": str(data.get("frontmost_app") or "").strip(),
+        "reason": reason,
+        "requires_visual": status == "insufficient",
+    }
+
+
+def structured_verification_observation(verification: dict[str, Any]) -> dict[str, Any]:
+    checks = verification.get("checks") if isinstance(verification.get("checks"), dict) else {}
+    passed = ", ".join(name for name, value in checks.items() if value) or "none"
+    frontmost = str(verification.get("frontmost_app") or "").strip()
+    frontmost_text = f"；前台应用：{frontmost}" if frontmost else ""
+    return {
+        "text": f"动作返回与平台原生状态验证通过：{passed}{frontmost_text}。本阶段未截图。",
+        "analysis_route": "structured",
+        "verification": dict(verification),
+        "observations": [
+            {
+                "claim": "动作返回值和平台原生焦点状态已通过",
+                "source": "human_ops_execution",
+            }
+        ],
+        "unknowns": [],
+    }
 
 
 @dataclass(frozen=True)
@@ -38,6 +104,9 @@ class HumanOpsApprovalFlowDependencies:
     goal_status: Callable[..., str]
     goal_is_terminal: Callable[[str], bool]
     request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
+    normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] = (
+        lambda decision, observation: decision
+    )
 
 
 def stream_human_ops_proposal_decision(
@@ -55,9 +124,11 @@ def stream_human_ops_proposal_decision(
     if not isinstance(proposal, ReviewableProposal):
         raise HumanOpsProposalNotFound("Human Ops proposal not found.")
     session_id = str(record.get("session_id") or "default")
+    task_id = str(record.get("task_id") or proposal_key)
     label = deps.proposal_tool_label(proposal)
 
     async def event_stream() -> AsyncIterator[str]:
+        TASK_CONTROL.bind_current_task(task_id)
         yield deps.sse(
             "meta",
             {
@@ -87,6 +158,9 @@ def stream_human_ops_proposal_decision(
             )
             return
 
+        if record.get("status") == "invalidated_by_stop":
+            raise TaskStopped()
+        TASK_CONTROL.check(task_id, next_action="待审批动作")
         record["status"] = "approved"
         action_type = str(proposal.payload.get("action_type") or "").strip()
         phase_name = "human_ops_click" if action_type == "click" else "human_ops_action"
@@ -101,7 +175,11 @@ def stream_human_ops_proposal_decision(
             },
         )
         try:
-            execution = await deps.perform_human_ops_action(proposal.approve())
+            TASK_CONTROL.enter_atomic(task_id)
+            try:
+                execution = await deps.perform_human_ops_action(proposal.approve())
+            finally:
+                TASK_CONTROL.exit_atomic(task_id)
             if action_type == "click":
                 final_text = f"已执行点击：{label}。"
             elif action_type == "type_text":
@@ -110,6 +188,8 @@ def stream_human_ops_proposal_decision(
                 final_text = f"已执行按键：{label}。"
             elif action_type == "launch_app":
                 final_text = f"已打开应用：{label}。"
+            elif action_type == "playwright":
+                final_text = f"已执行 Playwright 操作：{label}。"
             else:
                 final_text = f"已执行操作：{label}。"
             record["status"] = "executed"
@@ -117,8 +197,16 @@ def stream_human_ops_proposal_decision(
             execution = {"ok": False, "error": str(exc)}
             final_text = f"操作执行失败：{str(exc)[:180]}"
             record["status"] = "failed"
+        current_task = TASK_CONTROL.get(task_id)
+        if current_task is not None and current_task.state != "running":
+            TASK_CONTROL.mark_uncertain(task_id, f"原子动作可能已经发生：{label}")
+            record["status"] = "stopped_after_atomic_action"
+            return
+        if record.get("status") == "executed":
+            TASK_CONTROL.complete_step(task_id, f"已执行：{label}")
         yield deps.sse("display_segment", {"text": final_text})
         if record.get("status") == "executed" and deps.proposal_continue_after_approval(proposal):
+            TASK_CONTROL.check(task_id, next_action="动作后结构化验证")
             private_config = deps.normalize_private_config()
             brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
             human_ops_config = (
@@ -128,50 +216,94 @@ def stream_human_ops_proposal_decision(
                 str(record.get("user_text") or ""),
                 proposal,
             )
+            verification = execution_verification(proposal, execution)
             yield deps.sse(
                 "phase",
                 {
                     "category": "verifying",
-                    "name": "human_ops_observe",
+                    "name": "human_ops_structured_verify",
                     "status": "running",
-                    "text": "Body 正在检查动作后的界面状态",
+                    "text": "Human Ops 正在检查动作返回与系统状态",
                     "task": verification_task,
-                    "source": "body",
+                    "source": "human_ops",
                 },
             )
-            try:
-                proposal_args = (
-                    proposal.payload.get("arguments")
-                    if isinstance(proposal.payload.get("arguments"), dict)
-                    else {}
+            if verification["status"] == "failed":
+                record["status"] = "verification_failed"
+                final_text = f"动作返回后的结构化验证失败：{verification['reason']}。"
+                yield deps.sse("display_segment", {"text": final_text})
+                yield deps.sse(
+                    "done",
+                    {
+                        "turn_id": proposal_key,
+                        "proposal_id": proposal_key,
+                        "session_id": session_id,
+                        "text": final_text,
+                        "approved": True,
+                        "execution": execution,
+                        "verification": verification,
+                    },
                 )
-                target_app = str(
-                    proposal_args.get("target_app")
-                    or (proposal_args.get("app") if action_type == "launch_app" else "")
-                    or execution.get("target_app")
-                    or execution.get("app")
-                    or ""
-                ).strip()
-                observation = await deps.perform_human_ops_observe(
-                    BrainDecision.observe(
-                        "screen",
-                        observe_prompt=verification_task,
-                        target_app=target_app,
-                    ),
-                    human_ops_config,
+                return
+            if verification["requires_visual"]:
+                TASK_CONTROL.check(task_id, next_action="动作后视觉验证")
+                yield deps.sse(
+                    "phase",
+                    {
+                        "category": "verifying",
+                        "name": "human_ops_observe",
+                        "status": "running",
+                        "text": "前置验证证据不足，Body 正在检查界面状态",
+                        "task": verification_task,
+                        "source": "body",
+                    },
                 )
-            except Exception as exc:
-                observation = {
-                    "text": f"观察失败：{deps.sanitize_brain_error(exc, brain_config)}",
-                    "observations": [],
-                    "unknowns": [str(exc)],
-                }
+                try:
+                    proposal_args = (
+                        proposal.payload.get("arguments")
+                        if isinstance(proposal.payload.get("arguments"), dict)
+                        else {}
+                    )
+                    target_app = str(
+                        proposal_args.get("target_app")
+                        or (proposal_args.get("app") if action_type == "launch_app" else "")
+                        or execution.get("target_app")
+                        or execution.get("app")
+                        or ""
+                    ).strip()
+                    observation = await deps.perform_human_ops_observe(
+                        BrainDecision.observe(
+                            "screen",
+                            observe_prompt=verification_task,
+                            target_app=target_app,
+                        ),
+                        human_ops_config,
+                    )
+                except Exception as exc:
+                    observation = {
+                        "text": f"观察失败：{deps.sanitize_brain_error(exc, brain_config)}",
+                        "observations": [],
+                        "unknowns": [str(exc)],
+                    }
+            else:
+                observation = structured_verification_observation(verification)
             followup_text = deps.human_ops_continuation_prompt(
                 user_text=str(record.get("user_text") or ""),
                 proposal=proposal,
                 execution=execution,
                 observation=observation,
             )
+            observation_frame = observation.get("frame") if isinstance(observation.get("frame"), dict) else {}
+            followup_image_data_url = (
+                str(observation_frame.get("data_url") or "")
+                if str(observation.get("analysis_route") or "") == "brain"
+                else ""
+            )
+            if followup_image_data_url:
+                followup_text += (
+                    "\n\nBody 刚捕获的动作后截图已附在当前消息中。请由 Brain 直接观察图片，"
+                    "并把图片、执行结果、坐标上下文和结构化系统证据作为同一份上下文决定下一步。"
+                )
             try:
                 continuation_budget = 3
                 correction_used = False
@@ -179,8 +311,13 @@ def stream_human_ops_proposal_decision(
                 continuation_text = ""
                 original_user_text = str(record.get("user_text") or "")
                 while True:
-                    completion = await deps.run_brain_turn(brain_config, user_text=followup_text)
+                    brain_kwargs: dict[str, Any] = {"user_text": followup_text}
+                    if followup_image_data_url:
+                        brain_kwargs["image_data_url"] = followup_image_data_url
+                    completion = await deps.run_brain_turn(brain_config, **brain_kwargs)
+                    followup_image_data_url = ""
                     next_decision = deps.decision_from_completion(completion)
+                    next_decision = deps.normalize_observed_click_coordinates(next_decision, observation)
                     continuation_text = str(getattr(completion, "text", None) or next_decision.summary).strip()
                     next_kind = deps.decision_kind(next_decision)
                     if next_kind == DecisionKind.PROPOSE_ACT:
@@ -217,6 +354,8 @@ def stream_human_ops_proposal_decision(
                             session_id=session_id,
                             user_text=original_user_text,
                         )
+                        if next_proposal_id in deps.pending_proposals:
+                            deps.pending_proposals[next_proposal_id]["task_id"] = task_id
                         yield deps.sse(
                             "phase",
                             {
@@ -252,6 +391,7 @@ def stream_human_ops_proposal_decision(
                         )
                         continue
                     if next_kind == DecisionKind.OBSERVE:
+                        TASK_CONTROL.check(task_id, next_action="Observe 分析")
                         if continuation_budget <= 0:
                             next_decision = deps.blocked_react_decision(original_user_text, next_decision)
                             continuation_text = next_decision.summary
@@ -284,6 +424,14 @@ def stream_human_ops_proposal_decision(
                             str(observation.get("text") or next_decision.summary or continuation_text).strip()
                             or "我看了一下屏幕。"
                         )
+                        observation_frame = (
+                            observation.get("frame") if isinstance(observation.get("frame"), dict) else {}
+                        )
+                        followup_image_data_url = (
+                            str(observation_frame.get("data_url") or "")
+                            if str(observation.get("analysis_route") or "") == "brain"
+                            else ""
+                        )
                         followup_text = deps.react_followup_prompt(
                             user_text=original_user_text,
                             decision=next_decision,
@@ -291,6 +439,7 @@ def stream_human_ops_proposal_decision(
                             observation_text=observation_text,
                             coordinate_context=str(observation.get("coordinate_context") or "").strip(),
                             computer_use_context=deps.computer_use_context_text(observation),
+                            brain_observed_image=bool(followup_image_data_url),
                         )
                         continue
                     status = deps.goal_status(next_decision, operation_request=True)

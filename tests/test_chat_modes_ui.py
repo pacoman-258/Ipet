@@ -378,10 +378,12 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertNotIn('memory_save_suggestion', source)
         self.assertNotIn('/api/chat/memory/decision', source)
 
-    def test_index_requests_tts_once_after_stream_finishes(self) -> None:
+    def test_index_streams_tts_by_sentence_and_flushes_after_stream_finishes(self) -> None:
         source = read_index_ui_source()
         self.assertIn("function feedSpeakBuffer(delta, force = false, expr = null)", source)
-        self.assertIn("if (!force) {\n        return;\n      }", source)
+        self.assertIn("const completedSentence = /[^。！？!?；;\\n]*[。！？!?；;\\n]+", source)
+        self.assertIn("enqueueTTSChunk(sentence, sentenceExpr);", source)
+        self.assertIn("if (force) {\n        const finalText = pendingSpeakBuffer.trim();", source)
         self.assertIn('feedSpeakBuffer("", true);', source)
         self.assertNotIn("pendingSpeakBuffer.match", source)
         self.assertNotIn("await fallbackSpeakByBrowser(nextText)", source)

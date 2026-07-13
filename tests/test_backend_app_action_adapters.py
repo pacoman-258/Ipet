@@ -104,6 +104,57 @@ class BackendAppActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(call.args[0], proposal)
         self.assertTrue(call.kwargs["send_command"])  # callback is forwarded
 
+    async def test_playwright_action_stays_in_human_ops_instead_of_desktop_bridge(self) -> None:
+        adapters = self._import_adapters()
+        proposal = ReviewableProposal.act(
+            action_type="playwright",
+            summary="Ipet 想用 Playwright 打开网页",
+            payload={"profile": "工作", "operation": "open", "url": "https://example.com"},
+        ).approve()
+        playwright_mock = mock.AsyncMock(return_value={"playwright_done": True, "output": "page snapshot"})
+        desktop_mock = mock.AsyncMock()
+        deps = adapters.AppActionAdapterDependencies(
+            command_path=ROOT_DIR / ".pet_desktop_command.json",
+            send_desktop_command=mock.AsyncMock(),
+            perform_human_ops_action=desktop_mock,
+            perform_playwright_action=playwright_mock,
+        )
+
+        result = await adapters.perform_human_ops_action(proposal, deps=deps)
+
+        self.assertTrue(result["playwright_done"])
+        playwright_mock.assert_awaited_once_with(proposal)
+        desktop_mock.assert_not_awaited()
+
+    async def test_playwright_native_approval_discloses_network_and_first_run_bootstrap(self) -> None:
+        adapters = self._import_adapters()
+        proposal = ReviewableProposal.act(
+            action_type="playwright",
+            summary="Ipet 想用 Playwright 打开 YouTube",
+            payload={"profile": "个人", "operation": "open", "url": "https://www.youtube.com"},
+        )
+        calls: list[tuple[str, dict[str, object], float]] = []
+
+        async def send_command(command_type, payload, *, command_path, timeout_sec):
+            calls.append((command_type, payload, timeout_sec))
+            return {"approved": True}
+
+        deps = adapters.AppActionAdapterDependencies(
+            command_path=ROOT_DIR / ".pet_desktop_command.json",
+            send_desktop_command=send_command,
+        )
+        result = await adapters.request_native_human_ops_approval(proposal, deps=deps)
+
+        self.assertTrue(result["approved"])
+        self.assertEqual(calls[0][0], "human_ops_native_approval")
+        self.assertIn("首次运行可能通过 npx 获取 @playwright/cli", calls[0][1]["message"])
+        self.assertIn("可能访问目标网络地址", calls[0][1]["message"])
+        self.assertIn("不会执行任意网页脚本", calls[0][1]["message"])
+        self.assertIn("个人资料：个人", calls[0][1]["message"])
+        self.assertIn("只读复制 cookies 与网页存储到 Ipet 私有持久快照", calls[0][1]["message"])
+        self.assertIn("绝不写回原 Chrome 资料", calls[0][1]["message"])
+        self.assertIn("attach 只连接唯一活跃且允许远程调试的所选资料", calls[0][1]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

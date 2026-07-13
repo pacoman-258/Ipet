@@ -117,21 +117,25 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
 
         main.DesktopPet.ensure_backend_service(host)
         main.DesktopPet.ensure_asr_service(host)
+        main.DesktopPet.start_qwen_tts_service_async(host)
         main.DesktopPet.request_asr_warmup(host)
         main.DesktopPet._start_asr_warmup_progress_monitor(host, "http://127.0.0.1:8008/")
         main.DesktopPet._run_asr_warmup_progress_monitor(host, "http://127.0.0.1:8008")
         main.DesktopPet._stop_managed_process(host, "proc", started_by_app=True)
         main.DesktopPet.stop_backend_service(host)
         main.DesktopPet.stop_asr_service(host)
+        main.DesktopPet.stop_qwen_tts_service(host)
 
         lifecycle.ensure_backend_service.assert_called_once_with()
         lifecycle.ensure_asr_service.assert_called_once_with()
+        lifecycle.start_qwen_tts_service_async.assert_called_once_with()
         lifecycle.request_asr_warmup.assert_called_once_with()
         lifecycle.start_asr_warmup_progress_monitor.assert_called_once_with("http://127.0.0.1:8008/")
         lifecycle.run_asr_warmup_progress_monitor.assert_called_once_with("http://127.0.0.1:8008")
         lifecycle.stop_managed_process.assert_called_once_with("proc", started_by_app=True)
         lifecycle.stop_backend_service.assert_called_once_with()
         lifecycle.stop_asr_service.assert_called_once_with()
+        lifecycle.stop_qwen_tts_service.assert_called_once_with()
 
         self.assertEqual(main.DesktopPet.backend_process.__get__(host), "backend-proc")
         self.assertTrue(main.DesktopPet.backend_started_by_app.__get__(host))
@@ -222,6 +226,37 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
         self.assertEqual(fake_subprocess.popen_calls, [])
         self.assertIsNone(service.asr_process)
         self.assertFalse(service.asr_started_by_app)
+
+    def test_qwen_tts_launches_without_waiting_for_model_readiness(self) -> None:
+        module = importlib.import_module("app.service_lifecycle")
+        fake_subprocess = _FakeSubprocess()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            qwen_root = root / "qwen"
+            qwen_python = qwen_root / ".venv" / "bin" / "python"
+            qwen_python.parent.mkdir(parents=True)
+            qwen_python.touch()
+            service = module.DesktopServiceLifecycle(
+                {"chat": {}},
+                root_dir=root,
+                default_backend_url="http://127.0.0.1:8008",
+                default_asr_api_base_url="http://127.0.0.1:8012",
+                local_api_token_env="IPET_LOCAL_API_TOKEN",
+                local_api_token="secret-token",
+                subprocess_module=fake_subprocess,
+                os_module=SimpleNamespace(name="posix", environ={}),
+                print_func=lambda *_args, **_kwargs: None,
+            )
+            with mock.patch.object(module, "QWEN_TTS_PROJECT_DIR", qwen_root), mock.patch.object(
+                module, "qwen_tts_python", return_value=qwen_python
+            ), mock.patch.object(service, "_qwen_tts_is_healthy", return_value=False):
+                service.start_qwen_tts_service_async()
+
+        call = fake_subprocess.popen_calls[0]
+        self.assertEqual(call["cwd"], str(qwen_root))
+        self.assertEqual(call["cmd"][:4], [str(qwen_python), "-m", "uvicorn", "app:app"])
+        self.assertIs(service.qwen_tts_process, fake_subprocess.process)
+        self.assertTrue(service.qwen_tts_started_by_app)
 
 
 if __name__ == "__main__":

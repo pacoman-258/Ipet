@@ -37,6 +37,23 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
                 self.assertIn(f'id="{section_id}"', self.html)
                 self.assertIn(f'data-window-target="{section_id}"', self.html)
 
+    def test_body_tts_provider_offers_local_qwen_clone(self) -> None:
+        self.assertIn('<option value="qwen_tts_local">qwenTTS 本地（音色克隆）</option>', self.html)
+
+    def test_dock_uses_the_requested_section_icons(self) -> None:
+        expected_glyphs = {
+            "overview": "⚙",
+            "brain": "🧠",
+            "human-ops": "☺",
+            "memory": "📖",
+            "skills": "☭",
+        }
+        dock = self.html.split('<nav class="desktop-dock"', 1)[1].split("</nav>", 1)[0]
+        for section_id, glyph in expected_glyphs.items():
+            with self.subTest(section_id=section_id):
+                button = dock.split(f'data-window-target="{section_id}"', 1)[1].split("</button>", 1)[0]
+                self.assertIn(f'<span class="dock-glyph">{glyph}</span>', button)
+
     def test_page_removed_agent_runtime_management_copy(self) -> None:
         combined = f"{self.html}\n{self.js}".lower()
         for forbidden in ("hermes", "astrbot", "mcp", "runtime sidecar", "/api/runtime/status", "/api/hermes/status", "/api/mcp/", "/api/skills"):

@@ -149,7 +149,9 @@ class BackendAppRouteDependenciesTests(unittest.TestCase):
         action_mock.assert_awaited_once_with(mock.sentinel.proposal)
 
         self.assertTrue(callable(chat_stream_deps.normalize_private_config))
+        self.assertTrue(callable(chat_stream_deps.normalize_observed_click_coordinates))
         self.assertTrue(callable(human_ops_deps.normalize_private_config))
+        self.assertTrue(callable(human_ops_deps.normalize_observed_click_coordinates))
         self.assertTrue(callable(human_ops_deps.proposal_event_payload))
 
 

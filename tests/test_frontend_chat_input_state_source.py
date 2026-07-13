@@ -63,10 +63,11 @@ class FrontendChatInputStateSourceTests(unittest.TestCase):
         self.assertIn("const refs = deps.refs || {};", source)
         self.assertIn("const getChatState =", source)
         self.assertIn("const isAsrBusy =", source)
-        self.assertIn('chatState === "idle" || chatState === "awaiting_followup_input"', source)
+        self.assertIn('["idle", "stopped", "awaiting_followup_input"].includes(chatState)', source)
         self.assertIn("const asrBusy = isAsrBusy();", source)
-        self.assertIn("chatSendEl.disabled = !isSubmittableChatState(chatState) || asrBusy;", source)
-        self.assertIn('chatInputEl.disabled = chatState === "streaming";', source)
+        self.assertIn('const stoppable = ["streaming", "awaiting_approval", "stopping"].includes(chatState);', source)
+        self.assertIn('chatSendEl.textContent = chatState === "stopping"', source)
+        self.assertIn('chatInputEl.disabled = ["streaming", "stopping"].includes(chatState);', source)
         self.assertIn("chatInputEl.readOnly = asrBusy;", source)
 
     def test_token_counter_renders_exact_provider_usage(self) -> None:

@@ -78,8 +78,6 @@ class BackendReactPromptsTests(unittest.TestCase):
         result = react_prompts._coerce_decision_for_human_ops(
             "打开微信",
             decision,
-            looks_like_desktop_observe_request=lambda text: True,
-            looks_like_desktop_action_request=lambda text: True,
         )
 
         self.assertIs(result, decision)
@@ -94,30 +92,22 @@ class BackendReactPromptsTests(unittest.TestCase):
         result = react_prompts._coerce_decision_for_human_ops(
             "打开微信",
             decision,
-            looks_like_desktop_observe_request=lambda text: True,
-            looks_like_desktop_action_request=lambda text: True,
         )
 
         self.assertIs(result, decision)
 
-    def test_coerce_decision_turns_desktop_observe_and_action_say_into_observe(self) -> None:
+    def test_coerce_decision_preserves_model_say_for_desktop_request(self) -> None:
         react_prompts = self._react_prompts()
 
-        cases = [
-            ("看看屏幕", True, False),
-            ("打开微信", False, True),
-        ]
-        for user_text, observe_match, action_match in cases:
+        for user_text in ("看看屏幕", "打开微信", "打开 B 站并观看视频"):
             with self.subTest(user_text=user_text):
+                decision = BrainDecision.say("我需要先判断合适的交互表面。")
                 result = react_prompts._coerce_decision_for_human_ops(
                     user_text,
-                    BrainDecision.say("好的"),
-                    looks_like_desktop_observe_request=lambda text, match=observe_match: match,
-                    looks_like_desktop_action_request=lambda text, match=action_match: match,
+                    decision,
                 )
 
-                self.assertEqual(result.kind, DecisionKind.OBSERVE)
-                self.assertEqual(result.payload["target"], user_text)
+                self.assertIs(result, decision)
 
     def test_coerce_decision_keeps_plain_say(self) -> None:
         react_prompts = self._react_prompts()
@@ -126,8 +116,6 @@ class BackendReactPromptsTests(unittest.TestCase):
         result = react_prompts._coerce_decision_for_human_ops(
             "你好",
             decision,
-            looks_like_desktop_observe_request=lambda text: False,
-            looks_like_desktop_action_request=lambda text: False,
         )
 
         self.assertIs(result, decision)
@@ -176,6 +164,24 @@ class BackendReactPromptsTests(unittest.TestCase):
         self.assertIn("不要因为格式问题要求 observe 输出 JSON", prompt)
         self.assertIn("affordance", prompt)
 
+    def test_react_followup_direct_brain_image_does_not_claim_an_observe_model_answered(self) -> None:
+        react_prompts = self._react_prompts()
+
+        prompt = react_prompts._react_followup_prompt(
+            user_text="看看设置窗口",
+            decision=BrainDecision.observe("screen"),
+            remaining_budget=2,
+            observation_text="截图成功，当前截图将由 Brain 模型直接观察并决定下一步。",
+            coordinate_context="Coordinate context: macOS screen coordinates.",
+            brain_observed_image=True,
+        )
+
+        self.assertIn("当前用户消息附带了 Body 刚捕获的屏幕截图", prompt)
+        self.assertIn("请由你直接观察图片", prompt)
+        self.assertIn('coordinate_space="image_pixels"', prompt)
+        self.assertIn("后端会确定性换算", prompt)
+        self.assertNotIn("observe 用自然语言回答如下", prompt)
+
     def test_unsupported_simple_action_prompt_keeps_contract(self) -> None:
         react_prompts = self._react_prompts()
         prompt = react_prompts._unsupported_simple_action_prompt(
@@ -191,9 +197,13 @@ class BackendReactPromptsTests(unittest.TestCase):
 
         self.assertIn("不可执行或不符合当前简单人类动作范围", prompt)
         self.assertIn("open_app", prompt)
-        self.assertIn("launch_app、click、type_text、key_press enter", prompt)
-        self.assertIn("打开 App 直接 propose_act launch_app", prompt)
-        self.assertIn("不要截图找图标", prompt)
+        self.assertIn("playwright、launch_app、click、type_text、key_press enter", prompt)
+        self.assertIn("Playwright 或人类操作方式的明确选择", prompt)
+        self.assertIn("goal.status=need_user", prompt)
+        self.assertIn("不要默认替用户选择", prompt)
+        self.assertIn("不要重复询问已经明确的选择", prompt)
+        self.assertIn("Brain 已判断目标是本地应用", prompt)
+        self.assertIn("arguments.target_app", prompt)
 
     def test_simple_action_support_click_coordinates_and_enter_key_rules(self) -> None:
         react_prompts = self._react_prompts()
@@ -226,16 +236,31 @@ class BackendReactPromptsTests(unittest.TestCase):
             react_prompts._simple_human_action_support(BrainDecision.propose_act("launch_app", {})),
             (False, "launch_app missing app name"),
         )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act("playwright", {"profile": "工作", "operation": "click", "ref": "e8"})
+            ),
+            (True, ""),
+        )
+        supported, reason = react_prompts._simple_human_action_support(
+            BrainDecision.propose_act("playwright", {"profile": "工作", "operation": "eval", "text": "document.cookie"})
+        )
+        self.assertFalse(supported)
+        self.assertIn("Unsupported Playwright operation", reason)
+        supported, reason = react_prompts._simple_human_action_support(
+            BrainDecision.propose_act("playwright", {"operation": "snapshot"})
+        )
+        self.assertFalse(supported)
+        self.assertIn("profile must be explicitly selected", reason)
 
-    def test_production_coercion_turns_app_open_into_reviewable_native_launch(self) -> None:
-        decision = backend_app._coerce_decision_for_human_ops("打开微信", BrainDecision.observe("screen"))
+    def test_production_coercion_preserves_model_surface_choice(self) -> None:
+        model_decision = BrainDecision.observe("screen")
 
-        self.assertEqual(decision.kind, DecisionKind.PROPOSE_ACT)
-        self.assertEqual(decision.payload["action_type"], "launch_app")
-        self.assertEqual(decision.payload["arguments"]["app"], "WeChat")
-        self.assertFalse(decision.payload["arguments"]["continue_after_approval"])
+        decision = backend_app._coerce_decision_for_human_ops("打开 B 站并观看视频", model_decision)
 
-    def test_production_coercion_normalizes_model_launch_app_name(self) -> None:
+        self.assertIs(decision, model_decision)
+
+    def test_production_coercion_does_not_rewrite_model_launch_app_name(self) -> None:
         model_decision = BrainDecision.propose_act(
             "launch_app",
             {"app": "网易云音乐", "label": "网易云音乐"},
@@ -244,9 +269,7 @@ class BackendReactPromptsTests(unittest.TestCase):
 
         decision = backend_app._coerce_decision_for_human_ops("打开网易云音乐", model_decision)
 
-        self.assertEqual(decision.payload["arguments"]["app"], "NeteaseMusic")
-        self.assertEqual(decision.payload["arguments"]["label"], "网易云音乐")
-        self.assertEqual(decision.payload["goal"], model_decision.payload["goal"])
+        self.assertIs(decision, model_decision)
 
 
 if __name__ == "__main__":

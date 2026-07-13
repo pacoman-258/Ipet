@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright 可见窗口修复报告</title>
+  <style>
+    body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #172033; }
+    code { background: #f1f4f8; padding: .12em .35em; border-radius: 4px; }
+    .ok { color: #087443; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <h1>Playwright 可见窗口修复</h1>
+  <p><strong>日期：</strong>2026-07-13</p>
+  <h2>Goal</h2>
+  <p>修复 Human Ops 显示 Playwright open 已执行、但用户看不到浏览器窗口的问题。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成，未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>human_ops/playwright_actions.py</code>：open 强制加入 <code>--headed</code>，升级会话命名空间，并返回 headed 结构化证据。</li>
+    <li><code>brain/llm.py</code>：禁止模型注入原始 headed/headless 参数，不把 CLI 成功冒充为用户已看见页面。</li>
+    <li><code>docs/WORKFLOW.md</code> 与 <code>tests/test_playwright_actions.py</code>：记录并验证可见窗口合同。</li>
+  </ul>
+  <h2>Achieved effect</h2>
+  <p>新 open 命令固定为 <code>open URL --headed</code>。默认 session 从 <code>ipet-profile-*</code> 升级为 <code>ipet-profile-v2-*</code>，避免复用修复前已存在的无头会话；同一资料的新可见窗口仍会继续复用。</p>
+  <h2>Remaining work</h2>
+  <p>未在本轮自动访问真实网站，因为首次 CLI 获取与网页访问属于需审批的网络副作用。旧无头 session 未被主动终止。</p>
+  <h2>Recommended next step</h2>
+  <p>重新批准一次低风险公开页面的 Playwright open，确认出现可见浏览器窗口，再执行目标网站任务。</p>
+  <h2>Verification</h2>
+  <p class="ok">针对性回归 46 项、完整回归 743 项全部通过；语法与差异格式检查通过。</p>
+</body>
+</html>

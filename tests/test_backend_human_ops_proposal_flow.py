@@ -174,7 +174,9 @@ class BackendHumanOpsProposalFlowTests(unittest.TestCase):
         self.assertIn("用户原始复杂任务：帮我回复张三", prompt)
         self.assertIn("草稿已经在输入框里", prompt)
         self.assertIn("context for wechat", prompt)
-        self.assertIn("请像会用电脑的人类一样继续当前任务阶段", prompt)
+        self.assertIn("请独立判断原始目标是否已经完成", prompt)
+        self.assertIn("不是固定流程", prompt)
+        self.assertIn("不要把任何动作类型套进预设顺序", prompt)
 
     def test_post_approval_observe_prompt_uses_injected_chat_intent(self) -> None:
         flow = self._flow()
@@ -189,7 +191,8 @@ class BackendHumanOpsProposalFlowTests(unittest.TestCase):
 
         self.assertIn("刚才输入的草稿是“收到，马上处理”", prompt)
         self.assertIn("聊天输入框中是否已经出现这段草稿", prompt)
-        self.assertIn("回车发送", prompt)
+        self.assertIn("其他相关 affordance", prompt)
+        self.assertIn("不替 Brain 决定下一步动作", prompt)
 
 
 if __name__ == "__main__":

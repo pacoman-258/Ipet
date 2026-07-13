@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Layered post-action verification</title>
+  <style>
+    body { max-width: 920px; margin: 36px auto; padding: 0 24px; font: 15px/1.65 system-ui, sans-serif; color: #202124; }
+    h1, h2 { line-height: 1.25; } code { background: #f2f4f7; padding: 2px 5px; border-radius: 4px; }
+    .ok { color: #137333; } .note { color: #8a4b08; }
+  </style>
+</head>
+<body>
+  <h1>Layered post-action verification</h1>
+
+  <h2>Goal</h2>
+  <p>把动作后验证从“每步截图”改为“动作返回 → 平台原生状态 → 必要时视觉验证”的分层链路。</p>
+
+  <h2>Worker / subagent split</h2>
+  <p>单 worker 完成；未启用 subagent。</p>
+
+  <h2>Files changed</h2>
+  <p><code>human_ops/approval_flow.py</code>、<code>human_ops/approval_prompts.py</code>、架构与工作流文档，以及 Human Ops 回归测试。</p>
+
+  <h2>Achieved effect</h2>
+  <ul>
+    <li>普通打开、点击、输入和按键动作先验证动作标志与原生焦点状态。</li>
+    <li>结构化验证通过时直接交给 Brain 续推，不截图、不调用视觉模型。</li>
+    <li>证据缺失或 Brain 明确需要新界面状态时才调用视觉观察。</li>
+    <li>带 <code>expected_text</code> 的发送 Enter 保留最终视觉验证，避免把按键发出误判为消息已发送。</li>
+    <li class="ok">定向回归 105 项通过；完整回归 729 项全部通过。</li>
+  </ul>
+
+  <h2>Remaining work</h2>
+  <p class="note">本轮未执行真实桌面动作；结构化与视觉降级行为由协议、路由和回归测试验证。</p>
+
+  <h2>Recommended next step</h2>
+  <p>在用户明确批准后，用“点击输入框 → 输入草稿 → Enter 发送”做真实烟雾测试，确认前两步不截图、发送后只截图一次。</p>
+</body>
+</html>

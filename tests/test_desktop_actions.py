@@ -99,7 +99,32 @@ class DesktopActionsModuleTests(unittest.TestCase):
                 event_clicker=event_clicker,
             )
 
-    def test_type_text_uses_system_events_escaped_keystroke(self) -> None:
+    def test_type_text_uses_core_graphics_unicode_for_url(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        typed = []
+
+        def runner(args, **kwargs):
+            raise AssertionError(f"System Events fallback should not run: {args}")
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {"text": "https://example.com/a:b", "label": "浏览器地址栏"},
+            platform_name="darwin",
+            runner=runner,
+            event_typer=typed.append,
+        )
+
+        self.assertEqual(typed, ["https://example.com/a:b"])
+        self.assertEqual(
+            result,
+            {
+                "typed": True,
+                "text": "https://example.com/a:b",
+                "label": "浏览器地址栏",
+                "method": "core_graphics_unicode",
+            },
+        )
+
+    def test_type_text_falls_back_to_system_events_after_core_graphics_error(self) -> None:
         desktop_actions = _desktop_actions_module()
         calls = []
 
@@ -111,6 +136,7 @@ class DesktopActionsModuleTests(unittest.TestCase):
             {"text": '收到 "OK"', "label": "微信聊天输入框"},
             platform_name="darwin",
             runner=runner,
+            event_typer=lambda _text: (_ for _ in ()).throw(RuntimeError("permission denied")),
         )
 
         self.assertEqual(result, {"typed": True, "text": '收到 "OK"', "label": "微信聊天输入框", "method": "system_events"})

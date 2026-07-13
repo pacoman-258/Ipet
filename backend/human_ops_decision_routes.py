@@ -48,6 +48,8 @@ def create_human_ops_decision_router(deps: HumanOpsDecisionRouteDependencySource
         proposal = record.get("proposal") if isinstance(record, dict) else None
         if not isinstance(proposal, ReviewableProposal):
             raise HTTPException(status_code=404, detail="Human Ops proposal not found.")
+        if record.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="Human Ops proposal is no longer pending.")
         if resolved.request_native_approval is None:
             raise HTTPException(status_code=503, detail="macOS native approval is unavailable.")
         try:

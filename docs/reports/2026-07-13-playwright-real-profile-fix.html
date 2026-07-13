@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright 真实个人资料修复报告</title>
+  <style>
+    body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #172033; }
+    code { background: #f1f4f8; padding: .12em .35em; border-radius: 4px; }
+    .ok { color: #087443; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <h1>Playwright 真实个人资料修复</h1>
+  <p><strong>日期：</strong>2026-07-13</p>
+  <h2>Goal</h2>
+  <p>修复个人资料名称只作为 session 标签、没有真正加载持久浏览器资料的问题，并支持连接已打开的普通 Chrome。</p>
+  <h2>Worker / subagent split</h2>
+  <p>主 agent 单独完成，未使用 subagent。</p>
+  <h2>Files changed</h2>
+  <ul>
+    <li><code>human_ops/playwright_actions.py</code>：持久资料目录、attach 操作与 v3 session。</li>
+    <li><code>brain/llm.py</code>、<code>backend/react_prompts.py</code>：区分 Ipet 持久资料和现有 Chrome attach。</li>
+    <li><code>backend/app_action_adapters.py</code>：审批中说明资料与 attach 影响。</li>
+    <li><code>.gitignore</code>、工作流、架构文档和回归测试。</li>
+  </ul>
+  <h2>Achieved effect</h2>
+  <p><code>open</code> 现在实际传入 <code>--profile=&lt;哈希目录&gt;</code>，而非只改 session 名；同名 Ipet 资料可跨重启保留 cookies 和登录状态。用户明确要沿用已打开普通 Chrome 时，可使用固定的 <code>attach --cdp=chrome</code> 路径。</p>
+  <h2>Remaining work</h2>
+  <p>普通 Chrome attach 需要 Chrome 允许远程调试；多个 Chrome 资料同时打开且无法区分时仍需用户澄清。未在本轮自动访问网站或连接用户浏览器。</p>
+  <h2>Recommended next step</h2>
+  <p>先用一个新的 Ipet Playwright 资料打开公开页面并登录，关闭后重新打开验证持久状态；再单独验证已打开 Chrome 的 attach 授权。</p>
+  <h2>Verification</h2>
+  <p class="ok">针对性回归 47 项、完整回归 744 项全部通过；语法与差异格式检查通过。</p>
+</body>
+</html>

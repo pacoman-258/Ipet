@@ -56,21 +56,27 @@ async def perform_human_ops_observe(
     if not analyzer_config.get("enabled"):
         result = {**result, "frame": frame}
         capture_backend = str(frame.get("capture_backend") or "screen_capture").strip() or "screen_capture"
-        if deps.looks_like_click_request(target):
-            text = "我已经截取了当前屏幕，但这一步需要配置 Human Ops observe 模型来读取图像并返回可点击坐标。"
+        has_brain_image = str(frame.get("data_url") or "").startswith("data:image/")
+        if has_brain_image:
+            text = f"截图成功（{capture_backend}），当前截图将由 Brain 模型直接观察并决定下一步。"
+            unknowns: list[str] = []
+            analysis_route = "brain"
         else:
-            text = f"截图成功（{capture_backend}），但 Human Ops observe 模型未启用，所以目前只能证明截图成功，不能读取截图内容。"
+            text = f"截图成功（{capture_backend}），但截图数据不可用，Brain 还不能读取当前界面。"
+            unknowns = ["captured image unavailable"]
+            analysis_route = "unavailable"
         computer_use_context = deps.infer_computer_use_context(text, frame, target)
         return {
             "text": text,
             "frame": frame,
             "trace": result.get("trace") if isinstance(result.get("trace"), dict) else {},
+            "analysis_route": analysis_route,
             "coordinate_context": coordinate_context,
             "surface": computer_use_context["surface"],
             "affordances": computer_use_context["affordances"],
             **({"chat_context": computer_use_context["chat_context"]} if computer_use_context.get("chat_context") else {}),
             "observations": frame.get("observations") if isinstance(frame.get("observations"), list) else [],
-            "unknowns": ["observe_model disabled"],
+            "unknowns": unknowns,
         }
     frame = deps.enrich_observation_frame_with_model(frame, human_ops_config)
     coordinate_context = deps.observe_coordinate_context_from_frame(frame)

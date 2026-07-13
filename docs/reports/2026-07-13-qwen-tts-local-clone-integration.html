@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Qwen TTS 本地音色克隆接入报告</title>
+  </head>
+  <body>
+    <h1>Qwen TTS 本地音色克隆接入</h1>
+    <dl>
+      <dt>目标</dt><dd>接入 /Users/lyj/lyj/tool/TTS 的 Qwen3-TTS 本地音色克隆，并确保模型加载不阻塞 Ipet 窗口。</dd>
+      <dt>工作拆分</dt><dd>单人完成 Body TTS、桌面服务生命周期、设置入口、前端失败提示、验证与文档。</dd>
+      <dt>变更文件</dt><dd>body/qwen_tts.py、backend/tts.py、backend/audio_routes.py、app/service_lifecycle.py、main.py、app/desktop_shutdown.py、settings.html、app/control_panel.py、frontend/speech.js、docs/WORKFLOW.md 及对应测试。</dd>
+      <dt>达成效果</dt><dd>Ipet 启动时进行至多 150 ms 的本机服务检查后立即拉起独立 Qwen TTS 进程，不等待模型就绪；选择 qwenTTS 本地后，以 ex.mp3 和转写“就按照小昭审美就没有比较帅的”请求克隆接口。不可用时显示 TTS异常，不播放替代语音；Ipet 退出时只结束自身启动的服务。</dd>
+      <dt>验证</dt><dd>通过聚焦回归测试；真实克隆冒烟成功，返回 24 kHz、16-bit、单声道 WAV。修复了继承 SOCKS 代理但未安装 socksio 时的本地 HTTP 转发失败。验证服务已终止。</dd>
+      <dt>剩余工作</dt><dd>无。</dd>
+      <dt>建议下一步</dt><dd>在设置页选择 qwenTTS 本地并保存后，即可让桌宠回复使用该音色。</dd>
+    </dl>
+  </body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain 自主路线与提示词固化审计</title>
+  <style>
+    body { max-width: 940px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 15px/1.65 system-ui, sans-serif; }
+    h1, h2 { color: #0f172a; }
+    section { margin: 24px 0; padding: 18px 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+    code { padding: 2px 5px; border-radius: 5px; background: #f1f5f9; }
+    .ok { color: #047857; font-weight: 700; }
+    .note { color: #92400e; }
+  </style>
+</head>
+<body>
+  <h1>Brain 自主路线与提示词固化审计</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>修复“打开 B 站”被后端固化为 <code>launch_app("B站")</code> 的问题，并审计其他会替 Brain 决定 surface、stage 或动作路线的提示词与关键词规则。保留审批、坐标、焦点和动作范围等执行安全合同。</p>
+  </section>
+
+  <section>
+    <h2>Worker / subagent split</h2>
+    <p>单 worker 完成，未使用 subagent。Brain 侧负责自主决策合同，Backend 负责移除产品意图改写，Human Ops 只保留审批与执行证据，QA 覆盖网站、本地应用、通用聊天和旧有桌面任务。</p>
+  </section>
+
+  <section>
+    <h2>Files changed</h2>
+    <ul>
+      <li>Brain 与 ReAct：<code>brain/llm.py</code>、<code>backend/react_prompts.py</code>、<code>backend/chat_stream_flow.py</code>、<code>backend/app_adapters.py</code></li>
+      <li>Observe 与结构化上下文：<code>backend/observe_context.py</code>、<code>backend/computer_use_context.py</code></li>
+      <li>Human Ops 提示：<code>human_ops/approval_prompts.py</code></li>
+      <li>测试：<code>tests/test_backend_react_prompts.py</code>、<code>tests/test_brain_structured_replies.py</code>、<code>tests/test_backend_app_proposal_adapters.py</code>、<code>tests/test_backend_human_ops_proposal_flow.py</code>、<code>tests/test_human_ops_approval_prompts.py</code>、<code>tests/test_observe_context.py</code>、<code>tests/test_computer_use_context.py</code>、<code>tests/test_chat_stream_flow.py</code>、<code>tests/test_neo_backend_contract.py</code></li>
+      <li>文档：<code>docs/WORKFLOW.md</code> 与本报告。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Audit findings and achieved effect</h2>
+    <ul>
+      <li>已删除“打开/启动/切到 + 任意短文本 → 强制 <code>launch_app</code>”的后端决定覆盖。<code>_coerce_decision_for_human_ops</code> 现在保持 Brain 原始决定不变。</li>
+      <li>已删除对模型 <code>launch_app</code> 应用名的关键词别名重写；Human Ops 审批 Brain 实际提交的应用名。</li>
+      <li>Brain 提示不再规定打开目标、聊天回复或 Observe 后的唯一动作路线；本地应用、网站/在线服务、已有窗口和未知 surface 由 Brain 根据证据区分。</li>
+      <li>固定聊天阶段链改为非强制状态示例；Human Ops continuation 不再要求“输入就 type_text、发送就 Enter”，只提供当前可执行能力和证据。</li>
+      <li>Observe fallback 不再把所有“打开目标”当作点击坐标请求；只有明确点击意图进入坐标合同。</li>
+      <li>通用“聊天/私信”不再自动标为 <code>wechat_gui</code>。明确微信时仍使用 <code>wechat_gui</code>，其他聊天使用 <code>chat_gui</code> 并采用真实前台应用证据。</li>
+      <li>空的 Observe 后续模型结果现在有界失败并保留观察证据，不再靠关键词改写触发额外循环。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Safety contracts retained</h2>
+    <ul>
+      <li>Brain 每轮只返回一个结构化决定，动作类型仍限制为当前执行器真正支持的集合。</li>
+      <li><code>click</code> 仍要求目标应用和完整可信坐标；<code>type_text</code> / <code>key_press</code> 仍要求目标应用与焦点证据。</li>
+      <li>所有副作用动作仍需 Human Ops 审批，动作结果仍需结构化或可见证据验证。</li>
+      <li>ReAct 预算、失败关闭、坐标换算和不确定性说明仍由系统约束；这些规则不替 Brain 选择产品路线。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <p class="ok">相关契约回归 144 项通过；全量回归 733 项全部通过。</p>
+    <ul>
+      <li>新增“打开 B 站”不会被改写为本地应用启动或点击坐标任务的回归。</li>
+      <li>新增网页聊天使用 <code>chat_gui</code> 和真实 Chrome 前台证据、不假设微信的回归。</li>
+      <li>生产 Python 文件语法检查与 <code>git diff --check</code> 通过。</li>
+    </ul>
+    <p class="note">测试环境仍报告 PyQt6 与 PySide6 同时加载的 Objective-C 类重复警告；所有测试通过，该警告不是本轮变更引入。</p>
+  </section>
+
+  <section>
+    <h2>Remaining work</h2>
+    <p>未调用真实外部 Brain 服务或实际打开 B 站，因为这会使用网络并改变用户浏览器状态。代码级审计确认后端不再创建关键词驱动的产品动作；真实模型最终选择仍会受所选模型能力与用户配置影响。</p>
+  </section>
+
+  <section>
+    <h2>Recommended next step</h2>
+    <p>在用户批准网络与浏览器状态变更后，用同一句“帮我打开 B 站并观看某视频”做真实冒烟测试，确认 Brain 先区分网站与本地应用，并由它自主选择已有浏览器、启动浏览器或观察当前界面。</p>
+  </section>
+</body>
+</html>

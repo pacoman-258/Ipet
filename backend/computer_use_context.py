@@ -371,8 +371,8 @@ def _screen_bounds_from_frame(frame: dict[str, Any]) -> dict[str, int]:
     return {"x": 0, "y": 0, "width": width, "height": height} if width > 0 and height > 0 else {}
 
 
-def _infer_chat_context(text: str, target_hint: str = "", *, is_wechat_surface: bool = False) -> dict[str, Any]:
-    if not is_wechat_surface:
+def _infer_chat_context(text: str, target_hint: str = "", *, is_chat_surface: bool = False) -> dict[str, Any]:
+    if not is_chat_surface:
         return {}
     combined = f"{target_hint} {text}".lower()
     contact = _infer_contact_label(text, target_hint)
@@ -418,10 +418,14 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
     ).strip()
     dock_negative = _has_negative_visibility_evidence(text, ("dock", "dock 栏", "程序坞"))
     wechat_negative = _has_negative_visibility_evidence(text, ("微信", "wechat"))
+    is_explicit_wechat = ("微信" in text_surface or "wechat" in text_surface) and not wechat_negative
+    is_generic_chat = any(term in text_surface for term in ("聊天", "会话", "联系人", "私信"))
     if ("dock" in text_surface or "程序坞" in text_surface) and not dock_negative:
         surface = {"kind": "desktop_gui", "region": "dock", "confidence": 0.86}
-    elif ("微信" in text_surface or "wechat" in text_surface or "聊天" in text_surface) and not wechat_negative:
+    elif is_explicit_wechat:
         surface = {"kind": "wechat_gui", "region": "chat" if "聊天" in text_surface else "app", "confidence": 0.74}
+    elif is_generic_chat:
+        surface = {"kind": "chat_gui", "region": "chat", "confidence": 0.68}
     elif "浏览器" in text_surface or "网页" in text_surface or "地址栏" in text_surface:
         surface = {"kind": "browser_page", "confidence": 0.7}
     elif "终端" in text_surface or "terminal" in text_surface or "prompt" in text_surface:
@@ -475,13 +479,11 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
                     "confidence": 0.58,
                 }
             )
-    is_wechat_surface = surface.get("kind") == "wechat_gui" or (
-        ("微信" in text_surface or "wechat" in text_surface or "聊天" in text_surface) and not wechat_negative
-    )
-    if is_wechat_surface and ("搜索" in combined or "查找" in combined):
+    is_chat_surface = surface.get("kind") in {"wechat_gui", "chat_gui"}
+    if is_chat_surface and ("搜索" in combined or "查找" in combined):
         item = {
             "kind": "search_field",
-            "label": "微信搜索框",
+            "label": "微信搜索框" if surface.get("kind") == "wechat_gui" else "搜索框",
             "supports": ["click", "type_text", "key_press"],
             "evidence": [text[:220]] if text.strip() else [],
             "confidence": 0.74,
@@ -499,7 +501,7 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
         and contact_label in text
         and any(term in text_surface for term in ("可点击", "中心点", "坐标", "列表", "条目", "会话"))
     )
-    if is_wechat_surface and (thread_evidence or target_thread_evidence):
+    if is_chat_surface and (thread_evidence or target_thread_evidence):
         item = {
             "kind": "chat_thread",
             "label": contact_label or "聊天条目",
@@ -558,7 +560,7 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
             }
         )
     result: dict[str, Any] = {"surface": surface, "affordances": affordances}
-    chat_context = _infer_chat_context(text, hint, is_wechat_surface=is_wechat_surface)
+    chat_context = _infer_chat_context(text, hint, is_chat_surface=is_chat_surface)
     if chat_context:
         result["chat_context"] = chat_context
     return result

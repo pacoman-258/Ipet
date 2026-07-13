@@ -10,6 +10,7 @@
       submitChatInput: async () => {
         throw new Error("chat submit controller is not initialized");
       },
+      stopTask: async () => {},
     };
   }
 
