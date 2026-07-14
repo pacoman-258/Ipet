@@ -25,6 +25,7 @@
     const chatStopEl = refs.chatStopEl;
 
     const setQtBridge = typeof deps.setQtBridge === "function" ? deps.setQtBridge : () => {};
+    const onQtBridgeReady = typeof deps.onQtBridgeReady === "function" ? deps.onQtBridgeReady : () => {};
     const showError = typeof deps.showError === "function" ? deps.showError : () => {};
     const logToQt = typeof deps.logToQt === "function" ? deps.logToQt : () => {};
     const openSettingsPage = typeof deps.openSettingsPage === "function" ? deps.openSettingsPage : () => {};
@@ -132,6 +133,7 @@
       if (runtimeWindow.qt && runtimeWindow.QWebChannel) {
         new runtimeWindow.QWebChannel(runtimeWindow.qt.webChannelTransport, (channel) => {
           setQtBridge(channel.objects.qtBridge);
+          onQtBridgeReady();
           logToQt("QWebChannel ready");
         });
       }
@@ -186,7 +188,7 @@
         await submitChatInput();
       });
       chatInputEl.addEventListener("keydown", async (event) => {
-        if (matchesPushToTalkKey(event) && shouldHandlePushToTalk(event)) {
+        if (matchesPushToTalkKey(event) && shouldHandlePushToTalk(event, { allowWithoutFocus: true })) {
           event.preventDefault();
           return;
         }
@@ -214,7 +216,7 @@
           await stopTask();
           return;
         }
-        if (!matchesPushToTalkKey(event) || !shouldHandlePushToTalk(event)) {
+        if (!matchesPushToTalkKey(event) || !shouldHandlePushToTalk(event, { allowWithoutFocus: true })) {
           return;
         }
         if (event.repeat) {
@@ -222,15 +224,15 @@
           return;
         }
         event.preventDefault();
-        await startPushToTalk();
-      });
+        await startPushToTalk({ allowWithoutFocus: true });
+      }, true);
       runtimeWindow.addEventListener("keyup", (event) => {
         if (!matchesPushToTalkKey(event)) {
           return;
         }
         event.preventDefault();
         stopPushToTalk();
-      });
+      }, true);
       runtimeWindow.addEventListener("blur", () => {
         if (asrController.isBusy()) {
           cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });

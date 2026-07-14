@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from brain.decisions import BrainDecision, DecisionKind
+from human_ops.filesystem_actions import FILESYSTEM_ACTIONS, validate_filesystem_action
 from human_ops.playwright_actions import playwright_command
 
 
@@ -186,6 +187,8 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
         except ValueError as exc:
             return False, str(exc)
         return True, ""
+    if action_type in FILESYSTEM_ACTIONS:
+        return validate_filesystem_action(action_type, arguments)
     return False, action_type or "unknown"
 
 
@@ -214,10 +217,10 @@ def _unsupported_simple_action_prompt(
         f"上一轮 Brain 返回了不可执行或不符合当前简单人类动作范围的 propose_act：{unsupported_action}。\n"
         f"上一轮 Brain 决定：{decision.to_dict()}\n"
         f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
-        "当前 Human Ops 能审批并执行这些动作：playwright、launch_app、click、type_text、key_press enter。"
-        "浏览器任务若尚未得到用户对 Playwright 或人类操作方式的明确选择，应先用 goal.status=need_user 的 say 询问；不要默认替用户选择。"
-        "用户选择 playwright 后，它支持 attach、open、snapshot、click、fill、type、press、导航和标签页操作，"
-        "但必须先由用户明确 Chrome 个人资料显示名，并在每个 playwright proposal 的 arguments.profile 中原样携带；缺少时用 goal.status=need_user 的 say 询问，不得猜默认资料。"
+        "当前 Human Ops 能审批并执行这些动作：playwright、launch_app、click、type_text、key_press enter，以及受允许根目录约束的 file_list、file_read、file_write、file_mkdir、file_copy、file_move、file_delete。"
+        "浏览器任务应遵循用户明确选择的 Playwright 或人类操作方式；若用户没有明确选择，默认使用 Playwright，不为执行方式询问。"
+        "显式或默认使用 playwright 时，它支持 attach、open、snapshot、click、fill、type、press、导航和标签页操作，"
+        "Chrome 个人资料优先使用当前任务中用户明确指定的名称，否则使用设置页传入的 Playwright 默认资料，并在每个 playwright proposal 的 arguments.profile 中原样携带；两者都缺少时才用 goal.status=need_user 的 say 询问，不得猜测资料。"
         "open 会精确解析真实 Chrome 资料：可验证时复用唯一活跃且允许远程调试的窗口，否则从原资料只读初始化 Ipet 私有登录态快照；找不到时使用执行器返回的可选名称让用户重选。"
         "用户明确只要已打开的 Chrome 原窗口时使用 attach；attach 要求所选资料唯一活跃并允许远程调试，失败必须如实报告。"
         "click/fill 的 ref 必须来自同一 Playwright 会话的最新 snapshot。"
@@ -225,6 +228,7 @@ def _unsupported_simple_action_prompt(
         "launch_app 只用于 Brain 已判断目标是本地应用并明确给出 arguments.app 的情况；"
         "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
         "聚焦输入框也用 click；输入文本用 type_text；发送/确认用 key_press enter。"
-        "请重新选择一个下一步 JSON：observe、propose_act playwright、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter，"
+        "文件动作只能使用相对项目根目录或允许根目录内的路径；file_read 和 file_list 也要审批，file_delete 不递归，file_copy/file_move 不覆盖已有目标，file_write 覆盖已有文件时必须显式写 overwrite=true。"
+        "请重新选择一个下一步 JSON：observe、propose_act playwright、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter、propose_act 文件动作，"
         "或带 terminal goal.status 的 say/stop。"
     )

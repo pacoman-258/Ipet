@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import os
 import re
+import signal
 import shutil
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Sequence
@@ -197,18 +198,69 @@ async def _run_process(argv: Sequence[str], timeout_sec: float) -> tuple[int, st
         *argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=os.name != "nt",
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_sec)
     except TimeoutError:
-        process.kill()
-        await process.communicate()
+        await _stop_process(process)
         raise RuntimeError(f"Playwright action timed out after {timeout_sec:g} seconds.") from None
+    except asyncio.CancelledError:
+        await _stop_process(process)
+        raise
+    except Exception:
+        await _stop_process(process)
+        raise
     return (
         int(process.returncode or 0),
         stdout.decode("utf-8", errors="replace"),
         stderr.decode("utf-8", errors="replace"),
     )
+
+
+def _signal_process(process: Any, sig: int) -> None:
+    if os.name != "nt":
+        pid = getattr(process, "pid", None)
+        if pid:
+            try:
+                os.killpg(os.getpgid(pid), sig)
+                return
+            except ProcessLookupError:
+                return
+            except OSError:
+                pass
+    if sig == signal.SIGKILL:
+        process.kill()
+    else:
+        process.terminate()
+
+
+async def _stop_process(process: Any) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        _signal_process(process, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    wait_task = asyncio.ensure_future(process.wait())
+    try:
+        await asyncio.wait_for(asyncio.shield(wait_task), timeout=1.0)
+        return
+    except TimeoutError:
+        pass
+    except Exception:
+        if wait_task.done():
+            return
+    try:
+        _signal_process(process, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(wait_task), timeout=1.0)
+    except Exception:
+        if not wait_task.done():
+            wait_task.cancel()
+            await asyncio.gather(wait_task, return_exceptions=True)
 
 
 async def execute_playwright_action(

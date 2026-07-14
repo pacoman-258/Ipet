@@ -92,6 +92,12 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
             playwright,
             {"playwright_done": True, "output": "page snapshot"},
         )
+        file_read = ReviewableProposal.act(
+            action_type="file_read",
+            summary="读取说明文件",
+            payload={"path": "README.md"},
+        )
+        file_result = execution_verification(file_read, {"read": True, "path": "README.md", "content": "ok"})
 
         self.assertEqual(click_result["status"], "verified")
         self.assertFalse(click_result["requires_visual"])
@@ -100,6 +106,8 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("expected message", send_result["reason"])
         self.assertEqual(playwright_result["status"], "verified")
         self.assertFalse(playwright_result["requires_visual"])
+        self.assertEqual(file_result["status"], "verified")
+        self.assertFalse(file_result["requires_visual"])
 
     def _dependencies(self, pending: dict[str, dict[str, Any]], **overrides: Any) -> HumanOpsApprovalFlowDependencies:
         async def perform_action(proposal: ReviewableProposal) -> dict[str, Any]:

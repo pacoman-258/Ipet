@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -184,6 +185,53 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("display_segment", [name for name, _data in events])
         self.assertEqual(events[-1][1]["usage"], {"input_tokens": 21, "output_tokens": 2, "total_tokens": 23})
+
+    async def test_cancelling_stream_cleans_up_reply_task(self) -> None:
+        topic_store = TopicStoreSpy()
+        brain_started = asyncio.Event()
+        release_brain = asyncio.Event()
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            brain_started.set()
+            await release_brain.wait()
+            return SimpleNamespace(
+                text="完成",
+                decision=BrainDecision.say("完成"),
+                provider="codex",
+                model="gpt-test",
+                usage={},
+            )
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "gpt-test", "streaming_enabled": True},
+                "human_ops": {},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+        )
+        stream = stream_chat_response({"text": "hi", "session_id": "cancel-stream"}, deps)
+        await stream.__anext__()
+        await stream.__anext__()
+        pending_next = asyncio.create_task(stream.__anext__())
+        await brain_started.wait()
+
+        pending_next.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await pending_next
+        release_brain.set()
+        await stream.aclose()
+        await asyncio.sleep(0)
+
+        self.assertEqual(
+            [
+                task
+                for task in asyncio.all_tasks()
+                if not task.done() and "resolve_reply" in repr(task.get_coro())
+            ],
+            [],
+        )
 
     def test_history_character_budget_never_splits_an_exchange(self) -> None:
         history = _bounded_conversation_history(

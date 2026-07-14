@@ -12,6 +12,13 @@ import main
 
 
 class DesktopDefaultConfigTests(unittest.TestCase):
+    def test_macos_default_asr_is_enabled_with_option_internal_key(self) -> None:
+        config = desktop_runtime.default_asr_config("darwin")
+
+        self.assertTrue(config["enabled"])
+        self.assertEqual(config["push_to_talk_key"], "Alt")
+        self.assertEqual(config["api_key"], "")
+
     def test_create_default_config_returns_full_neo_shape(self) -> None:
         default_asr_config = desktop_runtime.default_asr_config("linux")
         config = create_default_config(
@@ -33,9 +40,11 @@ class DesktopDefaultConfigTests(unittest.TestCase):
         self.assertEqual(config["brain"]["reasoning_effort"], "")
         self.assertFalse(config["brain"]["streaming_enabled"])
         self.assertFalse(config["brain"]["web_search_enabled"])
-        self.assertEqual(config["brain"]["persona"], "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。")
+        self.assertEqual(config["brain"]["persona_prompt_file"], "")
+        self.assertEqual(config["brain"]["persona"], "")
         self.assertEqual(config["brain"]["self_state"], "等待用户目标，并在 act / remember / learn_skill 前请求批准。")
         self.assertEqual(config["human_ops"]["observe_screen"], True)
+        self.assertEqual(config["human_ops"]["playwright_profile"], "")
         self.assertEqual(config["human_ops"]["click_preview"], {"x": 160, "y": 54, "label": "目标位置", "size": 16})
         self.assertEqual(config["memory"]["review_queue"], [])
         self.assertEqual(config["skills"]["recipes"], [])

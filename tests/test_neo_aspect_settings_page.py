@@ -66,6 +66,13 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn("clickPreviewDot", self.form_js)
         self.assertIn("act 需要批准", self.html)
 
+    def test_human_ops_exposes_playwright_chrome_profile_picker(self) -> None:
+        self.assertIn('id="ops-playwright-profile"', self.html)
+        self.assertIn('id="ops-playwright-profile-refresh"', self.html)
+        self.assertIn('id="ops-playwright-profile-status"', self.html)
+        self.assertIn('/api/settings/chrome-profiles', self.js)
+        self.assertIn('playwright_profile: stringValue(els.opsPlaywrightProfile)', self.form_js)
+
     def test_brain_provider_selector_supports_api_formats_including_google_aistudio(self) -> None:
         self.assertIn('id="brain-provider"', self.html)
         combined_js = f"{self.js}\n{self.form_js}"
@@ -103,6 +110,22 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn("target.value = model.id", self.model_picker_js)
         self.assertIn("model.isDefault", self.model_picker_js)
         self.assertIn("renderBrainReasoningOptions", self.model_picker_js)
+
+    def test_brain_persona_prompt_picker_shows_selected_file_and_preview(self) -> None:
+        for element_id in (
+            "brain-persona-prompt-select-btn",
+            "brain-persona-prompt-clear-btn",
+            "brain-persona-prompt-file",
+            "brain-persona-prompt-current",
+            "brain-persona-prompt-preview",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', self.html)
+        self.assertIn("/api/settings/persona-prompts", self.js)
+        self.assertIn("persona_prompt_file: stringValue(els.brainPersonaPromptFile)", self.form_js)
+        self.assertIn("renderPersonaPromptState", self.js)
+        self.assertNotIn('id="brain-persona"', self.html)
+        self.assertNotIn('id="brain-response-style"', self.html)
 
     def test_observe_model_provider_supports_codex_without_endpoint_or_key(self) -> None:
         brain_provider = self.html.split('<select id="brain-provider">', 1)[1].split("</select>", 1)[0]

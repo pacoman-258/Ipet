@@ -122,6 +122,8 @@ class FrontendAppStateSourceTests(unittest.TestCase):
                 "enabled": True,
                 "provider": "funasr",
                 "api_base_url": "http://127.0.0.1:8012",
+                "provider_url": "https://api.groq.com/openai/v1/audio/transcriptions",
+                "model": "whisper-large-v3-turbo",
                 "push_to_talk_key": "Alt",
                 "interim_results": True,
             },

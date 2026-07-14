@@ -37,6 +37,7 @@ class FrontendChatSubmitSourceTests(unittest.TestCase):
         self.assertIn("async function submitChatInput", source)
         self.assertIn("fetch(`${backend}/api/chat/stream`", source)
         self.assertIn("/api/human-ops/proposals/", source)
+        self.assertNotIn("native-decision", source)
         self.assertIn("retry_from_assistant_turn: retryFromAssistantTurn,", source)
         self.assertIn("getPendingRetryEdit", source)
         self.assertIn("setReceivedStructuredSegment", source)

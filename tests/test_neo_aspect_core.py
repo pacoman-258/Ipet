@@ -83,6 +83,17 @@ class NeoAspectHumanOpsTests(unittest.TestCase):
         self.assertTrue(enter_proposal.requires_review)
         self.assertEqual(enter_proposal.payload["arguments"]["key"], "enter")
 
+    def test_filesystem_actions_are_reviewable(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="file_write",
+            summary="写入文本文件",
+            payload={"path": "notes.txt", "content": "hello"},
+        )
+
+        self.assertTrue(proposal.requires_review)
+        self.assertFalse(proposal.approved)
+        self.assertEqual(proposal.payload["action_type"], "file_write")
+
 
 class NeoAspectMemorySkillTests(unittest.TestCase):
     def test_memory_proposal_requires_review_before_save(self) -> None:

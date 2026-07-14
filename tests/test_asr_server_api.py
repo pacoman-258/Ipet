@@ -49,7 +49,7 @@ class ASRServerApiTests(unittest.TestCase):
         self.assertEqual(resp.json()["asr"], True)
         self.assertEqual(resp.json()["message"], "")
 
-    def test_health_reports_macos_disabled_message_by_default(self) -> None:
+    def test_health_reports_macos_asr_enabled_by_default(self) -> None:
         with mock.patch.object(asr_server, "_is_macos", return_value=True), mock.patch.object(
             asr_server,
             "_load_settings_config",
@@ -58,8 +58,8 @@ class ASRServerApiTests(unittest.TestCase):
             resp = self.client.get("/api/health")
 
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.json()["asr"])
-        self.assertIn("macOS", resp.json()["message"])
+        self.assertTrue(resp.json()["asr"])
+        self.assertEqual(resp.json()["message"], "")
 
     def test_asr_server_websocket_streams_ready_partial_and_final(self) -> None:
         settings = {"chat": {"asr": {"enabled": True, "provider": "funasr", "push_to_talk_key": "Alt", "interim_results": True}}}
@@ -75,6 +75,37 @@ class ASRServerApiTests(unittest.TestCase):
         self.assertEqual(ready["type"], "ready")
         self.assertEqual(partial, {"type": "partial", "text": "partial-ok"})
         self.assertEqual(final, {"type": "final", "text": "final-ok"})
+
+    def test_groq_health_requires_key_without_loading_local_model(self) -> None:
+        settings = {"chat": {"asr": {"enabled": True, "provider": "groq"}}}
+        with mock.patch.object(asr_server, "_load_settings_config", return_value=settings), mock.patch.object(
+            asr_server, "_ASR_SERVICE", None
+        ), mock.patch.object(asr_server, "_ASR_SERVICE_SIGNATURE", None):
+            resp = self.client.get("/api/health")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["provider"], "groq")
+        self.assertFalse(resp.json()["asr"])
+        self.assertIn("API Key", resp.json()["message"])
+
+    def test_groq_warmup_is_ready_without_local_model_initialization(self) -> None:
+        settings = {
+            "chat": {
+                "asr": {
+                    "enabled": True,
+                    "provider": "groq",
+                    "api_key": "test-key",
+                }
+            }
+        }
+        with mock.patch.object(asr_server, "_load_settings_config", return_value=settings), mock.patch.object(
+            asr_server, "_ASR_SERVICE", None
+        ), mock.patch.object(asr_server, "_ASR_SERVICE_SIGNATURE", None):
+            resp = self.client.post("/api/asr/warmup")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["ok"])
+        self.assertTrue(resp.json()["ready"])
 
 
 if __name__ == "__main__":

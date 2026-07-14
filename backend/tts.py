@@ -4,6 +4,7 @@ import base64
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
@@ -14,8 +15,9 @@ from body.qwen_tts import (
     QWEN_TTS_LOCAL_PROVIDER,
     QWEN_TTS_MODEL,
     QWEN_TTS_REFERENCE_AUDIO,
-    QWEN_TTS_REFERENCE_TEXT,
+    QWEN_TTS_REFERENCE_ID,
     qwen_tts_clone_url,
+    qwen_tts_stream_url,
 )
 
 try:
@@ -422,18 +424,13 @@ async def _synthesize_qwen_tts_local(
     payload = {
         "model": QWEN_TTS_MODEL,
         "input": text,
-        "reference_text": QWEN_TTS_REFERENCE_TEXT,
+        "reference_id": QWEN_TTS_REFERENCE_ID,
         "language": QWEN_TTS_LANGUAGE,
     }
     # The local service must not inherit a global SOCKS/HTTP proxy.  Some
     # Ipet environments set ALL_PROXY while not installing httpx[socks].
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        with QWEN_TTS_REFERENCE_AUDIO.open("rb") as reference_audio:
-            response = await client.post(
-                endpoint,
-                data=payload,
-                files={"reference_audio": (QWEN_TTS_REFERENCE_AUDIO.name, reference_audio, "audio/mpeg")},
-            )
+        response = await client.post(endpoint, data=payload)
         audio_bytes, duration_ms, suffix, media_type = await _extract_custom_http_audio(
             client=client,
             response=response,
@@ -449,6 +446,33 @@ async def _synthesize_qwen_tts_local(
         duration_ms=duration_ms,
         media_type=media_type,
     )
+
+
+async def stream_qwen_tts_local(
+    *,
+    text: str,
+    provider_url: str = "",
+) -> AsyncIterator[bytes]:
+    """Proxy Qwen's native PCM stream without buffering it into a WAV file."""
+    if not QWEN_TTS_REFERENCE_AUDIO.is_file():
+        raise RuntimeError("Qwen TTS reference audio is unavailable.")
+
+    endpoint = qwen_tts_stream_url(provider_url)
+    timeout = httpx.Timeout(connect=2.0, read=QWEN_TTS_LOCAL_TIMEOUT_SEC, write=20.0, pool=2.0)
+    payload = {
+        "model": QWEN_TTS_MODEL,
+        "input": text,
+        "reference_id": QWEN_TTS_REFERENCE_ID,
+        "language": QWEN_TTS_LANGUAGE,
+        "streaming_interval": 0.5,
+    }
+    # Do not inherit a SOCKS/HTTP proxy for this localhost request.
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with client.stream("POST", endpoint, json=payload) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                if chunk:
+                    yield chunk
 
 
 async def synthesize_to_audio(

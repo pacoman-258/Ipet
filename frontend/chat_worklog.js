@@ -20,6 +20,7 @@
       typeof deps.getPendingApprovalInputTurnId === "function" ? deps.getPendingApprovalInputTurnId : () => "";
     const setPendingApprovalInputTurnId =
       typeof deps.setPendingApprovalInputTurnId === "function" ? deps.setPendingApprovalInputTurnId : () => {};
+    const getQtBridge = typeof deps.getQtBridge === "function" ? deps.getQtBridge : () => null;
 
     const { chatMessagesEl, chatInputEl } = refs;
 
@@ -589,12 +590,21 @@
 
       const statusEl = runtimeDocument.createElement("div");
       statusEl.className = "approval-status";
-      statusEl.textContent = "请在 macOS 系统弹窗中批准或拒绝。";
+      const qtBridge = getQtBridge();
+      const notificationAvailable = qtBridge && typeof qtBridge.showApprovalNotification === "function";
+      statusEl.textContent = notificationAvailable
+        ? "审批通知已发送到 macOS 通知中心；批准只执行这一项，拒绝不会停止整个任务。"
+        : "无法连接 macOS 审批通知桥；本次操作不会执行。";
       approvalCardEl.appendChild(statusEl);
-      message.el.appendChild(approvalCardEl);
-      if (turnId) {
-        Promise.resolve().then(() => continueApproval(turnId, false, "", { native: true }));
+      if (turnId && notificationAvailable) {
+        qtBridge.showApprovalNotification(JSON.stringify({
+          proposal_id: turnId,
+          title: "Ipet 需要你的批准",
+          message: String(payload.text || payload.summary || "是否批准这一步操作？"),
+          timeout_sec: 300,
+        }));
       }
+      message.el.appendChild(approvalCardEl);
 
       return message;
     }

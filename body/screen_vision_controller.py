@@ -158,6 +158,7 @@ class ScreenVisionController:
         self.last_error = ""
         self._capture_lock = threading.Lock()
         self._capture_in_flight = False
+        self._capture_stop_event = threading.Event()
 
     def apply_config(self, config: dict) -> None:
         source = config if isinstance(config, dict) else {}
@@ -167,9 +168,11 @@ class ScreenVisionController:
         if not self._config["enabled"]:
             self.stop()
             return
+        self._capture_stop_event.clear()
         self._timer.start(int(self._config["capture_interval_ms"]))
 
     def stop(self) -> None:
+        self._capture_stop_event.set()
         self._timer.stop()
 
     def capture_once(self) -> None:
@@ -227,6 +230,8 @@ class ScreenVisionController:
 
     def _complete_capture_encode_and_post(self, url: str, screen, config: dict, display_layout: list[dict] | None = None) -> None:
         try:
+            if self._capture_stop_event.is_set():
+                return
             if self._frame_encoder is capture_screen_frame_payload and self._background_capture and _is_macos():
                 frame_payload = self._frame_encoder(
                     screen,
@@ -245,6 +250,8 @@ class ScreenVisionController:
 
     def _complete_capture_post(self, url: str, payload: dict, config: dict) -> None:
         try:
+            if self._capture_stop_event.is_set():
+                return
             try:
                 observation_payload = self._observation_provider(config) if self._observation_provider else {}
             except Exception as exc:

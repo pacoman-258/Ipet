@@ -58,10 +58,21 @@ class LocalTaskControl:
         raise TaskStopped()
 
     def bind_current_task(self, task_id: str) -> None:
+        self.bind_task(task_id, asyncio.current_task())
+
+    def bind_task(self, task_id: str, task: asyncio.Task[Any] | None) -> None:
         record = self.get(task_id)
-        task = asyncio.current_task()
-        if record is not None and task is not None:
-            record.tasks.add(task)
+        if record is None or task is None:
+            return
+        record.tasks.add(task)
+
+        def discard(done_task: asyncio.Task[Any]) -> None:
+            current = self.get(task_id)
+            if current is not None:
+                current.tasks.discard(done_task)
+                current.atomic_tasks.discard(done_task)
+
+        task.add_done_callback(discard)
 
     def enter_atomic(self, task_id: str) -> None:
         record = self.get(task_id)

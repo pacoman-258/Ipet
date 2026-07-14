@@ -87,6 +87,7 @@
         graphState.activeApprovalId = String(value || "");
       },
       getActiveApprovalId: () => graphState.activeApprovalId,
+      getQtBridge: () => graphState.qtBridge,
       getPendingRetryEdit: () => graphState.pendingRetryEdit,
       setPendingRetryEdit: (value) => {
         graphState.pendingRetryEdit = value || null;
@@ -104,7 +105,7 @@
   function wireBootstrapSection(sectionContext, sectionControllers) {
     const { runtimeWindow, state, refs, facade, controllerRegistry, graphState } = sectionContext;
     const { asrController } = graphState;
-    const { chatSidebarsController, petSceneController, chatPanelController } = sectionControllers;
+    const { chatSidebarsController, petSceneController, chatPanelController, shellBridgeController } = sectionControllers;
     const {
       canvas,
       navSettingsButtonEl,
@@ -177,6 +178,17 @@
       chatPanelController,
       setQtBridge: (value) => {
         graphState.qtBridge = value || null;
+      },
+      onQtBridgeReady: () => {
+        shellBridgeController.bindApprovalNotificationDecisions((rawPayload) => {
+          try {
+            const payload = JSON.parse(String(rawPayload || "{}"));
+            const proposalId = String(payload.proposal_id || "").trim();
+            if (proposalId && proposalId === graphState.activeApprovalId && graphState.chatState === "awaiting_approval") {
+              facade.continueApproval(proposalId, payload.approved === true);
+            }
+          } catch (_) {}
+        });
       },
       getPendingRetryEdit: () => graphState.pendingRetryEdit,
       showError: facade.showError,

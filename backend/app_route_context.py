@@ -54,6 +54,8 @@ class _LiveRouteDependencyContext:
             lambda incoming, *, current=None: self._call("_apply_settings_update", incoming, current=current)
         )
         self.save_config = lambda private_config: self._call("_save_config", private_config)
+        self.list_persona_prompts = lambda: self._call("list_persona_prompts")
+        self.list_chrome_profiles = lambda: self._call("list_chrome_profiles")
         self.normalize_provider = lambda value: self._call("normalize_provider", value)
         self.list_provider_models = lambda brain_config: self._call("list_provider_models", brain_config)
         self.sanitize_brain_error = lambda error, brain_config: self._call(
@@ -63,6 +65,7 @@ class _LiveRouteDependencyContext:
         )
         self.cleanup_old_audio = lambda cache_dir: self._call("cleanup_old_audio", cache_dir)
         self.synthesize_to_audio = lambda **kwargs: self._call("_synthesize_to_audio_for_route", **kwargs)
+        self.stream_qwen_tts_local = lambda **kwargs: self._call("_stream_qwen_tts_local_for_route", **kwargs)
         self.sse = lambda event, data: self._call("_sse", event, data)
         self.decision_from_completion = lambda completion: self._call("_decision_from_completion", completion)
         self.fallback_after_observe_brain_error = lambda observation_text, user_text: self._call(

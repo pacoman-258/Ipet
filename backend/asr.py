@@ -1,16 +1,20 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import io
 import importlib
 import os
 import sys
 import threading
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import numpy as np
+import httpx
 
 AutoModel = None
 _FUNASR_IMPORT_ERROR: Exception | None = None
@@ -22,6 +26,10 @@ _FUNASR_NANO_IMPORT_ERROR: Exception | None = None
 DEFAULT_ASR_PROVIDER = "funasr"
 DEFAULT_ASR_LANGUAGE = "zh"
 DEFAULT_ASR_API_BASE_URL = "http://127.0.0.1:8012"
+DEFAULT_GROQ_ASR_PROVIDER = "groq"
+DEFAULT_GROQ_ASR_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+DEFAULT_GROQ_ASR_MODEL = "whisper-large-v3-turbo"
+DEFAULT_GROQ_ASR_TIMEOUT_SECONDS = 20.0
 DEFAULT_PUSH_TO_TALK_KEY = "Alt"
 SUPPORTED_PUSH_TO_TALK_KEYS = ("Alt", "Ctrl", "Space")
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -29,13 +37,37 @@ DEFAULT_ASR_CACHE_ROOT = ROOT_DIR / ".cache" / "funasr"
 DEFAULT_NANO_MODEL_DIR = DEFAULT_ASR_CACHE_ROOT / "modelscope" / "FunAudioLLM" / "Fun-ASR-Nano-2512"
 DEFAULT_STREAMING_MODEL_NAME = "paraformer-zh-streaming"
 DEFAULT_PUNCTUATION_MODEL_NAME = "ct-punc"
+
+
+def _groq_http_proxy(environ: dict[str, str] | None = None) -> str | None:
+    source = environ if environ is not None else os.environ
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = str(source.get(name) or "").strip()
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return value
+    return None
+
+
 DEFAULT_ASR_CONFIG = {
     "enabled": True,
     "provider": DEFAULT_ASR_PROVIDER,
     "api_base_url": DEFAULT_ASR_API_BASE_URL,
+    "provider_url": DEFAULT_GROQ_ASR_API_URL,
+    "model": DEFAULT_GROQ_ASR_MODEL,
     "push_to_talk_key": DEFAULT_PUSH_TO_TALK_KEY,
     "interim_results": True,
 }
+
+
+def _pcm16_wav(pcm16: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(bytes(pcm16 or b""))
+    return buffer.getvalue()
 
 
 def _prepare_funasr_cache_env(cache_root: Path) -> None:
@@ -137,6 +169,7 @@ class ASRSession:
     runtime_state: Any = field(default_factory=dict)
     partial_text: str = ""
     bytes_received: int = 0
+    operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
 class ASRRuntimeProtocol(Protocol):
@@ -484,6 +517,114 @@ class FunASRNanoRuntime:
         return np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+class GroqWhisperRuntime:
+    """Final-result ASR runtime backed by Groq's OpenAI-compatible Whisper API."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        api_url: str = DEFAULT_GROQ_ASR_API_URL,
+        model: str = DEFAULT_GROQ_ASR_MODEL,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._api_url = str(api_url or DEFAULT_GROQ_ASR_API_URL).strip() or DEFAULT_GROQ_ASR_API_URL
+        self._model = str(model or DEFAULT_GROQ_ASR_MODEL).strip() or DEFAULT_GROQ_ASR_MODEL
+
+    def available(self) -> bool:
+        return not self.availability_message()
+
+    def availability_message(self) -> str:
+        if not self._api_key:
+            return "未配置 Groq ASR API Key；请在设置页填写，或设置 GROQ_API_KEY 环境变量。"
+        if not self._api_url.startswith(("http://", "https://")):
+            return "Groq ASR 接口地址无效。"
+        return ""
+
+    def readiness_message(self) -> str:
+        return self.availability_message()
+
+    def start_session(self, *, language: str, punctuation: bool) -> dict[str, Any]:
+        return {
+            "audio_buffer": bytearray(),
+            "language": str(language or DEFAULT_ASR_LANGUAGE).strip() or DEFAULT_ASR_LANGUAGE,
+            "punctuation": bool(punctuation),
+        }
+
+    def push_audio(self, runtime_state: dict[str, Any], pcm16_chunk: bytes) -> str:
+        buffer = runtime_state.setdefault("audio_buffer", bytearray())
+        if isinstance(buffer, bytearray):
+            buffer.extend(bytes(pcm16_chunk or b""))
+        return ""
+
+    def stop_session(self, runtime_state: dict[str, Any]) -> str:
+        pcm16 = bytes(runtime_state.get("audio_buffer") or b"")
+        runtime_state["audio_buffer"] = bytearray()
+        if len(pcm16) < 2:
+            return ""
+        return self._transcribe(
+            _pcm16_wav(pcm16),
+            language=str(runtime_state.get("language") or DEFAULT_ASR_LANGUAGE),
+        )
+
+    def discard_session(self, runtime_state: dict[str, Any]) -> None:
+        runtime_state["audio_buffer"] = bytearray()
+
+    def _transcribe(self, wav_bytes: bytes, *, language: str) -> str:
+        data = {
+            "model": self._model,
+            "response_format": "json",
+            "temperature": "0",
+        }
+        normalized_language = self._normalize_language(language)
+        if normalized_language:
+            data["language"] = normalized_language
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        files = {"file": ("ipet-input.wav", wav_bytes, "audio/wav")}
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(DEFAULT_GROQ_ASR_TIMEOUT_SECONDS, connect=5.0),
+                proxy=_groq_http_proxy(),
+                trust_env=False,
+            ) as client:
+                response = client.post(self._api_url, headers=headers, data=data, files=files)
+        except httpx.RequestError as exc:
+            raise ASRError(f"Groq ASR 网络请求失败：{exc.__class__.__name__}") from exc
+        if response.status_code == 401:
+            raise ASRError("Groq ASR API Key 无效或未获授权。")
+        if response.status_code == 403:
+            raise ASRError("Groq ASR 请求被拒绝（403 Forbidden）；请更换有权限的 Groq API Key，或检查账户/API 访问限制。")
+        if response.status_code == 429:
+            raise ASRError("Groq ASR 免费额度或频率限制已触发，请稍后再试。")
+        if response.is_error:
+            detail = ""
+            try:
+                payload = response.json()
+                detail = str(payload.get("error", {}).get("message") or "") if isinstance(payload, dict) else ""
+            except Exception:
+                detail = ""
+            detail = detail.strip()[:240]
+            raise ASRError(f"Groq ASR 请求失败：{detail or response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ASRError("Groq ASR 返回了无效响应。") from exc
+        text = payload.get("text") if isinstance(payload, dict) else ""
+        return str(text or "").strip()
+
+    def _normalize_language(self, language: str) -> str:
+        normalized = str(language or DEFAULT_ASR_LANGUAGE).strip().lower()
+        if normalized.startswith("zh"):
+            return "zh"
+        if normalized.startswith("en"):
+            return "en"
+        if normalized.startswith("ja") or normalized.startswith("jp"):
+            return "ja"
+        if normalized.startswith("ko"):
+            return "ko"
+        return ""
+
+
 def _default_asr_runtime() -> ASRRuntimeProtocol:
     nano_runtime = FunASRNanoRuntime()
     if nano_runtime.available():
@@ -496,6 +637,19 @@ class ASRService:
         self.runtime = runtime or _default_asr_runtime()
         self._sessions: dict[str, ASRSession] = {}
         self._lock = asyncio.Lock()
+        self._warmup_lock = asyncio.Lock()
+
+    async def _run_runtime(self, function, *args, **kwargs):
+        """Drain a worker thread before propagating task cancellation."""
+        worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(worker)
+            except BaseException:
+                pass
+            raise
 
     def available(self) -> bool:
         return bool(self.runtime.available())
@@ -519,7 +673,8 @@ class ASRService:
             return self.availability_message()
         runtime_warmup = getattr(self.runtime, "warmup", None)
         if callable(runtime_warmup):
-            return str(await asyncio.to_thread(runtime_warmup) or "")
+            async with self._warmup_lock:
+                return str(await self._run_runtime(runtime_warmup) or "")
         return str(self.readiness_message() or "")
 
     async def start_session(
@@ -533,7 +688,7 @@ class ASRService:
         readiness_message = self.readiness_message()
         if readiness_message:
             raise ASRError(readiness_message)
-        runtime_state = await asyncio.to_thread(
+        runtime_state = await self._run_runtime(
             self.runtime.start_session,
             language=str(language or DEFAULT_ASR_LANGUAGE).strip() or DEFAULT_ASR_LANGUAGE,
             punctuation=bool(punctuation),
@@ -555,8 +710,9 @@ class ASRService:
         chunk = bytes(pcm16_chunk or b"")
         if not chunk:
             return None
-        session.bytes_received += len(chunk)
-        text = await asyncio.to_thread(self.runtime.push_audio, session.runtime_state, chunk)
+        async with session.operation_lock:
+            session.bytes_received += len(chunk)
+            text = await self._run_runtime(self.runtime.push_audio, session.runtime_state, chunk)
         normalized = str(text or "").strip()
         if not session.interim_results or not normalized or normalized == session.partial_text:
             return None
@@ -565,10 +721,11 @@ class ASRService:
 
     async def stop_session(self, session_id: str) -> ASRTranscript:
         session = await self._pop_session(session_id)
-        try:
-            text = await asyncio.to_thread(self.runtime.stop_session, session.runtime_state)
-        finally:
-            await asyncio.to_thread(self.runtime.discard_session, session.runtime_state)
+        async with session.operation_lock:
+            try:
+                text = await self._run_runtime(self.runtime.stop_session, session.runtime_state)
+            finally:
+                await self._run_runtime(self.runtime.discard_session, session.runtime_state)
         normalized = str(text or "").strip() or session.partial_text.strip()
         return ASRTranscript(text=normalized, is_final=True)
 
@@ -576,7 +733,8 @@ class ASRService:
         session = await self._pop_session(session_id, required=False)
         if session is None:
             return
-        await asyncio.to_thread(self.runtime.discard_session, session.runtime_state)
+        async with session.operation_lock:
+            await self._run_runtime(self.runtime.discard_session, session.runtime_state)
 
     async def _require_session(self, session_id: str) -> ASRSession:
         async with self._lock:

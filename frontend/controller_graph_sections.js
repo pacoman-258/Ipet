@@ -127,6 +127,7 @@
     const appControllers = runtimeWindow.IpetControllerGraphAppSections.createControllerGraphAppSections(
       sectionContext,
       {
+        ...shellControllers,
         ...petControllers,
         ...chatControllers,
       },

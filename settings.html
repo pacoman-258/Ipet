@@ -139,8 +139,31 @@
               <input id="window-height" type="number" min="120" />
             </label>
             <label class="field">
-              <span>按键说话</span>
+              <span>按键说话（macOS 为 Option）</span>
               <input id="chat-asr-push-to-talk-key" type="text" />
+            </label>
+            <label class="field">
+              <span>语音识别提供方</span>
+              <select id="chat-asr-provider">
+                <option value="funasr">本地 FunASR</option>
+                <option value="groq">Groq Whisper（在线）</option>
+              </select>
+            </label>
+            <label class="field wide">
+              <span>在线识别接口</span>
+              <input id="chat-asr-provider-url" type="url" placeholder="https://api.groq.com/openai/v1/audio/transcriptions" />
+            </label>
+            <label class="field">
+              <span>在线识别模型</span>
+              <input id="chat-asr-model" type="text" placeholder="whisper-large-v3-turbo" />
+            </label>
+            <label class="field">
+              <span>在线识别 API Key</span>
+              <input id="chat-asr-api-key" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥" />
+            </label>
+            <label class="toggle-line">
+              <input id="chat-asr-api-key-clear" type="checkbox" />
+              <span>清除已保存的 ASR Key</span>
             </label>
             <label class="toggle-line">
               <input id="chat-asr-enabled" type="checkbox" />
@@ -204,21 +227,22 @@
               <input id="brain-api-key-clear" type="checkbox" />
               <span>保存时清空大脑密钥</span>
             </label>
-            <label class="field wide">
-              <span>人格设定</span>
-              <textarea id="brain-persona" rows="6"></textarea>
-            </label>
+            <div class="field wide persona-prompt-panel">
+              <span>用户人格提示词</span>
+              <div class="button-row wrap">
+                <button id="brain-persona-prompt-select-btn" class="ghost-button" type="button">选择人格文件</button>
+                <button id="brain-persona-prompt-clear-btn" class="ghost-button" type="button">停用</button>
+                <strong id="brain-persona-prompt-current" class="persona-prompt-current">未启用</strong>
+              </div>
+              <select id="brain-persona-prompt-file" aria-label="选择 prompts 文件夹中的人格提示词">
+                <option value="">未启用用户人格提示词</option>
+              </select>
+              <textarea id="brain-persona-prompt-preview" rows="8" readonly placeholder="选择 prompts 文件夹中的 .md 文件后，这里会显示预览。"></textarea>
+              <small>只读取 <code>prompts/</code> 下的 Markdown 文件；<code>Ipet.md</code> 是固定全局合同，不可在这里替换。</small>
+            </div>
             <label class="field wide">
               <span>当前自我状态</span>
               <textarea id="brain-self-state" rows="4" placeholder="例如：专注陪伴、等待用户确认下一步。"></textarea>
-            </label>
-            <label class="field">
-              <span>回复风格</span>
-              <select id="brain-response-style">
-                <option value="lively">活泼</option>
-                <option value="calm">冷静</option>
-                <option value="concise">简洁</option>
-              </select>
             </label>
             <label class="check-row">
               <input id="brain-streaming-enabled" type="checkbox" />
@@ -271,6 +295,16 @@
           </div>
 
           <div class="form-grid two-col">
+            <div class="field wide">
+              <span>Playwright Chrome 个人资料</span>
+              <div class="button-row wrap model-fetch-actions">
+                <select id="ops-playwright-profile" aria-label="Playwright Chrome 个人资料">
+                  <option value="">未选择（执行时询问）</option>
+                </select>
+                <button id="ops-playwright-profile-refresh" class="ghost-button" type="button">刷新资料</button>
+              </div>
+              <span id="ops-playwright-profile-status" class="inline-status">默认用于未指定个人资料的浏览器任务</span>
+            </div>
             <label class="toggle-line wide">
               <input id="ops-observe-model-enabled" type="checkbox" />
               <span>observe 使用独立模型（关闭时由 Brain 直接看图）</span>

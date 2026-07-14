@@ -48,15 +48,17 @@
           model_endpoint: "",
           model_name: "gpt-5.4",
           max_output_tokens: 1024,
-          persona: "你是 Ipet，一个有身体、有记忆、会一步一步操作电脑的陪伴助手。",
+          persona_prompt_file: "",
+          persona: "",
           self_state: "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
-          response_style: "lively",
+          response_style: "",
           decision_temperature: 0.4,
           reasoning_effort: "",
           streaming_enabled: false,
           web_search_enabled: false,
         },
         human_ops: {
+          playwright_profile: "",
           observe_screen: true,
           accessibility: true,
           require_act_review: true,
@@ -124,8 +126,16 @@
             rate_pct: 0,
             model: "gpt-5.4",
             backend_url: "",
-            system_prompt: neoDefaults().brain.persona,
-            asr: { enabled: true, push_to_talk_key: "Alt" },
+            system_prompt: "",
+            asr: {
+              enabled: true,
+              provider: "funasr",
+              api_base_url: "http://127.0.0.1:8012",
+              provider_url: "https://api.groq.com/openai/v1/audio/transcriptions",
+              model: "whisper-large-v3-turbo",
+              push_to_talk_key: "Alt",
+              interim_results: true,
+            },
           },
           pet: {
             scale: 0.3,
@@ -273,6 +283,38 @@
             ? "Codex observe 复用本机登录与账户额度"
           : "可单独配置更快的观察模型";
       }
+
+      const asrProvider = stringValue(els.chatAsrProvider, "funasr");
+      const asrOnline = asrProvider === "groq";
+      if (els.chatAsrProviderUrl) {
+        els.chatAsrProviderUrl.disabled = !asrOnline;
+        els.chatAsrProviderUrl.placeholder = asrOnline
+          ? "https://api.groq.com/openai/v1/audio/transcriptions"
+          : "本地 FunASR 不需要在线接口";
+      }
+      if (els.chatAsrModel) {
+        els.chatAsrModel.disabled = !asrOnline;
+        els.chatAsrModel.placeholder = asrOnline ? "whisper-large-v3-turbo" : "本地 FunASR 使用内置模型";
+      }
+      if (els.chatAsrApiKey) {
+        els.chatAsrApiKey.disabled = !asrOnline;
+        if (!asrOnline) {
+          els.chatAsrApiKey.value = "";
+          els.chatAsrApiKey.placeholder = "本地 FunASR 不需要 API Key";
+        } else {
+          setSecretPlaceholder(
+            els.chatAsrApiKey,
+            getSettingsPayload()?.config?.chat?.asr?.api_key_preview,
+            "Groq API Key",
+          );
+        }
+      }
+      if (els.chatAsrApiKeyClear) {
+        els.chatAsrApiKeyClear.disabled = !asrOnline;
+        if (!asrOnline) {
+          els.chatAsrApiKeyClear.checked = false;
+        }
+      }
     }
 
     function updateClickPreview() {
@@ -305,6 +347,12 @@
       setValue(els.chatRatePct, Number(chat.rate_pct || 0));
       setChecked(els.chatAsrEnabled, asr.enabled !== false);
       setValue(els.chatAsrPushToTalkKey, asr.push_to_talk_key || "Alt");
+      setValue(els.chatAsrProvider, asr.provider || "funasr");
+      setValue(els.chatAsrProviderUrl, asr.provider_url || "https://api.groq.com/openai/v1/audio/transcriptions");
+      setValue(els.chatAsrModel, asr.model || "whisper-large-v3-turbo");
+      setValue(els.chatAsrApiKey, "");
+      setSecretPlaceholder(els.chatAsrApiKey, asr.api_key_preview, "Groq API Key");
+      setChecked(els.chatAsrApiKeyClear, false);
 
       setValue(els.petScale, Number(pet.scale ?? 0.3));
       setValue(els.petOpacity, Number(pet.opacity ?? 1));
@@ -328,14 +376,14 @@
       setValue(els.brainApiKey, "");
       setSecretPlaceholder(els.brainApiKey, neo.brain.api_key_preview, "API Key");
       setChecked(els.brainApiKeyClear, false);
-      setValue(els.brainPersona, neo.brain.persona || chat.system_prompt || "");
+      setValue(els.brainPersonaPromptFile, neo.brain.persona_prompt_file || "");
       setValue(els.brainSelfState, neo.brain.self_state || "");
-      setValue(els.brainResponseStyle, neo.brain.response_style || "lively");
       setValue(els.brainDecisionTemperature, Number(neo.brain.decision_temperature ?? 0.4));
       setValue(els.brainReasoningEffort, neo.brain.reasoning_effort || "");
       setChecked(els.brainStreamingEnabled, neo.brain.streaming_enabled === true);
       setChecked(els.brainWebSearchEnabled, neo.brain.web_search_enabled === true);
 
+      setValue(els.opsPlaywrightProfile, neo.human_ops.playwright_profile || "");
       setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
       setChecked(els.opsAccessibility, neo.human_ops.accessibility);
       setChecked(els.opsRequireActReview, neo.human_ops.require_act_review);
@@ -386,12 +434,21 @@
       next.chat.tts_provider = stringValue(els.chatTtsProvider, "edge_tts");
       next.chat.rate_pct = intValue(els.chatRatePct, 0);
       next.chat.model = stringValue(els.brainModelName, "gpt-5.4");
-      next.chat.system_prompt = stringValue(els.brainPersona);
       next.chat.asr = {
         ...(next.chat.asr || {}),
         enabled: !!els.chatAsrEnabled?.checked,
+        provider: stringValue(els.chatAsrProvider, "funasr"),
+        provider_url: stringValue(
+          els.chatAsrProviderUrl,
+          "https://api.groq.com/openai/v1/audio/transcriptions",
+        ),
+        model: stringValue(els.chatAsrModel, "whisper-large-v3-turbo"),
         push_to_talk_key: stringValue(els.chatAsrPushToTalkKey, "Alt"),
       };
+      if (els.chatAsrApiKey?.value) {
+        next.chat.asr.api_key = els.chatAsrApiKey.value;
+      }
+      next.chat.asr.api_key_clear = !!els.chatAsrApiKeyClear?.checked;
 
       next.pet = {
         ...(next.pet || {}),
@@ -421,9 +478,8 @@
         provider: brainProvider,
         model_endpoint: isEndpointlessProvider(brainProvider) ? "" : stringValue(els.brainModelEndpoint),
         model_name: stringValue(els.brainModelName, isGoogleAistudio(brainProvider) ? GOOGLE_AISTUDIO_DEFAULT_MODEL : isCodex(brainProvider) ? "default" : "gpt-5.4"),
-        persona: stringValue(els.brainPersona),
+        persona_prompt_file: stringValue(els.brainPersonaPromptFile),
         self_state: stringValue(els.brainSelfState),
-        response_style: stringValue(els.brainResponseStyle, "lively"),
         decision_temperature: numberValue(els.brainDecisionTemperature, 0.4),
         reasoning_effort: stringValue(els.brainReasoningEffort),
         streaming_enabled: !!els.brainStreamingEnabled?.checked,
@@ -437,6 +493,7 @@
       const observeProvider = stringValue(els.opsObserveModelProvider, "openai_compatible");
       next.human_ops = {
         ...(next.human_ops || {}),
+        playwright_profile: stringValue(els.opsPlaywrightProfile),
         observe_screen: !!els.opsObserveScreen?.checked,
         accessibility: !!els.opsAccessibility?.checked,
         require_act_review: !!els.opsRequireActReview?.checked,

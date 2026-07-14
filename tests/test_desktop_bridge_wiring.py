@@ -30,6 +30,8 @@ class _FakeBridge:
         self.closeWindowRequested = _FakeSignal()
         self.showClickPreviewRequested = _FakeSignal()
         self.hideClickPreviewRequested = _FakeSignal()
+        self.showApprovalNotificationRequested = _FakeSignal()
+        self.cancelApprovalNotificationRequested = _FakeSignal()
 
 
 class _Owner:
@@ -57,6 +59,12 @@ class _Owner:
     def hide_click_preview(self, *args) -> None:
         self.calls.append("hideClickPreviewRequested")
 
+    def show_approval_notification(self, *args) -> None:
+        self.calls.append("showApprovalNotificationRequested")
+
+    def cancel_approval_notification(self, *args) -> None:
+        self.calls.append("cancelApprovalNotificationRequested")
+
 
 class DesktopBridgeWiringTests(unittest.TestCase):
     def test_create_connected_pet_bridge_wires_all_handlers(self) -> None:
@@ -82,6 +90,8 @@ class DesktopBridgeWiringTests(unittest.TestCase):
                 bridge.closeWindowRequested.connected,
                 bridge.showClickPreviewRequested.connected,
                 bridge.hideClickPreviewRequested.connected,
+                bridge.showApprovalNotificationRequested.connected,
+                bridge.cancelApprovalNotificationRequested.connected,
             ],
             [
                 [owner.on_web_state_changed],
@@ -91,6 +101,8 @@ class DesktopBridgeWiringTests(unittest.TestCase):
                 [owner.close],
                 [owner.show_click_preview],
                 [owner.hide_click_preview],
+                [owner.show_approval_notification],
+                [owner.cancel_approval_notification],
             ],
         )
 

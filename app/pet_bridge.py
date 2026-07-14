@@ -18,6 +18,9 @@ def create_pet_bridge_class(
         closeWindowRequested = signal_factory()
         showClickPreviewRequested = signal_factory(str)
         hideClickPreviewRequested = signal_factory()
+        showApprovalNotificationRequested = signal_factory(str)
+        approvalNotificationDecision = signal_factory(str)
+        cancelApprovalNotificationRequested = signal_factory(str)
 
         @slot_decorator(str)
         def petStateChanged(self, payload: str) -> None:
@@ -50,5 +53,13 @@ def create_pet_bridge_class(
         @slot_decorator()
         def hideClickPreview(self) -> None:
             self.hideClickPreviewRequested.emit()
+
+        @slot_decorator(str)
+        def showApprovalNotification(self, payload: str) -> None:
+            self.showApprovalNotificationRequested.emit(str(payload or ""))
+
+        @slot_decorator(str)
+        def cancelApprovalNotification(self, proposal_id: str) -> None:
+            self.cancelApprovalNotificationRequested.emit(str(proposal_id or ""))
 
     return PetBridge

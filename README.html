@@ -237,7 +237,6 @@
         <a href="#layout">结构</a>
         <a href="#run">启动</a>
         <a href="#workflow">工作流</a>
-        <a href="#reports">报告</a>
         <a href="#tests">测试</a>
       </nav>
     </header>
@@ -285,7 +284,7 @@
               <tr><td><code>app/</code></td><td>目标应用组合层。</td></tr>
               <tr><td><code>frontend/</code></td><td>根 UI 迁移后的目标前端目录。</td></tr>
               <tr><td><code>index.html</code>、<code>settings.*</code></td><td>过渡期仍在根目录加载的桌宠 UI 与设置页。</td></tr>
-              <tr><td><code>docs/</code></td><td>架构、工作流、所有权和 HTML 报告。</td></tr>
+              <tr><td><code>docs/</code></td><td>架构、工作流、所有权和按需报告。</td></tr>
             </tbody>
           </table>
         </div>
@@ -309,20 +308,15 @@
           <div class="step"><strong>Brain</strong>Brain 只给出一个下一步。</div>
           <div class="step"><strong>Human Ops</strong>危险动作先审批。</div>
           <div class="step"><strong>execute/observe</strong>Body 执行后观察结果。</div>
-          <div class="step"><strong>summary/report</strong>总结终态，文件改动生成 HTML 报告。</div>
+          <div class="step"><strong>summary</strong>总结终态、证据和剩余未知项。</div>
         </div>
-      </section>
-
-      <section id="reports">
-        <h2>HTML 报告规范</h2>
-        <p>每轮任务结束都要在 <code>docs/reports/</code> 下生成或更新 HTML 报告。报告至少包含目标、worker 分工、改动文件、达成效果、待办和推荐下一步。</p>
       </section>
 
       <section id="tests">
         <h2>测试</h2>
         <p>完整回归命令：</p>
         <pre><code>python -m unittest discover -s tests -p "test*.py" -v</code></pre>
-        <p>文档任务至少运行指定文档审计，并确认不再出现旧架构词汇。</p>
+        <p>编码代理应选择最小相关测试；文档任务通常只需格式检查和针对所改契约的搜索检查。</p>
       </section>
     </main>
 

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ipet 开发规则瘦身</title>
+  <style>
+    body { max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1f2937; font: 16px/1.65 system-ui, sans-serif; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 2px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Ipet 开发规则瘦身</h1>
+
+  <h2>目标</h2>
+  <p>减少编码代理的强制前置阅读、重复审批、多代理仪式和例行 HTML 报告，保留必要的安全、架构边界与验证规则。</p>
+
+  <h2>Worker 分工</h2>
+  <p>单代理完成；未启用子代理。</p>
+
+  <h2>改动文件</h2>
+  <p><code>AGENTS.md</code>、README 三种版本、<code>开发核心原则.txt</code>、项目结构、Subagent、工作流和中英文架构文档，以及两份角色说明。</p>
+
+  <h2>达成效果</h2>
+  <ul>
+    <li><code>AGENTS.md</code> 成为唯一默认入口，其他文档按任务读取。</li>
+    <li>产品 Human Ops 审批与编码代理授权明确分离。</li>
+    <li>Subagent 改为显式可选，不再为普通任务默认派工。</li>
+    <li>普通文件改动不再强制生成 HTML 报告。</li>
+    <li>工作流只在稳定产品合同、安全边界或状态转换变化时更新。</li>
+  </ul>
+
+  <h2>剩余工作</h2>
+  <p>历史实施计划仍保留当时的报告要求，作为历史记录，不属于当前开发规范。</p>
+
+  <h2>推荐下一步</h2>
+  <p>后续按新入口运行；只有实际使用中出现缺口时再补规则。</p>
+</body>
+</html>

@@ -7,6 +7,7 @@ from brain.decisions import BrainDecision, DecisionKind
 from backend.task_control import TASK_CONTROL, TaskStopped
 
 from .approvals import ReviewableProposal
+from .filesystem_actions import filesystem_action_success_field
 
 
 class HumanOpsProposalNotFound(LookupError):
@@ -27,6 +28,8 @@ def execution_verification(
         "key_press": "pressed",
         "playwright": "playwright_done",
     }.get(action_type, "")
+    if action_type.startswith("file_"):
+        success_field = filesystem_action_success_field(action_type)
     checks = {
         success_field: bool(data.get(success_field)) if success_field else False,
         "focused": bool(data.get("focused")) if action_type in {"launch_app", "click", "type_text", "key_press"} else True,
@@ -163,7 +166,9 @@ def stream_human_ops_proposal_decision(
         TASK_CONTROL.check(task_id, next_action="待审批动作")
         record["status"] = "approved"
         action_type = str(proposal.payload.get("action_type") or "").strip()
-        phase_name = "human_ops_click" if action_type == "click" else "human_ops_action"
+        phase_name = "human_ops_click" if action_type == "click" else (
+            "human_ops_filesystem" if action_type.startswith("file_") else "human_ops_action"
+        )
         yield deps.sse(
             "phase",
             {
@@ -190,6 +195,8 @@ def stream_human_ops_proposal_decision(
                 final_text = f"已打开应用：{label}。"
             elif action_type == "playwright":
                 final_text = f"已执行 Playwright 操作：{label}。"
+            elif action_type.startswith("file_"):
+                final_text = f"已执行文件动作：{label}。"
             else:
                 final_text = f"已执行操作：{label}。"
             record["status"] = "executed"

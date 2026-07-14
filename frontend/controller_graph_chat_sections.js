@@ -134,6 +134,7 @@
       setPendingApprovalInputTurnId: (value) => {
         graphState.pendingApprovalInputTurnId = String(value || "");
       },
+      getQtBridge: () => graphState.qtBridge,
       document: runtimeDocument,
     });
     controllerRegistry.chatWorklog = chatWorklogController;

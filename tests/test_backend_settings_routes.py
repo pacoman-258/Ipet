@@ -50,6 +50,10 @@ class BackendSettingsRoutesTests(unittest.TestCase):
         normalize_private_config = mock.Mock(return_value=current_config)
         apply_settings_update = mock.Mock(return_value=updated_config)
         save_config = mock.Mock()
+        list_persona_prompts = mock.Mock(return_value=[{"name": "friendly.md", "content": "友好"}])
+        list_chrome_profiles = mock.Mock(
+            return_value=[{"directory": "Profile 1", "display_name": "工作", "active": True}]
+        )
         deps = settings_routes.SettingsRouteDependencies(
             settings_page_response=mock.Mock(return_value=Response(content="settings")),
             settings_css_response=mock.Mock(return_value=Response(content="css")),
@@ -60,12 +64,16 @@ class BackendSettingsRoutesTests(unittest.TestCase):
             normalize_private_config=normalize_private_config,
             apply_settings_update=apply_settings_update,
             save_config=save_config,
+            list_persona_prompts=list_persona_prompts,
+            list_chrome_profiles=list_chrome_profiles,
         )
         app = FastAPI()
         settings_routes.register_settings_routes(app, deps)
 
         with TestClient(app) as client:
             get_resp = client.get("/api/settings/config")
+            prompts_resp = client.get("/api/settings/persona-prompts")
+            profiles_resp = client.get("/api/settings/chrome-profiles")
             put_resp = client.put(
                 "/api/settings/config",
                 json={"config": {"brain": {"model_name": "updated"}}},
@@ -74,6 +82,14 @@ class BackendSettingsRoutesTests(unittest.TestCase):
 
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json(), {"config": {"source": "get"}})
+        self.assertEqual(prompts_resp.json(), {"prompts": [{"name": "friendly.md", "content": "友好"}]})
+        self.assertEqual(
+            profiles_resp.json(),
+            {
+                "profiles": [{"directory": "Profile 1", "display_name": "工作", "active": True}],
+                "error": "",
+            },
+        )
         self.assertEqual(put_resp.status_code, 200)
         self.assertEqual(put_resp.json(), {"config": {"source": "put"}})
         self.assertEqual(bad_resp.status_code, 400)
@@ -86,6 +102,8 @@ class BackendSettingsRoutesTests(unittest.TestCase):
             current=current_config,
         )
         save_config.assert_called_once_with(updated_config)
+        list_persona_prompts.assert_called_once_with()
+        list_chrome_profiles.assert_called_once_with()
 
     def test_app_source_registers_settings_router_instead_of_inline_decorators(self) -> None:
         source = Path(backend_app.__file__).read_text(encoding="utf-8")

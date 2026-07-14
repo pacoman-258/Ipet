@@ -549,6 +549,26 @@ textarea {
   line-height: 1.55;
 }
 
+.persona-prompt-panel small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.persona-prompt-current {
+  min-width: 120px;
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+}
+
+.persona-prompt-current.missing {
+  color: var(--danger);
+}
+
+#brain-persona-prompt-preview {
+  background: #f5f7fb;
+  color: var(--muted);
+}
+
 .button-row,
 .range-wrap,
 .inline-actions {

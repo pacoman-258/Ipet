@@ -30,11 +30,19 @@
       return callQtBridge("closeWindow");
     }
 
+    function bindApprovalNotificationDecisions(handler) {
+      const signal = getQtBridge()?.approvalNotificationDecision;
+      if (!signal || typeof signal.connect !== "function" || typeof handler !== "function") return false;
+      signal.connect(handler);
+      return true;
+    }
+
     return Object.freeze({
       callQtBridge,
       openSettingsPage,
       minimizeWindow,
       closeWindow,
+      bindApprovalNotificationDecisions,
     });
   }
 

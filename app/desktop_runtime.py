@@ -30,7 +30,7 @@ def is_macos(platform_name_value: str | None = None, *, sys_platform: str | None
 
 
 def default_asr_enabled(platform_name_value: str | None = None, *, sys_platform: str | None = None) -> bool:
-    return not is_macos(platform_name_value, sys_platform=sys_platform)
+    return True
 
 
 def default_asr_config(platform_name_value: str | None = None, *, sys_platform: str | None = None) -> dict[str, object]:
@@ -38,6 +38,9 @@ def default_asr_config(platform_name_value: str | None = None, *, sys_platform: 
         "enabled": default_asr_enabled(platform_name_value, sys_platform=sys_platform),
         "provider": "funasr",
         "api_base_url": "http://127.0.0.1:8012",
+        "provider_url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "model": "whisper-large-v3-turbo",
+        "api_key": "",
         "push_to_talk_key": "Alt",
         "interim_results": True,
     }

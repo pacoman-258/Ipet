@@ -5,6 +5,7 @@ from typing import Any, Callable
 from brain.decisions import BrainDecision, DecisionKind
 
 from .approvals import ReviewableProposal
+from .filesystem_actions import filesystem_action_label
 from .playwright_actions import playwright_action_label
 from .previews import red_dot_click_preview
 
@@ -52,6 +53,8 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
         operation = str(args.get("operation") or "").strip() or "browser"
         profile = str(args.get("profile") or "未选择个人资料").strip() or "未选择个人资料"
         return f"Playwright {operation}：{playwright_action_label(args)} · 个人资料：{profile}"
+    if action_type.startswith("file_"):
+        return filesystem_action_label(action_type, args)
     return proposal.summary or action_type
 
 
@@ -156,6 +159,8 @@ def build_human_ops_act_proposal(
     elif action_type == "playwright":
         operation = str(arguments.get("operation") or "").strip() or "browser"
         summary = f"Ipet 想用 Playwright 执行 {operation}：{playwright_action_label(arguments)}"
+    elif action_type.startswith("file_"):
+        summary = f"Ipet 想执行文件动作：{filesystem_action_label(action_type, arguments)}"
     else:
         summary = decision.summary or f"Ipet 想执行：{action_type}"
     return ReviewableProposal.act(

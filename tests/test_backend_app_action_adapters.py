@@ -155,6 +155,47 @@ class BackendAppActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("绝不写回原 Chrome 资料", calls[0][1]["message"])
         self.assertIn("attach 只连接唯一活跃且允许远程调试的所选资料", calls[0][1]["message"])
 
+    async def test_filesystem_action_uses_configured_root_without_desktop_command(self) -> None:
+        adapters = self._import_adapters()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            proposal = ReviewableProposal.act(
+                action_type="file_write",
+                summary="Ipet 想写入文件",
+                payload={"path": "note.txt", "content": "hello"},
+            ).approve()
+            deps = adapters.AppActionAdapterDependencies(
+                command_path=ROOT_DIR / ".pet_desktop_command.json",
+                send_desktop_command=mock.AsyncMock(),
+                filesystem_roots=(root,),
+            )
+
+            result = await adapters.perform_human_ops_action(proposal, deps=deps)
+
+            self.assertTrue(result["written"])
+            self.assertEqual((root / "note.txt").read_text(encoding="utf-8"), "hello")
+            deps.send_desktop_command.assert_not_awaited()
+
+    async def test_filesystem_native_approval_discloses_scope_and_rejection_effect(self) -> None:
+        adapters = self._import_adapters()
+        proposal = ReviewableProposal.act(
+            action_type="file_delete",
+            summary="Ipet 想删除文件",
+            payload={"path": "notes.txt"},
+        )
+
+        async def send_command(command_type, payload, *, command_path, timeout_sec):
+            return {"approved": False, "message": payload["message"]}
+
+        deps = adapters.AppActionAdapterDependencies(
+            command_path=ROOT_DIR / ".pet_desktop_command.json",
+            send_desktop_command=send_command,
+        )
+        result = await adapters.request_native_human_ops_approval(proposal, deps=deps)
+
+        self.assertFalse(result["approved"])
+        self.assertIn("项目根目录或用户配置的允许根目录", result["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

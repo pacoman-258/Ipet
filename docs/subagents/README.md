@@ -1,6 +1,6 @@
-# Fixed Subagent Team
+# Optional Subagent Roles
 
-This directory defines the long-lived Neo Aspect ownership roles. Use these names for subagent prompts, code reviews, and task reports.
+Single-agent work is the default. Use these role prompts only when delegation is explicitly requested; load only the assigned role.
 
 ## Roles
 
@@ -10,7 +10,7 @@ This directory defines the long-lived Neo Aspect ownership roles. Use these name
 - `memory-skills`: local memory, summaries, user preferences, reviewed skill recipes, and learned procedures.
 - `settings-console`: web settings page and settings API contracts.
 - `desktop-shell`: `main.py`, Qt/WebEngine bridge, tray/menu behavior, and host process lifecycle.
-- `qa-reports`: regression planning, contract checks, documentation audits, and HTML reports.
+- `qa-reports`: regression planning, contract checks, documentation audits, and requested durable reports.
 
 ## Routing
 
@@ -38,4 +38,4 @@ This directory defines the long-lived Neo Aspect ownership roles. Use these name
 - Memory & Skills: `tests.test_chat_topics tests.test_chat_topics_api tests.test_ipet_memory_store tests.test_neo_aspect_core`
 - Settings: `tests.test_neo_aspect_settings_page tests.test_chat_modes_ui tests.test_neo_backend_contract`
 - Desktop Shell: `tests.test_main_runtime_env`
-- QA Reports: targeted slices plus the task HTML report check.
+- QA Reports: the smallest affected test or contract slice; check a durable report only when the task requested one.

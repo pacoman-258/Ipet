@@ -24,6 +24,13 @@ _STATE_CHANGING_ACTIONS = {
     "clipboard_write",
     "wait",
     "playwright",
+    "file_list",
+    "file_read",
+    "file_write",
+    "file_mkdir",
+    "file_copy",
+    "file_move",
+    "file_delete",
 }
 
 

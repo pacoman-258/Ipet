@@ -60,6 +60,7 @@
       typeof deps.setActiveApprovalId === "function" ? deps.setActiveApprovalId : () => {};
     const getActiveApprovalId =
       typeof deps.getActiveApprovalId === "function" ? deps.getActiveApprovalId : () => "";
+    const getQtBridge = typeof deps.getQtBridge === "function" ? deps.getQtBridge : () => null;
     const getPendingRetryEdit =
       typeof deps.getPendingRetryEdit === "function" ? deps.getPendingRetryEdit : () => null;
     const setReceivedStructuredSegment =
@@ -91,7 +92,13 @@
       activeAbortController?.abort();
       const taskId = activeTaskId;
       const approvalId = getActiveApprovalId();
-      if (approvalId) removeApprovalBubble(approvalId);
+      if (approvalId) {
+        const qtBridge = getQtBridge();
+        if (qtBridge && typeof qtBridge.cancelApprovalNotification === "function") {
+          qtBridge.cancelApprovalNotification(approvalId);
+        }
+        removeApprovalBubble(approvalId);
+      }
       let summary = { completed: [], not_executed: ["后续 Brain、Observe 与动作步骤"], uncertain: [] };
       try {
         const response = await fetch(`${backendBaseUrl()}/api/chat/tasks/${encodeURIComponent(taskId)}/stop`, {
@@ -168,17 +175,13 @@
       beginSpeechStream();
       setReceivedStructuredSegment(false);
       const turnKey = String(turnId || "").trim();
-      const nativeApproval = options?.native === true;
       const thoughtSessionId = chatWorklogController.resolveApprovalThoughtSessionId(turnKey);
       activeAbortController = new AbortController();
       try {
-        const endpoint = nativeApproval ? "native-decision" : "decision";
-        const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/${endpoint}`, {
+        const resp = await fetch(`${backend}/api/human-ops/proposals/${encodeURIComponent(turnId)}/decision`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: nativeApproval
-            ? JSON.stringify({})
-            : JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
+          body: JSON.stringify({ approved: !!approved, user_text: String(userText || "") }),
           signal: activeAbortController.signal,
         });
         removeApprovalBubble(turnId);
@@ -192,7 +195,7 @@
         if (!result.awaitingApproval) {
           finishSpeechIfIdle();
         }
-        if (nativeApproval && result.approved === false && chatInputEl && typeof chatInputEl.focus === "function") {
+        if (result.approved === false && chatInputEl && typeof chatInputEl.focus === "function") {
           setChatState("idle");
           chatInputEl.focus();
         }

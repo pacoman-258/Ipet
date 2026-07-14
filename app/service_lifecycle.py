@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Callable
+from typing import Any, Callable
 
 import requests
 from app import desktop_runtime as _desktop_runtime
@@ -79,6 +81,70 @@ class DesktopServiceLifecycle:
         self.qwen_tts_started_by_app = False
         self._asr_warmup_monitor_lock = self.threading.Lock()
         self._asr_warmup_monitor_thread = None
+        self._asr_warmup_stop_event = self.threading.Event()
+        self._service_start_locks_lock = self.threading.Lock()
+        self._service_start_locks: dict[str, Any] = {}
+
+    @contextmanager
+    def _service_start_guard(self, name: str):
+        """Serialize service startup across threads and desktop instances."""
+        with self._service_start_locks_lock:
+            local_lock = self._service_start_locks.setdefault(name, self.threading.Lock())
+        with local_lock:
+            with self._service_start_guard_locked(name):
+                yield
+
+    @contextmanager
+    def _service_start_guard_locked(self, name: str):
+        lock_path = self.root_dir / ".service-logs" / f"{name}.start.lock"
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = lock_path.open("a+")
+        except OSError:
+            yield
+            return
+
+        lock_kind = ""
+        try:
+            if self.os.name == "nt":
+                try:
+                    import msvcrt
+
+                    lock_file.seek(0)
+                    lock_file.write("0")
+                    lock_file.flush()
+                    while True:
+                        try:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                            lock_kind = "msvcrt"
+                            break
+                        except OSError:
+                            self.time.sleep(0.05)
+                except ImportError:
+                    pass
+            else:
+                try:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                    lock_kind = "fcntl"
+                except (ImportError, OSError):
+                    pass
+            yield
+        finally:
+            try:
+                if lock_kind == "msvcrt":
+                    import msvcrt
+
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                elif lock_kind == "fcntl":
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            lock_file.close()
 
     def _pick_backend_launch_url(self, preferred_url: str) -> str:
         return _desktop_runtime.pick_backend_launch_url(
@@ -94,6 +160,10 @@ class DesktopServiceLifecycle:
         )
 
     def ensure_backend_service(self) -> None:
+        with self._service_start_guard("backend"):
+            self._ensure_backend_service()
+
+    def _ensure_backend_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
         backend_url = str(chat_cfg.get("backend_url", self.default_backend_url)).strip() or self.default_backend_url
         self.config.setdefault("chat", {})["backend_url"] = backend_url
@@ -142,6 +212,7 @@ class DesktopServiceLifecycle:
                     stderr=self.subprocess.STDOUT,
                     creationflags=creationflags,
                     env=env,
+                    start_new_session=self.os.name != "nt",
                 )
             self.backend_started_by_app = True
         except Exception as exc:
@@ -166,12 +237,17 @@ class DesktopServiceLifecycle:
             self.print("backend did not become ready in time; chat may be unavailable.")
 
     def ensure_asr_service(self) -> None:
+        with self._service_start_guard("asr"):
+            self._ensure_asr_service()
+
+    def _ensure_asr_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
         asr_cfg = chat_cfg.get("asr", {}) if isinstance(chat_cfg, dict) else {}
         if not isinstance(asr_cfg, dict) or not bool(asr_cfg.get("enabled", True)):
             return
         backend_url = str(chat_cfg.get("backend_url") or self.default_backend_url).strip() or self.default_backend_url
-        if self.is_local_service_url(backend_url):
+        provider = str(asr_cfg.get("provider") or "funasr").strip().lower()
+        if self.is_local_service_url(backend_url) and provider != "groq":
             self.config.setdefault("chat", {}).setdefault("asr", {})["api_base_url"] = backend_url
             return
         asr_url = str(asr_cfg.get("api_base_url") or self.default_asr_api_base_url).strip() or self.default_asr_api_base_url
@@ -210,6 +286,7 @@ class DesktopServiceLifecycle:
                     stdout=asr_log,
                     stderr=self.subprocess.STDOUT,
                     creationflags=creationflags,
+                    start_new_session=self.os.name != "nt",
                 )
             self.asr_started_by_app = True
         except Exception as exc:
@@ -247,6 +324,10 @@ class DesktopServiceLifecycle:
         self.ensure_qwen_tts_service()
 
     def ensure_qwen_tts_service(self) -> None:
+        with self._service_start_guard("qwen-tts"):
+            self._ensure_qwen_tts_service()
+
+    def _ensure_qwen_tts_service(self) -> None:
         if self._qwen_tts_is_healthy():
             return
         if self.qwen_tts_process is not None and self.qwen_tts_process.poll() is None:
@@ -286,6 +367,7 @@ class DesktopServiceLifecycle:
                     stdout=qwen_log,
                     stderr=self.subprocess.STDOUT,
                     creationflags=creationflags,
+                    start_new_session=self.os.name != "nt",
                 )
             self.qwen_tts_started_by_app = True
         except Exception as exc:
@@ -300,7 +382,9 @@ class DesktopServiceLifecycle:
         self.ensure_backend_service()
         self.ensure_asr_service()
         backend_url = str(self.config.get("chat", {}).get("backend_url") or self.default_backend_url).strip() or self.default_backend_url
-        warmup_base_url = backend_url.rstrip("/")
+        provider = str(asr_cfg.get("provider") or "funasr").strip().lower()
+        asr_url = str(asr_cfg.get("api_base_url") or self.default_asr_api_base_url).strip() or self.default_asr_api_base_url
+        warmup_base_url = (asr_url if provider == "groq" else backend_url).rstrip("/")
         try:
             resp = self.requests.post(f"{warmup_base_url}/api/asr/warmup", timeout=3)
             payload = resp.json() if resp.headers.get("content-type", "").lower().startswith("application/json") else {}
@@ -324,6 +408,7 @@ class DesktopServiceLifecycle:
         with self._asr_warmup_monitor_lock:
             if self._asr_warmup_monitor_thread is not None and self._asr_warmup_monitor_thread.is_alive():
                 return
+            self._asr_warmup_stop_event.clear()
             self._asr_warmup_monitor_thread = self.threading.Thread(
                 target=self.run_asr_warmup_progress_monitor,
                 args=(str(base_url or "").rstrip("/"),),
@@ -335,7 +420,7 @@ class DesktopServiceLifecycle:
         started_at = self.time.perf_counter()
         bar_width = 24
         self.print("[ASR] 正在初始化本地语音模型，首次加载通常需要约 1 分钟。")
-        while True:
+        while not self._asr_warmup_stop_event.is_set():
             elapsed = self.time.perf_counter() - started_at
             ready = False
             message = "等待 ASR 后端响应..."
@@ -361,7 +446,29 @@ class DesktopServiceLifecycle:
                 self.sys.stdout.write("\n[ASR] 初始化超过 180 秒仍未完成，请稍后再按住 Ctrl 重试。\n")
                 self.sys.stdout.flush()
                 return
-            self.time.sleep(1.0)
+            if self._asr_warmup_stop_event.wait(1.0):
+                return
+
+    def stop_asr_warmup_progress_monitor(self) -> None:
+        self._asr_warmup_stop_event.set()
+
+    def _signal_managed_process(self, proc, sig: int) -> None:
+        if self.os.name != "nt":
+            killpg = getattr(self.os, "killpg", None)
+            getpgid = getattr(self.os, "getpgid", None)
+            pid = getattr(proc, "pid", None)
+            if callable(killpg) and callable(getpgid) and pid:
+                try:
+                    killpg(getpgid(pid), sig)
+                    return
+                except ProcessLookupError:
+                    return
+                except OSError:
+                    pass
+        if sig == signal.SIGKILL:
+            proc.kill()
+        else:
+            proc.terminate()
 
     def stop_managed_process(self, proc, *, started_by_app: bool) -> None:
         if not proc or not started_by_app:
@@ -379,11 +486,11 @@ class DesktopServiceLifecycle:
                 )
                 proc.wait(timeout=2)
             else:
-                proc.terminate()
+                self._signal_managed_process(proc, signal.SIGTERM)
                 proc.wait(timeout=2)
         except Exception:
             try:
-                proc.kill()
+                self._signal_managed_process(proc, signal.SIGKILL)
                 proc.wait(timeout=2)
             except Exception:
                 pass
@@ -403,10 +510,17 @@ class DesktopServiceLifecycle:
             self.backend_started_by_app = False
 
     def stop_asr_service(self) -> None:
+        self.stop_asr_warmup_progress_monitor()
         proc = self.asr_process
         if not proc or not self.asr_started_by_app:
             return
         if proc.poll() is not None:
+            self.asr_process = None
+            self.asr_started_by_app = False
+            return
+        try:
+            self.stop_managed_process(proc, started_by_app=True)
+        finally:
             self.asr_process = None
             self.asr_started_by_app = False
 
@@ -423,9 +537,3 @@ class DesktopServiceLifecycle:
         finally:
             self.qwen_tts_process = None
             self.qwen_tts_started_by_app = False
-            return
-        try:
-            self.stop_managed_process(proc, started_by_app=True)
-        finally:
-            self.asr_process = None
-            self.asr_started_by_app = False

@@ -26,11 +26,6 @@ flowchart TD
     HumanOps --> MemorySkills
     MemorySkills --> Brain
     Body --> User
-    QA[QA Reports] --> Docs[HTML 报告]
-    Body --> QA
-    Brain --> QA
-    HumanOps --> QA
-    MemorySkills --> QA
 ```
 
 ## 3. Body
@@ -75,6 +70,10 @@ Brain 通过窄 API 边界调用用户选择的大模型服务。当前支持 Op
 
 设置页可以通过 `/api/brain/models` 使用表单里当前尚未保存的 provider、endpoint 和可选 key 拉取模型列表。返回的模型 ID 可以一键填入模型名称字段，密钥不会回显到浏览器。
 
+浏览器任务优先遵循用户明确选择的 Playwright 或人类操作方式；未指定时默认 Playwright，不询问执行方式。设置页从 Chrome `Local State` 列出个人资料，并将选中的 Profile 目录名保存为 `human_ops.playwright_profile`。当前任务显式指定的资料优先于设置默认值；两者都缺少时 Brain 才询问。
+
+模型内置的只读联网搜索在已启用且受支持时可直接执行，无需用户再次确认或 Human Ops 审批。该授权不包括 Playwright 网页操作、下载、登录、提交表单或其他外部状态变更。
+
 ## 5. Human Ops
 
 Human Ops 是安全与审批层。它负责：
@@ -86,7 +85,7 @@ Human Ops 是安全与审批层。它负责：
 - 本地动作审计文本
 - 对用户解释副作用
 
-任何会触及文件、进程、配置、网络访问、外部服务、破坏性操作或长期用户数据的动作，都必须经过 Human Ops。
+除上述已明确授权的只读内置联网搜索外，任何会触及文件、进程、配置、网络访问、外部服务、破坏性操作或长期用户数据的动作，都必须经过 Human Ops。
 
 ## 6. Memory & Skills
 
@@ -112,7 +111,6 @@ Memory & Skills 负责长期学习表面：
   -> Body 观察结果
   -> 允许时 Memory & Skills 写入
   -> Brain 给出终态总结
-  -> 文件改动轮次生成 HTML 报告
 ```
 
 这个设计刻意避免隐藏式长链路自动执行。只要下一步改变风险或范围，Brain 就应停下，让 Human Ops 重新判断。
@@ -129,15 +127,13 @@ Memory & Skills 负责长期学习表面：
 
 新代码应在实现 owner 确认迁移路径后向目标模块靠拢。文档应描述 Neo 模块模型，即使代码尚未全部搬完。
 
-## 9. 开发规则
+## 9. 实现约束
 
 - 保持 Body-first 边界清楚。
 - Brain 决策必须单步、可检查。
 - 危险影响必须经过 Human Ops。
 - Memory & Skills 是长期产品数据。
 - 根目录 UI 文件在加载路径同步迁移前继续保留。
-- 每轮文件改动后生成 HTML 报告。
-- 不要回退同事在你负责切片之外的改动。
 
 ## 10. 一句话总结
 

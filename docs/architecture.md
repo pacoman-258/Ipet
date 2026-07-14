@@ -26,11 +26,6 @@ flowchart TD
     HumanOps --> MemorySkills
     MemorySkills --> Brain
     Body --> User
-    QA[QA Reports] --> Docs[HTML Reports]
-    Body --> QA
-    Brain --> QA
-    HumanOps --> QA
-    MemorySkills --> QA
 ```
 
 ## 3. Body
@@ -58,6 +53,8 @@ Brain owns the LLM decision for a single turn. Its input is a compact packet:
 - available skills
 - current approval or execution status
 
+Brain's system prompt has two explicit layers. `prompts/Ipet.md` is the global contract and owns capability boundaries, evidence discipline, Human Ops safety, the one-step decision model, and the JSON output schema. A user-selected Markdown file from `prompts/` is rendered only into the bounded persona slot for identity, tone, speaking style, and role-play. The global contract is restated after dynamic persona, self-state, and summary data, so a persona cannot expand actions, bypass approval, weaken verification, or replace the output schema. The selected filename is stored as `brain.persona_prompt_file`; prompt content remains in its Markdown file and is read at turn time.
+
 Brain returns exactly one structured next step:
 
 - `say`
@@ -77,13 +74,15 @@ The Brain provider boundary accepts text decisions plus an optional current scre
 
 Post-approval verification uses the cheapest reliable evidence first. Human Ops validates the action return and native foreground-focus state, then gives that structured result to Brain without capturing a frame. Visual observation is a fallback for missing structural evidence, an explicit Brain `observe` decision, or semantic outcomes that native event delivery cannot prove, such as whether an expected chat message appeared after Enter.
 
-Browser-page operations use a bounded Playwright CLI capability inside Human Ops. When Brain identifies a browser task, it first asks the user to choose Playwright or human operation unless that choice is already explicit in the current task context; the backend does not choose from keywords. The selected mode persists for the task and is revisited only when execution evidence proves it unavailable or the surface crosses a capability boundary. Every Playwright side effect is still a separate approval proposal. Human Ops allows only named navigation, snapshot, element-ref, text, key, and tab operations; it rejects arbitrary JavaScript and shell fragments. Successful CLI output is returned as structured evidence for the next Brain decision without forcing the desktop to change focus.
+Browser-page operations use a bounded Playwright CLI capability inside Human Ops. Brain follows an explicit user choice of Playwright or human operation; without one it defaults to Playwright and does not ask which mode to use. The selected mode persists for the task and is revisited only when execution evidence proves it unavailable or the surface crosses a capability boundary. Every Playwright side effect is still a separate approval proposal. Human Ops allows only named navigation, snapshot, element-ref, text, key, and tab operations; it rejects arbitrary JavaScript and shell fragments. Successful CLI output is returned as structured evidence for the next Brain decision without forcing the desktop to change focus.
 
-Selecting Playwright also requires a user-selected Chrome personal-profile name. Human Ops resolves the exact display name or profile-directory name from Chrome `Local State`; it never turns an arbitrary label into a blank browser profile. If the selected profile is the sole active profile and Chrome's remote-debugging endpoint is ready, `open` reuses that window and `attach --cdp=chrome` can connect to it explicitly. Otherwise `open` initializes a persistent Ipet-owned snapshot from the selected profile's cookies and web storage, then launches the snapshot visibly without writing the original Chrome directory. Unknown names, duplicate display names, multiple active profiles, and unavailable remote debugging fail explicitly rather than claiming the requested profile was selected.
+The settings page discovers Chrome personal profiles from `Local State` and stores the selected profile-directory name as `human_ops.playwright_profile`. A profile explicitly named in the current task overrides that saved default; Brain asks only when neither source provides a profile. Human Ops resolves exact display names or profile-directory names and never turns an arbitrary label into a blank browser profile. If the selected profile is the sole active profile and Chrome's remote-debugging endpoint is ready, `open` reuses that window and `attach --cdp=chrome` can connect to it explicitly. Otherwise `open` initializes a persistent Ipet-owned snapshot from the selected profile's cookies and web storage, then launches the snapshot visibly without writing the original Chrome directory. Unknown names, duplicate display names, multiple active profiles, and unavailable remote debugging fail explicitly rather than claiming the requested profile was selected.
 
-Streaming and non-streaming Codex calls both prefer an ephemeral app-server thread whose base instructions replace the default Codex agent prompt. Shell, multi-agent, apps, plugins, browser, computer-use, image generation, goals, hooks, and workspace-dependency tools are disabled because Ipet owns those responsibilities; a screenshot is bounded request input, not a Codex tool. Codex built-in web search is the only optional tool: a Brain setting enables it, provider capability detection controls whether it is exposed, and unsupported providers fall back to a normal answer with an explicit no-search notice. Calls start outside the repository with read-only sandboxing and no approval escalation; `codex exec` remains only as a compatibility fallback when app-server fails before emitting visible output. Codex image input uses a temporary file outside the repository and deletes it after the call.
+Streaming and non-streaming Codex calls both prefer an ephemeral app-server thread whose base instructions replace the default Codex agent prompt. Shell, multi-agent, apps, plugins, browser, computer-use, image generation, goals, hooks, and workspace-dependency tools are disabled because Ipet owns those responsibilities; a screenshot is bounded request input, not a Codex tool. Codex built-in web search is the only optional tool: a Brain setting enables it, provider capability detection controls whether it is exposed, and supported read-only searches run directly without a user confirmation or Human Ops review. Unsupported providers fall back to a normal answer with an explicit no-search notice. Calls start outside the repository with read-only sandboxing and no approval escalation; `codex exec` remains only as a compatibility fallback when app-server fails before emitting visible output. Codex image input uses a temporary file outside the repository and deletes it after the call.
 
 The settings page can pull a provider model list through `/api/brain/models` using the draft provider, endpoint, and optional key currently visible in the form. Codex discovery uses its short-lived app-server `model/list` protocol so the picker receives the account's concrete model IDs, input modalities, actual default model, and each model's supported reasoning efforts instead of a static list. Human Ops observe discovery filters Codex results to models advertising image input. Returned model IDs can be filled into the model field with one click, and secrets are not echoed. The same provider state is preserved by the desktop host when local config is saved, including the independent Human Ops observe model key.
+
+The Brain page reads the available persona catalog through the read-only `/api/settings/persona-prompts` endpoint. The endpoint lists valid `.md` files directly inside `prompts/`, excludes the reserved `Ipet.md`, rejects path traversal and out-of-folder symlinks, and returns bounded UTF-8 content for the filename and preview controls. A missing selected file is shown explicitly in settings and fails the next Brain call instead of silently changing personality.
 
 ## 5. Human Ops
 
@@ -122,7 +121,6 @@ User input
   -> Body observe result
   -> Memory & Skills write when allowed
   -> Brain terminal summary
-  -> HTML report for file-changing task rounds
 ```
 
 The design intentionally avoids hidden long autonomous chains. If the next step changes risk or scope, Brain must stop and ask for a new Human Ops decision.
@@ -139,15 +137,13 @@ Root paths remain stable for desktop compatibility, with explicit entrypoint bou
 
 New domain code must go to its owning module. Keep root entrypoints limited to composition, registration, loading, lifecycle, and compatibility delegates.
 
-## 9. Development Rules
+## 9. Implementation Constraints
 
 - Keep Body-first boundaries clear.
 - Keep Brain decisions single-step and inspectable.
 - Route risky effects through Human Ops.
 - Treat Memory & Skills as durable product data.
 - Preserve stable root UI paths until loader paths move in the same task, and keep `index.html` free of new interactive behavior.
-- Generate an HTML report after each file-changing task round.
-- Do not revert coworker changes outside your assigned slice.
 
 ## 10. Summary
 

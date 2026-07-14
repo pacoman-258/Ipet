@@ -246,8 +246,12 @@ async def stream_chat_response(
     TASK_CONTROL.start(turn_id, session_id)
     TASK_CONTROL.bind_current_task(turn_id)
     private_config = deps.normalize_private_config()
-    brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
+    raw_brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
     human_ops_config = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
+    brain_config = dict(raw_brain_config)
+    playwright_profile = str(human_ops_config.get("playwright_profile") or "").strip()
+    if playwright_profile:
+        brain_config["playwright_profile"] = playwright_profile
     memory_config = private_config.get("memory", {}) if isinstance(private_config.get("memory"), dict) else {}
     memory_mode = "temporary" if memory_config.get("conversation_saving") is False else requested_memory_mode
     model = str(request_payload.get("model") or brain_config.get("model_name") or "gpt-5.4")
@@ -352,25 +356,37 @@ async def stream_chat_response(
                 await delta_queue.put(("phase", normalized_activity))
 
         reply_task = asyncio.create_task(resolve_reply(conversation_history, queue_delta, queue_activity))
-        while not reply_task.done():
-            delta_task = asyncio.create_task(delta_queue.get())
-            done, _pending = await asyncio.wait({reply_task, delta_task}, return_when=asyncio.FIRST_COMPLETED)
-            if delta_task in done:
-                event_name, event_payload = delta_task.result()
+        TASK_CONTROL.bind_task(turn_id, reply_task)
+        delta_task: asyncio.Task[tuple[str, Any]] | None = None
+        try:
+            while not reply_task.done():
+                delta_task = asyncio.create_task(delta_queue.get())
+                TASK_CONTROL.bind_task(turn_id, delta_task)
+                done, _pending = await asyncio.wait({reply_task, delta_task}, return_when=asyncio.FIRST_COMPLETED)
+                if delta_task in done:
+                    event_name, event_payload = delta_task.result()
+                    if event_name == "token":
+                        streamed_visible = True
+                        event_payload = {"delta": event_payload}
+                    yield deps.sse(event_name, event_payload)
+                else:
+                    delta_task.cancel()
+                    await asyncio.gather(delta_task, return_exceptions=True)
+            while not delta_queue.empty():
+                event_name, event_payload = delta_queue.get_nowait()
                 if event_name == "token":
                     streamed_visible = True
                     event_payload = {"delta": event_payload}
                 yield deps.sse(event_name, event_payload)
-            else:
-                delta_task.cancel()
-                await asyncio.gather(delta_task, return_exceptions=True)
-        while not delta_queue.empty():
-            event_name, event_payload = delta_queue.get_nowait()
-            if event_name == "token":
-                streamed_visible = True
-                event_payload = {"delta": event_payload}
-            yield deps.sse(event_name, event_payload)
-        reply, provider, used_model, decision = await reply_task
+            reply, provider, used_model, decision = await reply_task
+        finally:
+            pending_tasks = [
+                task for task in (reply_task, delta_task) if task is not None and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
     else:
         reply, provider, used_model, decision = await resolve_reply(conversation_history)
     react_budget = 3

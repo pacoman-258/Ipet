@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ipet 文件系统能力任务报告</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 40px auto; max-width: 920px; padding: 0 24px; color: #202124; }
+    h1 { color: #5b3cc4; }
+    h2 { margin-top: 28px; color: #343434; }
+    code { background: #f3f1f8; border-radius: 4px; padding: 2px 5px; }
+    li { margin: 6px 0; }
+    .ok { color: #137333; font-weight: 600; }
+    .note { background: #fff8e1; border-left: 4px solid #f9ab00; padding: 10px 14px; }
+  </style>
+</head>
+<body>
+  <h1>Ipet 文件系统能力任务报告</h1>
+
+  <h2>目标</h2>
+  <p>让 Ipet 能在 Human Ops 审批后执行受约束的本地文件操作，并把执行结果交回现有验证链路。</p>
+
+  <h2>Worker / 子任务拆分</h2>
+  <ul>
+    <li><strong>human-ops lead：</strong>文件动作策略、路径边界、审批说明、执行结果字段。</li>
+    <li><strong>brain reviewer：</strong>结构化动作提示词与简单动作校验。</li>
+    <li><strong>qa-reports：</strong>临时目录真实动作测试、审批流验证、全量回归与本报告。</li>
+  </ul>
+
+  <h2>本轮变更文件</h2>
+  <ul>
+    <li><code>human_ops/filesystem_actions.py</code>：新增七类文件动作、允许根目录、大小上限、UTF-8 与符号链接保护。</li>
+    <li><code>human_ops/approvals.py</code>、<code>human_ops/proposals.py</code>、<code>human_ops/approval_flow.py</code>、<code>human_ops/approval_prompts.py</code>：接入审批、展示与结构化验证。</li>
+    <li><code>backend/app_action_adapters.py</code>、<code>backend/app.py</code>：接入后端执行器和配置根目录。</li>
+    <li><code>backend/react_prompts.py</code>、<code>backend/settings_defaults.py</code>、<code>prompts/Ipet.md</code>、<code>docs/WORKFLOW.md</code>：更新能力合同、配置与工作流说明。</li>
+    <li><code>tests/test_human_ops_filesystem_actions.py</code> 及相关 Human Ops、Brain、设置测试：新增回归覆盖。</li>
+  </ul>
+
+  <h2>已达成效果</h2>
+  <ul>
+    <li>支持 <code>file_list</code>、<code>file_read</code>、<code>file_write</code>、<code>file_mkdir</code>、<code>file_copy</code>、<code>file_move</code>、<code>file_delete</code>。</li>
+    <li>默认作用域为项目根目录；可通过 <code>human_ops.filesystem.allowed_roots</code> 显式增加目录。</li>
+    <li>每个文件动作都必须经过 Human Ops 审批；未批准、越界、受保护路径、覆盖目标、递归删除都会拒绝。</li>
+    <li>读写默认限制为 1 MB UTF-8 文本，列表默认最多 200 项；执行器不调用 shell。</li>
+  </ul>
+
+  <h2>验证证据</h2>
+  <p class="ok">目标回归：46 项通过。</p>
+  <p class="ok">全量回归：775 项通过（2.829 秒）。</p>
+  <p class="ok">指定模块语法检查通过；<code>git diff --check</code> 通过。</p>
+
+  <h2>剩余工作</h2>
+  <p>当前没有阻塞项。文件能力暂不支持递归目录复制、递归删除、二进制文件读写或任意 shell；这些属于新的风险边界，需要单独设计和审批。</p>
+
+  <h2>推荐下一步</h2>
+  <p>在桌面应用中用一个真实但无敏感信息的项目内临时文件做人工验收：提出读取、写入和拒绝删除请求，确认审批弹窗、工作日志和最终结果都与预期一致。</p>
+
+  <p class="note">说明：工作区在本轮开始前已有其他文件改动；本轮仅在相关接口上追加文件能力，没有回滚或清理那些既有改动。</p>
+</body>
+</html>

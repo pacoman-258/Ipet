@@ -13,15 +13,18 @@ from brain.llm import (
     GOOGLE_AISTUDIO_DEFAULT_MODEL,
     PROVIDER_GOOGLE_AISTUDIO,
     BrainLLMError,
+    list_persona_prompts,
     list_provider_models,
     normalize_provider,
     run_brain_turn,
 )
 from human_ops import ReviewableProposal
+from human_ops.chrome_profiles import list_chrome_profiles
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore
 from .tts import (
     cleanup_old_audio,
+    stream_qwen_tts_local,
     synthesize_to_audio,
     tts_available,
 )
@@ -85,11 +88,27 @@ def _app_action_adapter_deps(
     perform_human_ops_click=None,
     perform_human_ops_action=_desktop_command_client_helpers.perform_human_ops_action,
 ) -> _app_action_adapter_helpers.AppActionAdapterDependencies:
+    private_config = _normalize_private_config()
+    human_ops_config = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
+    filesystem_config = human_ops_config.get("filesystem", {}) if isinstance(human_ops_config.get("filesystem"), dict) else {}
+    configured_roots = filesystem_config.get("allowed_roots") if isinstance(filesystem_config.get("allowed_roots"), list) else []
+    filesystem_enabled = filesystem_config.get("enabled", True) is not False
+    filesystem_roots = [ROOT_DIR] if filesystem_enabled else []
+    filesystem_roots.extend(Path(str(root)).expanduser() for root in configured_roots if str(root or "").strip())
+    def _filesystem_limit(name: str, fallback: int) -> int:
+        try:
+            return max(1, int(filesystem_config.get(name, fallback)))
+        except (TypeError, ValueError):
+            return fallback
     return _app_action_adapter_helpers.AppActionAdapterDependencies(
         command_path=DESKTOP_COMMAND_PATH,
         send_desktop_command=send_desktop_command,
         perform_human_ops_click=perform_human_ops_click,
         perform_human_ops_action=perform_human_ops_action,
+        filesystem_roots=tuple(filesystem_roots),
+        filesystem_max_read_bytes=_filesystem_limit("max_read_bytes", 1_000_000),
+        filesystem_max_write_bytes=_filesystem_limit("max_write_bytes", 1_000_000),
+        filesystem_max_list_entries=_filesystem_limit("max_list_entries", 200),
     )
 
 
@@ -216,6 +235,11 @@ async def _list_provider_models_for_route(brain_config: dict[str, Any]) -> Any:
 
 async def _synthesize_to_audio_for_route(**kwargs: Any) -> Any:
     return await synthesize_to_audio(**kwargs)
+
+
+async def _stream_qwen_tts_local_for_route(**kwargs: Any):
+    async for chunk in stream_qwen_tts_local(**kwargs):
+        yield chunk
 
 
 def _brain_models_route_deps() -> _brain_models_route_helpers.BrainModelsRouteDependencies:

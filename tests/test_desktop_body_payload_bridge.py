@@ -72,7 +72,7 @@ class BodyPayloadBridgeTests(unittest.TestCase):
             host.config = {
                 "model_path": "missing",
                 "pet": {"background_enabled": True, "background_image": "bg.png"},
-                "chat": {"system_prompt": "Neo name", "voice": "voice-a"},
+                "chat": {"system_prompt": "Neo name", "voice": "voice-a", "api_key": "secret-value"},
                 "vision": {"enabled": True},
             }
             host.expression_names = ["smile", "blink"]
@@ -90,6 +90,7 @@ class BodyPayloadBridgeTests(unittest.TestCase):
         self.assertEqual(payload["model_url"], "local://default.autogen.model3.json")
         self.assertEqual(payload["pet"]["background_image_url"], "local://bg.png")
         self.assertEqual(payload["chat"]["pet_display_name"], "display:Neo name")
+        self.assertNotIn("api_key", payload["chat"])
         self.assertEqual(payload["chat"]["available_expressions"], ["smile", "blink"])
         self.assertEqual(payload["chat"]["lip_sync_gain"], 1.25)
         self.assertEqual(payload["chat"]["mouth_parameter_ids"], ["ParamMouthOpenY"])

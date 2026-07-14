@@ -27,6 +27,7 @@
     let asrDraftState = null;
     let activeAsrBaseUrl = "";
     let asrStatusTimer = 0;
+    let asrFinalTimer = 0;
 
     function chatInputEl() {
       return refs.chatInputEl;
@@ -53,19 +54,21 @@
       return platform.includes("mac");
     }
 
+    function pushToTalkKeyLabel() {
+      const key = asrConfig().push_to_talk_key;
+      return key === "Alt" && isProbablyMacOS() ? "Option" : key;
+    }
+
     function defaultAsrStatusText() {
       const config = asrConfig();
       if (!config.enabled) {
-        if (isProbablyMacOS()) {
-          return "[macOS] ASR 默认关闭，聊天仍可用";
-        }
         return "\u8bed\u97f3\u8f93\u5165\u5df2\u5173\u95ed";
       }
-      return `\u6309\u4f4f ${config.push_to_talk_key} \u8bf4\u8bdd`;
+      return `\u6309\u4f4f ${pushToTalkKeyLabel()} \u8bf4\u8bdd`;
     }
 
     function activeAsrStatusText() {
-      return `\u6309\u4f4f ${asrConfig().push_to_talk_key} \uff1a\u8bed\u97f3\u8f93\u5165\u4e2d\uff0c\u677e\u5f00\u7ed3\u675f`;
+      return `\u6309\u4f4f ${pushToTalkKeyLabel()} \uff1a\u8bed\u97f3\u8f93\u5165\u4e2d\uff0c\u677e\u5f00\u7ed3\u675f`;
     }
 
     function setAsrStatus(message, tone = "idle") {
@@ -90,6 +93,14 @@
       }
     }
 
+    function clearAsrFinalTimer() {
+      if (!asrFinalTimer) {
+        return;
+      }
+      runtimeWindow.clearTimeout(asrFinalTimer);
+      asrFinalTimer = 0;
+    }
+
     function isBusy() {
       return asrStarting || asrRecording || asrAwaitingFinal;
     }
@@ -103,14 +114,20 @@
       if (key === "Space") {
         return (event.code === "Space" || event.key === " " || event.key === "Spacebar") && !event.ctrlKey && !event.altKey && !event.metaKey;
       }
-      return event.key === "Alt" && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+      const isOptionKey = event.key === "Alt"
+        || event.key === "Option"
+        || event.key === "AltGraph"
+        || event.code === "AltLeft"
+        || event.code === "AltRight";
+      return isOptionKey
+        && !event.ctrlKey && !event.metaKey && !event.shiftKey;
     }
 
     function canStartPushToTalk(options = {}) {
       const { allowWithoutFocus = false } = options;
       return asrConfig().enabled
         && chatPanelEl()?.classList?.contains("open")
-        && getChatState() === "idle"
+        && ["idle", "awaiting_followup_input"].includes(getChatState())
         && (allowWithoutFocus || runtimeDocument.hasFocus());
     }
 
@@ -314,6 +331,9 @@
         try {
           asrProcessor.disconnect();
         } catch (_) {}
+        try {
+          asrProcessor.port?.close();
+        } catch (_) {}
       }
       if (asrInputSource) {
         try {
@@ -352,6 +372,7 @@
       asrRecording = false;
       asrAwaitingFinal = false;
       activeAsrBaseUrl = "";
+      clearAsrFinalTimer();
       stopAsrCapturePipeline();
       closeAsrSocket();
       if (restoreInput) {
@@ -373,6 +394,7 @@
 
     function handleAsrFinal(text) {
       const finalText = String(text || "");
+      clearAsrFinalTimer();
       stopAsrCapturePipeline();
       closeAsrSocket();
       asrHotkeyPressed = false;
@@ -399,6 +421,7 @@
     async function openAsrSocket(token) {
       return await new Promise((resolve, reject) => {
         let settled = false;
+        let ready = false;
         let sawSocketError = false;
         let lastSocketErrorMessage = "";
         const WebSocketCtor = webSocketCtor();
@@ -445,6 +468,7 @@
           }
           const type = String(payload?.type || "");
           if (type === "ready") {
+            ready = true;
             if (!settled) {
               settled = true;
               resolve(payload);
@@ -461,7 +485,12 @@
           }
           if (type === "error") {
             lastSocketErrorMessage = String(payload?.message || "ASR 错误");
-            fail(new Error(lastSocketErrorMessage));
+            const error = new Error(lastSocketErrorMessage);
+            if (ready) {
+              handleAsrError(error);
+            } else {
+              fail(error);
+            }
           }
         };
 
@@ -472,6 +501,10 @@
         socket.onclose = () => {
           if (!settled && token === asrRunToken && (asrStarting || asrRecording || asrAwaitingFinal)) {
             fail(new Error(lastSocketErrorMessage || (sawSocketError ? "ASR WebSocket 连接错误" : "ASR 连接已关闭")));
+            return;
+          }
+          if (ready && token === asrRunToken && (asrStarting || asrRecording || asrAwaitingFinal)) {
+            handleAsrError(new Error(lastSocketErrorMessage || (sawSocketError ? "ASR WebSocket 连接错误" : "ASR 连接已关闭")));
           }
         };
       });
@@ -496,17 +529,38 @@
       if (typeof context.resume === "function") {
         await context.resume().catch(() => {});
       }
+      if (!context.audioWorklet || typeof context.audioWorklet.addModule !== "function") {
+        for (const track of mediaStream.getTracks()) {
+          track.stop();
+        }
+        await context.close().catch(() => {});
+        throw new Error("当前环境不支持 AudioWorklet 音频采集");
+      }
+      const workletUrl = new URL("./frontend/asr_audio_worklet.js", runtimeDocument.baseURI).href;
+      await context.audioWorklet.addModule(workletUrl);
       const source = context.createMediaStreamSource(mediaStream);
-      const processor = context.createScriptProcessor(4096, 1, 1);
+      const AudioWorkletNodeCtor = deps.AudioWorkletNode || runtimeWindow.AudioWorkletNode;
+      if (typeof AudioWorkletNodeCtor !== "function") {
+        for (const track of mediaStream.getTracks()) {
+          track.stop();
+        }
+        await context.close().catch(() => {});
+        throw new Error("当前环境不支持 AudioWorklet 音频采集");
+      }
+      const processor = new AudioWorkletNodeCtor(context, "ipet-asr-audio-processor", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+      });
       const silenceGain = context.createGain();
       silenceGain.gain.value = 0;
-      processor.onaudioprocess = (event) => {
+      processor.port.onmessage = (event) => {
         const WebSocketCtor = webSocketCtor();
         const openState = WebSocketCtor?.OPEN ?? 1;
         if (token !== asrRunToken || !asrRecording || !asrSocket || asrSocket.readyState !== openState) {
           return;
         }
-        const channelData = event.inputBuffer.getChannelData(0);
+        const channelData = event.data;
         const audioBuffer = downsampleFloat32ToInt16Buffer(channelData, context.sampleRate, 16000);
         if (audioBuffer.byteLength) {
           asrSocket.send(audioBuffer);
@@ -522,8 +576,8 @@
       asrSilenceGain = silenceGain;
     }
 
-    async function startPushToTalk() {
-      if (!canStartPushToTalk()) {
+    async function startPushToTalk(options = {}) {
+      if (!canStartPushToTalk(options)) {
         return;
       }
       if (asrStarting || asrRecording || asrAwaitingFinal) {
@@ -598,6 +652,13 @@
       stopAsrCapturePipeline();
       syncChatInputAvailability();
       setAsrStatus("\u6b63\u5728\u8bc6\u522b...", "active");
+      clearAsrFinalTimer();
+      asrFinalTimer = runtimeWindow.setTimeout(() => {
+        asrFinalTimer = 0;
+        if (asrAwaitingFinal) {
+          handleAsrError(new Error("ASR 识别超时，请检查 API Key、网络或 ASR 服务。"));
+        }
+      }, 25000);
       const WebSocketCtor = webSocketCtor();
       const openState = WebSocketCtor?.OPEN ?? 1;
       if (!asrSocket || asrSocket.readyState !== openState) {

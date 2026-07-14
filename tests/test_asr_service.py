@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -111,6 +114,28 @@ class ASRServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(partial)
         self.assertEqual(final.text, "final-1")
         self.assertTrue(final.is_final)
+
+    async def test_cancelled_audio_push_drains_runtime_worker_before_returning(self) -> None:
+        started = threading.Event()
+        finished = threading.Event()
+
+        class _SlowRuntime(_FakeRuntime):
+            def push_audio(self, runtime_state, pcm16_chunk: bytes) -> str:
+                started.set()
+                time.sleep(0.05)
+                finished.set()
+                return super().push_audio(runtime_state, pcm16_chunk)
+
+        service = ASRService(runtime=_SlowRuntime())
+        session = await service.start_session(key="Ctrl")
+        push_task = asyncio.create_task(service.push_audio(session.session_id, b"\x00\x00"))
+        self.assertTrue(await asyncio.to_thread(started.wait, 1.0))
+
+        push_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await push_task
+
+        self.assertTrue(finished.is_set())
 
 
 if __name__ == "__main__":

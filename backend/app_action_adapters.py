@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from human_ops import ReviewableProposal
+from human_ops.filesystem_actions import FILESYSTEM_ACTIONS, execute_filesystem_action, filesystem_action_label
 from human_ops.playwright_actions import execute_playwright_action
 
 from . import desktop_command_client as _desktop_command_client_helpers
@@ -17,6 +18,10 @@ class AppActionAdapterDependencies:
     perform_human_ops_click: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
     perform_human_ops_action: Callable[..., Awaitable[dict[str, Any]]] | None = None
     perform_playwright_action: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
+    filesystem_roots: tuple[Path, ...] = ()
+    filesystem_max_read_bytes: int = 1_000_000
+    filesystem_max_write_bytes: int = 1_000_000
+    filesystem_max_list_entries: int = 200
     command_timeout_sec: float = 8.0
 
 
@@ -70,6 +75,17 @@ async def perform_human_ops_action(
     if action_type == "playwright":
         playwright_handler = deps.perform_playwright_action or execute_playwright_action
         return await playwright_handler(proposal)
+    if action_type in FILESYSTEM_ACTIONS:
+        roots = deps.filesystem_roots
+        if not roots:
+            raise RuntimeError("Human Ops filesystem has no configured allowed root.")
+        return await execute_filesystem_action(
+            proposal,
+            allowed_roots=roots,
+            max_read_bytes=deps.filesystem_max_read_bytes,
+            max_write_bytes=deps.filesystem_max_write_bytes,
+            max_list_entries=deps.filesystem_max_list_entries,
+        )
     action_handler = deps.perform_human_ops_action or _desktop_command_client_helpers.perform_human_ops_action
     return await action_handler(
         proposal,
@@ -105,6 +121,13 @@ async def request_native_human_ops_approval(
             "否则只读复制 cookies 与网页存储到 Ipet 私有持久快照，绝不写回原 Chrome 资料；"
             "attach 只连接唯一活跃且允许远程调试的所选资料。"
             "首次运行可能通过 npx 获取 @playwright/cli，并可能访问目标网络地址；不会执行任意网页脚本。"
+        )
+    elif action_type in FILESYSTEM_ACTIONS:
+        target_line = f"\n文件动作：{filesystem_action_label(action_type, args)}"
+        impact = (
+            "批准后，Ipet 只会在项目根目录或用户配置的允许根目录内执行这一项文件动作；"
+            "读取会把限定大小的 UTF-8 文本返回给当前会话，写入/复制/移动/删除会改变本地文件状态。"
+            "不会跟随最终符号链接，不会递归删除，不会覆盖复制或移动目标；拒绝后不执行任何文件操作。"
         )
     else:
         target_line = f"\n目标应用：{target_app}" if target_app else "\n目标界面：macOS 桌面"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -32,6 +33,8 @@ class AppRouteDependencyContext:
     normalize_private_config: Callable[[], dict[str, Any]] | None = None
     apply_settings_update: Callable[..., dict[str, Any]] | None = None
     save_config: Callable[[dict[str, Any]], None] | None = None
+    list_persona_prompts: Callable[[], list[dict[str, Any]]] | None = None
+    list_chrome_profiles: Callable[[], Any] | None = None
     normalize_provider: Callable[[Any], str] | None = None
     list_provider_models: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
     sanitize_brain_error: Callable[[Exception, dict[str, Any]], str] | None = None
@@ -39,6 +42,7 @@ class AppRouteDependencyContext:
     tts_available: Callable[[str | None, str | None], bool] | None = None
     cleanup_old_audio: Callable[[Path], None] | None = None
     synthesize_to_audio: Callable[..., Awaitable[Any]] | None = None
+    stream_qwen_tts_local: Callable[..., AsyncIterator[bytes]] | None = None
     sse: Callable[[str, dict[str, Any]], str] | None = None
     run_brain_turn: Callable[..., Awaitable[Any]] | None = None
     decision_from_completion: Callable[[Any], BrainDecision] | None = None
@@ -96,6 +100,8 @@ def create_settings_route_deps(context: AppRouteDependencyContext) -> _settings_
         normalize_private_config=context.normalize_private_config or (lambda: {}),
         apply_settings_update=context.apply_settings_update or (lambda incoming, *, current=None: {}),
         save_config=context.save_config or (lambda private_config: None),
+        list_persona_prompts=context.list_persona_prompts or (lambda: []),
+        list_chrome_profiles=context.list_chrome_profiles or (lambda: ()),
     )
 
 
@@ -114,6 +120,7 @@ def create_audio_route_deps(context: AppRouteDependencyContext) -> _audio_route_
         tts_available=context.tts_available or (lambda provider, provider_url: False),
         cleanup_old_audio=context.cleanup_old_audio or (lambda cache_dir: None),
         synthesize_to_audio=context.synthesize_to_audio or (lambda **kwargs: None),
+        stream_qwen_tts_local=context.stream_qwen_tts_local,
     )
 
 

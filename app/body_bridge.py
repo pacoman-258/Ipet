@@ -92,6 +92,8 @@ class BodyBridge:
             pet_cfg["background_image_url"] = ""
 
         chat_cfg = dict(config.get("chat", {}) if isinstance(config.get("chat", {}), dict) else {})
+        chat_cfg.pop("api_key", None)
+        chat_cfg.pop("api_key_clear", None)
         lipsync_meta = getattr(owner, "lipsync_meta", {})
         if not isinstance(lipsync_meta, dict):
             lipsync_meta = {}

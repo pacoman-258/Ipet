@@ -88,6 +88,9 @@
       enabled: raw?.enabled !== false,
       provider: String(raw?.provider || "funasr").trim() || "funasr",
       api_base_url: String(raw?.api_base_url || "http://127.0.0.1:8012").trim() || "http://127.0.0.1:8012",
+      provider_url: String(raw?.provider_url || "https://api.groq.com/openai/v1/audio/transcriptions").trim()
+        || "https://api.groq.com/openai/v1/audio/transcriptions",
+      model: String(raw?.model || "whisper-large-v3-turbo").trim() || "whisper-large-v3-turbo",
       push_to_talk_key: (() => {
         const key = String(raw?.push_to_talk_key || "Alt").trim();
         return ["Alt", "Ctrl", "Space"].includes(key) ? key : "Alt";

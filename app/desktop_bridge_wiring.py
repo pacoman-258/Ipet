@@ -11,6 +11,8 @@ _PET_BRIDGE_SIGNAL_HANDLERS = (
     ("closeWindowRequested", "close"),
     ("showClickPreviewRequested", "show_click_preview"),
     ("hideClickPreviewRequested", "hide_click_preview"),
+    ("showApprovalNotificationRequested", "show_approval_notification"),
+    ("cancelApprovalNotificationRequested", "cancel_approval_notification"),
 )
 
 

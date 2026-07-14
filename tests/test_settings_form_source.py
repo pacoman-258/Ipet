@@ -67,6 +67,7 @@ class SettingsFormSourceTests(unittest.TestCase):
             "reasoning_effort: stringValue(els.brainReasoningEffort)",
             "streaming_enabled: !!els.brainStreamingEnabled?.checked",
             "web_search_enabled: !!els.brainWebSearchEnabled?.checked",
+            "playwright_profile: stringValue(els.opsPlaywrightProfile)",
             "model_endpoint: isEndpointlessProvider(observeProvider) ? \"\" : stringValue(els.opsObserveModelEndpoint)",
             "review_queue: linesValue(els.memoryReviewQueue)",
             "recipes: linesValue(els.skillsRecipeList)",
@@ -77,6 +78,18 @@ class SettingsFormSourceTests(unittest.TestCase):
 
         read_form = self.form_js.split("  function readForm() {", 1)[1].split("  return {", 1)[0]
         self.assertNotIn("backend_url", read_form)
+
+    def test_settings_page_can_choose_a_saved_chrome_profile(self) -> None:
+        for element_id in (
+            "ops-playwright-profile",
+            "ops-playwright-profile-refresh",
+            "ops-playwright-profile-status",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', self.html)
+        self.assertIn('/api/settings/chrome-profiles', self.settings_js)
+        self.assertIn('opsPlaywrightProfile: $("ops-playwright-profile")', self.settings_js)
+        self.assertIn('setValue(els.opsPlaywrightProfile, neo.human_ops.playwright_profile || "")', self.form_js)
 
     def test_form_module_does_not_query_unrelated_globals(self) -> None:
         for forbidden in ("document.", "document[", "querySelector", "getElementById", "fetch("):
@@ -113,7 +126,7 @@ class SettingsFormSourceTests(unittest.TestCase):
 
         for moved_token in (
             "JSON.parse(JSON.stringify",
-            "system_prompt: neoDefaults().brain.persona",
+            'system_prompt: ""',
             "review_queue: linesValue",
             "recipes: linesValue",
             "model_endpoint: isEndpointlessProvider(brainProvider) ?",

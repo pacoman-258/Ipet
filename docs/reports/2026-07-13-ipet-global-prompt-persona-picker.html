@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ipet 全局提示词与人格文件选择报告</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f4f6fb; }
+    body { margin: 0; padding: 32px 20px; }
+    main { max-width: 960px; margin: 0 auto; padding: 30px; border: 1px solid #dce2ee; border-radius: 18px; background: #fff; box-shadow: 0 14px 40px rgba(34, 50, 84, .08); }
+    h1, h2 { color: #18233c; }
+    h1 { margin-top: 0; }
+    h2 { margin-top: 28px; font-size: 18px; }
+    p, li { line-height: 1.7; }
+    code { padding: 2px 6px; border-radius: 6px; background: #eef2f8; }
+    .ok { color: #167642; font-weight: 700; }
+    .muted { color: #667085; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ipet 全局提示词与人格文件选择</h1>
+    <p class="muted">日期：2026-07-13</p>
+
+    <h2>目标</h2>
+    <p>借鉴 Hermes 的提示词分层，将 Ipet 的长期能力边界、证据纪律、思考方式、Human Ops 安全合同和 JSON 输出 schema 统一迁入 <code>prompts/Ipet.md</code>；用户自定义 Markdown 只负责人格、角色扮演和说话风格，并可在 Brain 页面选择、停用、查看文件名与内容预览。</p>
+
+    <h2>研究依据</h2>
+    <ul>
+      <li><a href="https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/prompt-assembly.md">Hermes Prompt Assembly</a>：稳定系统提示词与临时叠加层分离，并明确装配顺序。</li>
+      <li><a href="https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/personality.md">Hermes Personality / SOUL.md</a>：人格文件聚焦身份、语气和沟通风格。</li>
+      <li><a href="https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md">Hermes API System Prompt Handling</a>：外部自定义叠加在核心提示词上，不移除工具与核心能力。</li>
+      <li><a href="https://github.com/NousResearch/Hermes-Function-Calling#prompt-format-for-json-mode--structured-outputs">Hermes Structured Outputs</a>：用明确 schema 约束仅输出 JSON 对象。</li>
+    </ul>
+
+    <h2>Worker / Subagent 分工</h2>
+    <p>本轮由主代理单人完成；未启动 subagent。Brain 提示词、设置契约、前端控件、测试与报告按同一变更链集成，避免并行修改高冲突入口。</p>
+
+    <h2>文件变更</h2>
+    <ul>
+      <li>全局提示词：<code>prompts/Ipet.md</code>、<code>brain/llm.py</code></li>
+      <li>配置与后端：<code>app/default_config.py</code>、<code>backend/settings_defaults.py</code>、<code>backend/settings_routes.py</code>、<code>backend/app_route_dependencies.py</code>、<code>backend/app_route_context.py</code>、<code>backend/app.py</code></li>
+      <li>Brain 设置页：<code>settings.html</code>、<code>settings.css</code>、<code>settings.js</code>、<code>settings_form.js</code></li>
+      <li>文档：<code>docs/architecture.md</code>、<code>docs/WORKFLOW.md</code></li>
+      <li>测试：<code>tests/test_brain_structured_replies.py</code>、<code>tests/test_backend_settings_routes.py</code>、<code>tests/test_neo_aspect_settings_page.py</code>、<code>tests/test_desktop_default_config.py</code>、<code>tests/test_settings_form_source.py</code></li>
+    </ul>
+
+    <h2>已达成效果</h2>
+    <ul>
+      <li><code>Ipet.md</code> 成为所有 provider 共用的唯一全局能力合同，并由受控模板一次性渲染人格、自我状态和会话摘要。</li>
+      <li>选中的人格文件优先于旧 inline persona；旧配置仅在未选择文件时作为兼容回退。</li>
+      <li>人格内容不能扩大动作范围、绕过审批、削弱验证或覆盖 JSON schema；全局边界在动态内容后再次重申。</li>
+      <li>只读接口仅枚举 <code>prompts/</code> 直属的 UTF-8 <code>.md</code>，排除 <code>Ipet.md</code>，限制单文件 100,000 字符及最多 100 份人格，并阻断路径逃逸与外部 symlink。</li>
+      <li>Brain 页面显示选择按钮、停用按钮、当前文件名、目录下拉项和只读内容预览；配置只保存 <code>brain.persona_prompt_file</code>。</li>
+      <li>删除或损坏已选文件时不静默换人格：设置页显示缺失，Brain 调用明确失败。</li>
+    </ul>
+
+    <h2>验证</h2>
+    <ul>
+      <li class="ok">Python 静态编译通过。</li>
+      <li class="ok">Brain、设置、路由与桌面默认配置定向回归：84/84 通过。</li>
+      <li class="ok">Neo backend 与 chat modes 契约回归：97/97 通过。</li>
+      <li class="ok">完整回归：765/765 通过。</li>
+      <li class="ok"><code>git diff --check</code> 无空白错误。</li>
+    </ul>
+
+    <h2>剩余工作</h2>
+    <p>没有阻塞项。仓库当前已有的 <code>prompts/muramasa_system_prompt.json</code> 仍是旧 JSON 资产，不会出现在 Markdown 人格选择器中；本轮没有复制、改写或删除该用户资产。</p>
+
+    <h2>推荐下一步</h2>
+    <p>用户可把自定义人格保存为 UTF-8 <code>.md</code> 并放入 <code>prompts/</code>，重新载入 Brain 设置后选择并保存。若未来需要导入外部文件，应另行设计带文件写入审批、同名冲突处理和内容扫描的导入流程，而不是扩大当前只读接口。</p>
+  </main>
+</body>
+</html>

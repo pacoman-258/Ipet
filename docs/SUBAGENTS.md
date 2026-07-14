@@ -1,83 +1,37 @@
-# Subagent Operating Model
+# Optional Subagent Operating Model
 
-This repository uses fixed ownership roles for day-to-day development. Neo Aspect work should use the product module names below.
+Single-agent work is the default. This document applies only when the user explicitly requests subagents or a higher-level instruction requires delegation.
 
-## Core Rule
+## Coordination Rules
 
-- The coordinator routes work, assigns one lead, integrates results, and resolves conflicts.
-- High-conflict files may only have one implementation owner in a task:
-  - `main.py`
-  - `index.html`
-  - `backend/app.py`
-- All three high-conflict entrypoints are composition-only. Workers must place new domain behavior in the owning `app/`, `body/`, `backend/`, or `frontend/` module and leave only wiring, loading, registration, lifecycle, or compatibility delegates in the entrypoint.
-- Documentation-only workers may edit docs inside their assigned slice, but must not revert code owned by another worker.
+- Split only independent work that can proceed without shared edits.
+- Assign one lead for each high-conflict file: `main.py`, `index.html`, and `backend/app.py`.
+- Entry points remain composition-only; workers place behavior in the owning module.
+- Each worker stays inside its assigned slice and preserves unrelated dirty work.
+- The coordinator integrates results and runs the smallest relevant verification.
 
-## Fixed Roles
+## Optional Roles
 
-- `body`: owns local observation, voice I/O, pet presentation commands, Body API slices, and Body tests.
-- `brain`: owns turn packets, one-step LLM decision schema, prompt contracts, decision summaries, and Brain tests.
-- `human-ops`: owns approvals, rejection flow, execution review, action ledgers, and safety tests.
-- `memory-skills`: owns local memory, summaries, preferences, built-in skills, learned skills, and skill tests.
-- `settings-console`: owns `settings.html`, `settings.css`, `settings.js`, and settings API contracts.
-- `desktop-shell`: owns `main.py` composition/bootstrap, startup/shutdown, Qt bridge composition, host-side process lifecycle, and compatibility wrappers.
-- `qa-reports`: owns regression planning, contract checks, targeted test additions, documentation audits, and HTML reports.
+- `body`: observation, voice I/O, presentation, and Body tests.
+- `brain`: model calls, prompt contracts, decisions, and Brain tests.
+- `human-ops`: approvals, rejection, execution records, and safety tests.
+- `memory-skills`: memory, summaries, preferences, skills, and persistence tests.
+- `settings-console`: settings UI and settings API contracts.
+- `desktop-shell`: desktop composition, Qt lifecycle, bridge wiring, and host processes.
+- `qa-reports`: regression planning, documentation audits, and durable reports when explicitly needed.
 
-## Dispatch Defaults
+## Cross-Boundary Work
 
-- Desktop host, tray, window behavior, host bridge: `desktop-shell`; implementation goes to matching `app/desktop_*` modules unless it is entrypoint wiring or lifecycle.
-- Pet expression, motion, chat bubble presentation, local observation, ASR/TTS: `body`; frontend behavior goes to matching `frontend/` controllers, not `index.html`.
-- Backend API routes and domain helpers: the owning product role; `backend/app.py` changes are limited to composition, router registration, and compatibility exports.
-- Brain prompt, turn decision, model boundary, output schema: `brain`
-- Approval prompt, risky execution, user rejection, safety copy: `human-ops`
-- Memory write, summary layering, user preference, skill discovery or learning: `memory-skills`
-- Settings page or settings contracts: `settings-console`
-- Cross-module validation, docs audit, regression plan, report writing: `qa-reports`
+One side leads and the other reviews only when the task actually crosses that boundary:
 
-## Cross-Boundary Rules
+- `main.py` and `index.html`: `desktop-shell` leads; `body` reviews.
+- Settings UI and backend settings API: either side leads; the other reviews.
+- Brain decision events: `brain` leads; affected Body or Human Ops owners review.
+- Approval and execution: `human-ops` leads; affected Brain owner reviews.
+- Memory or skill persistence: `memory-skills` leads; affected Brain owner reviews.
 
-- Any change that would add domain logic to `main.py`, `backend/app.py`, or `index.html` must be split into an owner module in the same task. The assigned entrypoint owner only integrates the thin delegate, registration, or loader change.
-- `main.py` <-> `index.html` contract changes:
-  - lead: `desktop-shell`
-  - reviewer: `body`
-- `settings.js` <-> backend settings APIs:
-  - lead may be `settings-console` or the backend module owner
-  - reviewer: the other side plus `qa-reports`
-- Brain decision event changes:
-  - lead: `brain`
-  - reviewers: `body`, `human-ops`, `qa-reports`
-- Approval or execution changes:
-  - lead: `human-ops`
-  - reviewers: `brain`, `qa-reports`
-- Memory or skill persistence changes:
-  - lead: `memory-skills`
-  - reviewers: `brain`, `qa-reports`
-- Repository structure or documentation cleanup:
-  - lead: `qa-reports`
-  - consult implementation owners only when behavior or ownership boundaries change
-
-## Report Requirement
-
-Every file-changing task round must produce an HTML report in `docs/reports/`. The report should list:
-
-- task goal
-- worker split
-- files changed
-- achieved effect
-- remaining work
-- recommended next step
-
-`qa-reports` verifies the report exists before calling the task complete.
+Do not spawn reviewers merely to satisfy this list. A focused local test is enough when no independent review task exists.
 
 ## Prompt Library
 
-Stable role prompts live in `docs/subagents/`.
-
-- Coordinator playbook: `docs/subagents/coordinator.md`
-- Team overview: `docs/subagents/README.md`
-- Body: `docs/subagents/body.md`
-- Brain: `docs/subagents/brain.md`
-- Human Ops: `docs/subagents/human-ops.md`
-- Memory & Skills: `docs/subagents/memory-skills.md`
-- Settings Console: `docs/subagents/settings-console.md`
-- Desktop Shell: `docs/subagents/desktop-shell.md`
-- QA Reports: `docs/subagents/qa-reports.md`
+Role prompts live in `docs/subagents/`. Read only the prompt for the assigned role. Worker handoffs should contain the changed scope, evidence, verification, and unresolved risks; no HTML report is required unless the task explicitly requests one.

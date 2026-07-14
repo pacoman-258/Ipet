@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import os
 import sys
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,11 @@ from .asr import (
     DEFAULT_ASR_CONFIG,
     DEFAULT_ASR_LANGUAGE,
     DEFAULT_ASR_PROVIDER,
+    DEFAULT_GROQ_ASR_API_URL,
+    DEFAULT_GROQ_ASR_MODEL,
+    GroqWhisperRuntime,
     normalize_push_to_talk_key,
+    _default_asr_runtime,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -30,6 +35,8 @@ app.add_middleware(
 )
 
 _ASR_SERVICE: ASRService | None = None
+_ASR_SERVICE_SIGNATURE: tuple[str, str, str, str, bool] | None = None
+_ASR_WARMUP_TASK: asyncio.Task | None = None
 
 
 def _is_macos() -> bool:
@@ -37,12 +44,10 @@ def _is_macos() -> bool:
 
 
 def _default_asr_enabled() -> bool:
-    return not _is_macos()
+    return True
 
 
 def _asr_disabled_message() -> str:
-    if _is_macos():
-        return "ASR is disabled by default on macOS v1. Chat and settings remain available."
     return "ASR is disabled in settings."
 
 
@@ -64,36 +69,67 @@ def _asr_config(settings_config: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(asr_cfg.get("enabled", _default_asr_enabled())),
         "provider": str(asr_cfg.get("provider") or DEFAULT_ASR_PROVIDER).strip() or DEFAULT_ASR_PROVIDER,
+        "provider_url": str(asr_cfg.get("provider_url") or DEFAULT_GROQ_ASR_API_URL).strip()
+        or DEFAULT_GROQ_ASR_API_URL,
+        "model": str(asr_cfg.get("model") or DEFAULT_GROQ_ASR_MODEL).strip() or DEFAULT_GROQ_ASR_MODEL,
+        "api_key": str(asr_cfg.get("api_key") or "").strip(),
         "push_to_talk_key": normalize_push_to_talk_key(asr_cfg.get("push_to_talk_key")),
         "interim_results": bool(asr_cfg.get("interim_results", DEFAULT_ASR_CONFIG["interim_results"])),
     }
 
 
+def _asr_api_key(config: dict[str, Any]) -> str:
+    return str(config.get("api_key") or os.environ.get("GROQ_API_KEY") or "").strip()
+
+
+def _create_asr_runtime(config: dict[str, Any]):
+    provider = str(config.get("provider") or DEFAULT_ASR_PROVIDER).strip().lower()
+    if provider == "groq":
+        return GroqWhisperRuntime(
+            api_key=_asr_api_key(config),
+            api_url=str(config.get("provider_url") or DEFAULT_GROQ_ASR_API_URL),
+            model=str(config.get("model") or DEFAULT_GROQ_ASR_MODEL),
+        )
+    return _default_asr_runtime()
+
+
 def _get_asr_service(force_reload: bool = False) -> ASRService:
-    global _ASR_SERVICE
-    if force_reload or _ASR_SERVICE is None:
-        _ASR_SERVICE = ASRService()
+    global _ASR_SERVICE, _ASR_SERVICE_SIGNATURE
+    config = _asr_config(_load_settings_config())
+    signature = (
+        str(config.get("provider") or ""),
+        str(config.get("provider_url") or ""),
+        str(config.get("model") or ""),
+        _asr_api_key(config),
+        bool(config.get("interim_results")),
+    )
+    if force_reload or _ASR_SERVICE is None or (_ASR_SERVICE_SIGNATURE is not None and signature != _ASR_SERVICE_SIGNATURE):
+        _ASR_SERVICE = ASRService(runtime=_create_asr_runtime(config))
+    _ASR_SERVICE_SIGNATURE = signature
     return _ASR_SERVICE
-
-
-def _warm_asr_service_in_background() -> None:
-    service = _get_asr_service()
-    try:
-        import asyncio
-
-        asyncio.run(service.warmup())
-    except Exception:
-        pass
 
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    global _ASR_WARMUP_TASK
     if not _asr_config(_load_settings_config())["enabled"]:
         return
     service = _get_asr_service()
     if not service.available():
         return
-    threading.Thread(target=_warm_asr_service_in_background, daemon=True).start()
+    if _ASR_WARMUP_TASK is None or _ASR_WARMUP_TASK.done():
+        _ASR_WARMUP_TASK = asyncio.create_task(service.warmup(), name="ipet-asr-warmup")
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    global _ASR_WARMUP_TASK
+    task = _ASR_WARMUP_TASK
+    _ASR_WARMUP_TASK = None
+    if task is None or task.done():
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 @app.get("/api/health")
@@ -112,6 +148,28 @@ async def health() -> dict[str, Any]:
         "asr": bool(asr_ok),
         "provider": asr_cfg["provider"],
         "message": readiness_message,
+    }
+
+
+@app.post("/api/asr/warmup")
+async def asr_warmup() -> dict[str, Any]:
+    asr_cfg = _asr_config(_load_settings_config())
+    if not asr_cfg["enabled"]:
+        return {
+            "ok": False,
+            "enabled": False,
+            "available": False,
+            "ready": False,
+            "message": _asr_disabled_message(),
+        }
+    service = _get_asr_service()
+    message = await service.warmup()
+    return {
+        "ok": not bool(message),
+        "enabled": True,
+        "available": service.available(),
+        "ready": not bool(message),
+        "message": str(message or ""),
     }
 
 

@@ -17,7 +17,6 @@ For coding agents, start with `AGENTS.md`.
 - Routes risky actions through Human Ops before execution.
 - Keeps Memory & Skills as Ipet-owned product data, not as opaque external state.
 - Uses bounded screen observation when enabled, with local evidence governance.
-- Produces an HTML report after every task round so destructive refactors remain auditable.
 
 ## Repository Layout
 
@@ -36,7 +35,7 @@ Ipet/
 |-- settings.html              # root settings UI entry
 |-- settings.css
 |-- settings.js
-|-- docs/                      # architecture, workflow, ownership, and reports
+|-- docs/                      # architecture, workflow, ownership, and optional reports
 |-- tests/                     # unit and regression tests
 |-- scripts/                   # diagnostics and developer tools
 |-- model/                     # tracked demo/reference pet assets plus ignored local assets
@@ -71,20 +70,7 @@ Run the full regression suite with:
 python -m unittest discover -s tests -p "test*.py" -v
 ```
 
-Targeted slices are listed in `AGENTS.md`. For documentation-only work, at minimum run the requested documentation audit and inspect `git status --short`.
-
-## HTML Report Rule
-
-Every task round must create or update an HTML report under `docs/reports/`. The report should record:
-
-- task goal
-- subagent or worker split
-- files changed
-- achieved effect
-- remaining work
-- recommended next step
-
-This keeps the Neo Aspect refactor readable for humans, not just for diffs. Tiny chores deserve tiny reports; destructive backend or workflow work needs a fuller one.
+Coding agents should select the smallest matching test slice. Documentation-only work normally needs `git diff --check` and focused contract searches rather than the Python suite.
 
 ## Core Docs
 

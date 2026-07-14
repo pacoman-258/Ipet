@@ -17,7 +17,6 @@ Ipet Neo Aspect 是一个本地桌宠产品，后端重构采用 Body-first 模�
 - 可能影响本机、文件或用户数据的动作必须先经过 Human Ops。
 - Memory & Skills 是 Ipet 自己的数据层，不交给外部黑盒状态。
 - 启用视觉时，只使用受控屏幕观察和边界清晰的证据文本。
-- 每轮任务都要生成 HTML 报告，方便破坏性重构审计。
 
 ## 仓库结构
 
@@ -36,7 +35,7 @@ Ipet/
 |-- settings.html              # 根设置页入口
 |-- settings.css
 |-- settings.js
-|-- docs/                      # 架构、工作流、所有权和报告
+|-- docs/                      # 架构、工作流、所有权和按需报告
 |-- tests/                     # 单元测试与回归测试
 |-- scripts/                   # 诊断与开发工具
 |-- model/                     # 已跟踪示例/参考宠物资源与本地忽略资源
@@ -63,6 +62,10 @@ Copy-Item pet_config.example.json pet_config.json
 
 `pet_config.json` 只属于本机。不要提交 API Key、本地绝对路径、截图、生成音频或本地应用状态。
 
+### 在线 ASR
+
+设置页的 **Body → 语音识别提供方** 可以选择本地 FunASR 或 `Groq Whisper（在线）`。选择 Groq 后填写 API Key；也可以不保存密钥，改用 `GROQ_API_KEY` 环境变量。在线模式会在松开 push-to-talk 热键后上传这一段音频并返回最终文字，暂不提供边说边出的中间结果。
+
 ## 测试
 
 完整回归：
@@ -71,20 +74,7 @@ Copy-Item pet_config.example.json pet_config.json
 python -m unittest discover -s tests -p "test*.py" -v
 ```
 
-更小的回归切片见 `AGENTS.md`。纯文档任务至少运行指定文档审计，并查看 `git status --short`。
-
-## HTML 报告规范
-
-每轮任务结束都要在 `docs/reports/` 下生成或更新 HTML 报告。报告应写清：
-
-- 本轮目标
-- 子代理或 worker 分工
-- 改动文件
-- 达成效果
-- 后续待办
-- 推荐下一步
-
-小任务可以写小报告；破坏性后端或工作流重构必须写得更完整一点。这样人类读 diff 前，也能先知道本轮到底动了哪里。
+编码代理应选择最小相关测试。纯文档任务通常只需 `git diff --check` 和针对所改契约的搜索检查。
 
 ## 核心文档
 

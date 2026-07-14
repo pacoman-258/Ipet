@@ -17,6 +17,11 @@
     chatRatePct: $("chat-rate-pct"),
     chatAsrEnabled: $("chat-asr-enabled"),
     chatAsrPushToTalkKey: $("chat-asr-push-to-talk-key"),
+    chatAsrProvider: $("chat-asr-provider"),
+    chatAsrProviderUrl: $("chat-asr-provider-url"),
+    chatAsrModel: $("chat-asr-model"),
+    chatAsrApiKey: $("chat-asr-api-key"),
+    chatAsrApiKeyClear: $("chat-asr-api-key-clear"),
     petScale: $("pet-scale"),
     petOpacity: $("pet-opacity"),
     petOffsetX: $("pet-offset-x"),
@@ -43,10 +48,16 @@
     brainWebSearchEnabled: $("brain-web-search-enabled"),
     brainApiKey: $("brain-api-key"),
     brainApiKeyClear: $("brain-api-key-clear"),
-    brainPersona: $("brain-persona"),
+    brainPersonaPromptSelectBtn: $("brain-persona-prompt-select-btn"),
+    brainPersonaPromptClearBtn: $("brain-persona-prompt-clear-btn"),
+    brainPersonaPromptFile: $("brain-persona-prompt-file"),
+    brainPersonaPromptCurrent: $("brain-persona-prompt-current"),
+    brainPersonaPromptPreview: $("brain-persona-prompt-preview"),
     brainSelfState: $("brain-self-state"),
-    brainResponseStyle: $("brain-response-style"),
     brainDecisionTemperature: $("brain-decision-temperature"),
+    opsPlaywrightProfile: $("ops-playwright-profile"),
+    opsPlaywrightProfileRefresh: $("ops-playwright-profile-refresh"),
+    opsPlaywrightProfileStatus: $("ops-playwright-profile-status"),
     opsObserveScreen: $("ops-observe-screen"),
     opsAccessibility: $("ops-accessibility"),
     opsRequireActReview: $("ops-require-act-review"),
@@ -84,6 +95,8 @@
 
   let settingsPayload = null;
   let lastLoadedAt = "";
+  let personaPromptCatalog = [];
+  let chromeProfileCatalog = [];
 
   function setStatus(message) {
     if (els.statusBanner) {
@@ -297,6 +310,138 @@
     return "OpenAI";
   }
 
+  function renderPersonaPromptOptions(selectedName = "") {
+    const select = els.brainPersonaPromptFile;
+    if (!select) {
+      return;
+    }
+    const requestedName = String(selectedName || select.value || "").trim();
+    select.replaceChildren();
+    const disabledOption = document.createElement("option");
+    disabledOption.value = "";
+    disabledOption.textContent = "未启用用户人格提示词";
+    select.appendChild(disabledOption);
+    personaPromptCatalog.forEach((prompt) => {
+      const option = document.createElement("option");
+      option.value = prompt.name;
+      option.textContent = prompt.name;
+      select.appendChild(option);
+    });
+    if (requestedName && !personaPromptCatalog.some((prompt) => prompt.name === requestedName)) {
+      const missingOption = document.createElement("option");
+      missingOption.value = requestedName;
+      missingOption.textContent = `${requestedName}（文件不存在）`;
+      select.appendChild(missingOption);
+    }
+    select.value = requestedName;
+  }
+
+  function renderPersonaPromptState() {
+    const selectedName = String(els.brainPersonaPromptFile?.value || "").trim();
+    const selectedPrompt = personaPromptCatalog.find((prompt) => prompt.name === selectedName);
+    if (els.brainPersonaPromptCurrent) {
+      els.brainPersonaPromptCurrent.textContent = selectedName || "未启用";
+      els.brainPersonaPromptCurrent.classList.toggle("missing", !!selectedName && !selectedPrompt);
+    }
+    if (els.brainPersonaPromptPreview) {
+      els.brainPersonaPromptPreview.value = selectedPrompt?.content || "";
+      els.brainPersonaPromptPreview.placeholder = selectedName && !selectedPrompt
+        ? "所选文件已不存在，请重新选择或停用。"
+        : "选择 prompts 文件夹中的 .md 文件后，这里会显示预览。";
+    }
+  }
+
+  async function loadPersonaPromptCatalog(selectedName = "") {
+    const payload = await fetchJson("/api/settings/persona-prompts");
+    personaPromptCatalog = Array.isArray(payload.prompts)
+      ? payload.prompts.filter((prompt) => prompt && typeof prompt.name === "string" && typeof prompt.content === "string")
+      : [];
+    renderPersonaPromptOptions(selectedName);
+  }
+
+  function setChromeProfileStatus(message) {
+    if (els.opsPlaywrightProfileStatus) {
+      els.opsPlaywrightProfileStatus.textContent = String(message || "");
+    }
+  }
+
+  function renderChromeProfileOptions(selectedDirectory = "") {
+    const select = els.opsPlaywrightProfile;
+    if (!select) {
+      return;
+    }
+    const requestedDirectory = String(selectedDirectory || select.value || "").trim();
+    select.replaceChildren();
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "未选择（执行时询问）";
+    select.appendChild(emptyOption);
+    chromeProfileCatalog.forEach((profile) => {
+      const option = document.createElement("option");
+      option.value = profile.directory;
+      option.textContent = `${profile.display_name} · ${profile.directory}${profile.active ? "（当前活动）" : ""}`;
+      select.appendChild(option);
+    });
+    if (requestedDirectory && !chromeProfileCatalog.some((profile) => profile.directory === requestedDirectory)) {
+      const missingOption = document.createElement("option");
+      missingOption.value = requestedDirectory;
+      missingOption.textContent = `${requestedDirectory}（资料已不存在）`;
+      select.appendChild(missingOption);
+    }
+    select.value = requestedDirectory;
+  }
+
+  function renderChromeProfileStatus() {
+    const selectedDirectory = String(els.opsPlaywrightProfile?.value || "").trim();
+    const selected = chromeProfileCatalog.find((profile) => profile.directory === selectedDirectory);
+    if (!selectedDirectory) {
+      setChromeProfileStatus("未设置默认资料，Playwright 需要时会询问。");
+    } else if (!selected) {
+      setChromeProfileStatus("已保存的 Chrome 资料已不存在，请重新选择。");
+    } else {
+      setChromeProfileStatus(`已选择 ${selected.display_name} · ${selected.directory}${selected.active ? "（当前活动）" : ""}`);
+    }
+  }
+
+  async function loadChromeProfileCatalog(selectedDirectory = "") {
+    setChromeProfileStatus("正在读取 Chrome 个人资料...");
+    const payload = await fetchJson("/api/settings/chrome-profiles");
+    chromeProfileCatalog = Array.isArray(payload.profiles)
+      ? payload.profiles.filter(
+        (profile) => profile && typeof profile.directory === "string" && typeof profile.display_name === "string",
+      )
+      : [];
+    renderChromeProfileOptions(selectedDirectory);
+    if (payload.error) {
+      setChromeProfileStatus(`Chrome 资料不可用：${payload.error}`);
+    } else {
+      renderChromeProfileStatus();
+    }
+  }
+
+  function openPersonaPromptPicker() {
+    const select = els.brainPersonaPromptFile;
+    if (!select) {
+      return;
+    }
+    try {
+      if (typeof select.showPicker === "function") {
+        select.showPicker();
+        return;
+      }
+    } catch (_error) {
+      // Qt WebEngine versions without showPicker still support focus + native selection.
+    }
+    select.focus();
+  }
+
+  function clearPersonaPrompt() {
+    if (els.brainPersonaPromptFile) {
+      els.brainPersonaPromptFile.value = "";
+    }
+    renderPersonaPromptState();
+  }
+
   const modelPickerFactory = window.IpetSettingsModelPicker?.createSettingsModelPickerController;
   if (typeof modelPickerFactory !== "function") {
     throw new Error("settings_model_picker.js must load before settings.js");
@@ -345,8 +490,32 @@
       settingsPayload = fallbackSettings();
       setStatus("当前是静态预览，已载入默认设置。");
     }
+    const selectedPrompt = settingsPayload?.config?.brain?.persona_prompt_file || "";
+    const selectedChromeProfile = settingsPayload?.config?.human_ops?.playwright_profile || "";
+    if (settingsPayload.static_preview) {
+      personaPromptCatalog = [];
+      renderPersonaPromptOptions(selectedPrompt);
+      chromeProfileCatalog = [];
+      renderChromeProfileOptions(selectedChromeProfile);
+    } else {
+      try {
+        await loadPersonaPromptCatalog(selectedPrompt);
+      } catch (_error) {
+        personaPromptCatalog = [];
+        renderPersonaPromptOptions(selectedPrompt);
+      }
+      try {
+        await loadChromeProfileCatalog(selectedChromeProfile);
+      } catch (error) {
+        chromeProfileCatalog = [];
+        renderChromeProfileOptions(selectedChromeProfile);
+        setChromeProfileStatus(`Chrome 资料不可用：${error.message || String(error)}`);
+      }
+    }
     lastLoadedAt = new Date().toLocaleTimeString();
     populateForm(settingsPayload.config || {});
+    renderPersonaPromptState();
+    renderChromeProfileStatus();
     if (!settingsPayload.static_preview) {
       setStatus("设置已加载。");
     }
@@ -357,6 +526,7 @@
       settingsPayload = { ...fallbackSettings(), config: readForm() };
       lastLoadedAt = new Date().toLocaleTimeString();
       populateForm(settingsPayload.config || {});
+      renderPersonaPromptState();
       setStatus("静态预览不会写入磁盘；在 Ipet 后端中打开后可保存。");
       showToast("预览已更新");
       return;
@@ -368,6 +538,7 @@
     });
     lastLoadedAt = new Date().toLocaleTimeString();
     populateForm(settingsPayload.config || {});
+    renderPersonaPromptState();
     setStatus("设置已保存，Ipet 会按新配置刷新。");
     showToast("已保存");
   }
@@ -380,6 +551,7 @@
     current.memory = defaults.memory;
     current.skills = defaults.skills;
     populateForm(current);
+    renderPersonaPromptState();
     setStatus("已恢复 Neo Aspect 默认值，保存后生效。");
   }
 
@@ -401,9 +573,17 @@
     els.saveConfigBtn?.addEventListener("click", () => wrap(saveSettings));
     els.resetFormBtn?.addEventListener("click", resetForm);
     els.brainFetchModelsBtn?.addEventListener("click", () => wrap(fetchBrainModels));
+    els.brainPersonaPromptSelectBtn?.addEventListener("click", openPersonaPromptPicker);
+    els.brainPersonaPromptClearBtn?.addEventListener("click", clearPersonaPrompt);
+    els.brainPersonaPromptFile?.addEventListener("change", renderPersonaPromptState);
+    els.opsPlaywrightProfileRefresh?.addEventListener("click", () => wrap(
+      () => loadChromeProfileCatalog(els.opsPlaywrightProfile?.value || ""),
+    ));
+    els.opsPlaywrightProfile?.addEventListener("change", renderChromeProfileStatus);
     els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
     els.brainProvider?.addEventListener("change", syncProviderControls);
     els.opsObserveModelProvider?.addEventListener("change", syncProviderControls);
+    els.chatAsrProvider?.addEventListener("change", syncProviderControls);
     [els.clickPreviewX, els.clickPreviewY, els.clickPreviewLabel, els.clickPreviewSize].forEach((input) => {
       input?.addEventListener("input", updateClickPreview);
     });

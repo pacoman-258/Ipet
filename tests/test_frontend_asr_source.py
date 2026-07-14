@@ -12,6 +12,7 @@ CONTROLLER_GRAPH_SECTIONS_JS = ROOT / "frontend" / "controller_graph_sections.js
 CONTROLLER_GRAPH_CHAT_SECTIONS_JS = ROOT / "frontend" / "controller_graph_chat_sections.js"
 CONTROLLER_GRAPH_APP_SECTIONS_JS = ROOT / "frontend" / "controller_graph_app_sections.js"
 ASR_JS = ROOT / "frontend" / "asr.js"
+ASR_AUDIO_WORKLET_JS = ROOT / "frontend" / "asr_audio_worklet.js"
 CONTROLLER_FACADE_JS = ROOT / "frontend" / "controller_facade.js"
 
 
@@ -47,6 +48,22 @@ class FrontendAsrSourceTests(unittest.TestCase):
             "stopPushToTalk",
         ):
             self.assertIn(f"function {name}", source)
+
+    def test_asr_capture_uses_audio_worklet(self) -> None:
+        source = ASR_JS.read_text(encoding="utf-8")
+        worklet_source = ASR_AUDIO_WORKLET_JS.read_text(encoding="utf-8")
+
+        self.assertNotIn("createScriptProcessor", source)
+        self.assertIn("audioWorklet.addModule", source)
+        self.assertIn("new AudioWorkletNodeCtor", source)
+        self.assertIn("registerProcessor(\"ipet-asr-audio-processor\"", worklet_source)
+        self.assertIn('event.key === "Option"', source)
+        self.assertIn('event.key === "AltGraph"', source)
+        self.assertIn('"awaiting_followup_input"', source)
+        self.assertIn("asrFinalTimer", source)
+        self.assertIn("ASR 识别超时，请检查 API Key、网络或 ASR 服务。", source)
+        self.assertIn("if (ready) {", source)
+        self.assertIn("handleAsrError(error);", source)
 
     def test_controller_facade_delegates_asr_work(self) -> None:
         chat_sections_source = CONTROLLER_GRAPH_CHAT_SECTIONS_JS.read_text(encoding="utf-8")

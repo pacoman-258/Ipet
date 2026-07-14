@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>macOS 可操作审批通知</title></head><body>
+<h1>macOS 可操作审批通知</h1>
+<h2>目标</h2><p>把 Human Ops 审批改为 macOS 通知横幅中的“批准 / 拒绝”动作。</p>
+<h2>工作拆分</h2><p>单一实现者完成原生 helper、桌面桥接、前端接线、测试与文档；未使用子代理。</p>
+<h2>修改文件</h2><p>新增原生通知 helper、控制器和测试；修改 PetBridge、桌面 composition、前端审批通知接线、工作流文档及相关合同测试。</p>
+<h2>达成效果</h2><p>通知横幅直接提供批准与拒绝。helper 仅回传 proposal id 和选择；前端只接受当前等待审批的活动 proposal，后端继续验证后才执行。权限拒绝、关闭、超时或 helper 失败均按拒绝处理，停止后的迟到选择无效。</p>
+<h2>剩余工作</h2><p>首次真实运行需用户授予 macOS 通知权限；横幅的展开方式受系统通知样式设置控制。</p>
+<h2>建议下一步</h2><p>在桌面应用中用无害动作验证批准、拒绝、关闭通知和停止后迟到点击四条真实路径。</p>
+<h2>验证</h2><p>Objective-C helper 成功链接为 arm64 Mach-O；临时 .app 通过 ad-hoc codesign 严格验证；针对性 34 项通过；全量 777 项通过；Python 编译与 git diff 空白检查通过。未投递真实通知，因此未改变系统通知权限。</p>
+</body></html>

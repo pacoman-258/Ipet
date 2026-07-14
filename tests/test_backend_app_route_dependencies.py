@@ -86,6 +86,10 @@ class BackendAppRouteDependenciesTests(unittest.TestCase):
             self.assertEqual(deps.settings_payload({"brain": {}}), {"payload": True})
         payload_mock.assert_called_once_with({"brain": {}})
 
+        with mock.patch.object(backend_app, "list_chrome_profiles", return_value=(mock.sentinel.profile,)) as list_mock:
+            self.assertEqual(deps.list_chrome_profiles(), (mock.sentinel.profile,))
+        list_mock.assert_called_once_with()
+
     def test_brain_audio_health_and_chat_topics_deps_use_live_backend_state(self) -> None:
         topic_store = backend_app.TopicStore(Path("/private/tmp") / "route-deps-topics")
         chat_topics_deps = backend_app._chat_topics_route_deps()

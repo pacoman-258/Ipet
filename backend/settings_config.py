@@ -46,6 +46,12 @@ def normalize_private_config(
     raw_brain = source.get("brain") if isinstance(source.get("brain"), dict) else {}
     if raw_brain.get("api_key"):
         brain["api_key"] = str(raw_brain.get("api_key") or "")
+    chat = config.setdefault("chat", {})
+    raw_chat = source.get("chat") if isinstance(source.get("chat"), dict) else {}
+    asr = chat.setdefault("asr", {})
+    raw_asr = raw_chat.get("asr") if isinstance(raw_chat.get("asr"), dict) else {}
+    if raw_asr.get("api_key"):
+        asr["api_key"] = str(raw_asr.get("api_key") or "")
     human_ops = config.setdefault("human_ops", {})
     raw_human_ops = source.get("human_ops") if isinstance(source.get("human_ops"), dict) else {}
     observe_model = human_ops.setdefault("observe_model", {})
@@ -74,6 +80,18 @@ def public_config(private_config: dict[str, Any]) -> dict[str, Any]:
     brain.pop("api_key_clear", None)
     brain["api_key_set"] = bool(secret)
     brain["api_key_preview"] = secret_preview(secret)
+    chat = public.get("chat")
+    if not isinstance(chat, dict):
+        chat = {}
+        public["chat"] = chat
+    asr = chat.get("asr")
+    if not isinstance(asr, dict):
+        asr = {}
+        chat["asr"] = asr
+    asr_secret = str(asr.pop("api_key", "") or "")
+    asr.pop("api_key_clear", None)
+    asr["api_key_set"] = bool(asr_secret)
+    asr["api_key_preview"] = secret_preview(asr_secret)
     human_ops = public.get("human_ops")
     if not isinstance(human_ops, dict):
         human_ops = {}
@@ -144,6 +162,9 @@ def apply_settings_update(
     )
     current_brain = current_config.get("brain") if isinstance(current_config.get("brain"), dict) else {}
     current_brain_secret = str(current_brain.get("api_key") or "")
+    current_chat = current_config.get("chat") if isinstance(current_config.get("chat"), dict) else {}
+    current_asr = current_chat.get("asr") if isinstance(current_chat.get("asr"), dict) else {}
+    current_asr_secret = str(current_asr.get("api_key") or "")
     current_human_ops = current_config.get("human_ops") if isinstance(current_config.get("human_ops"), dict) else {}
     current_observe_model = (
         current_human_ops.get("observe_model") if isinstance(current_human_ops.get("observe_model"), dict) else {}
@@ -154,6 +175,12 @@ def apply_settings_update(
     incoming_brain = incoming.get("brain") if isinstance(incoming.get("brain"), dict) else {}
     brain = next_config.setdefault("brain", {})
     _apply_optional_secret_update(brain, incoming_brain, existing_secret=current_brain_secret)
+
+    incoming_chat = incoming.get("chat") if isinstance(incoming.get("chat"), dict) else {}
+    incoming_asr = incoming_chat.get("asr") if isinstance(incoming_chat.get("asr"), dict) else {}
+    chat = next_config.setdefault("chat", {})
+    asr = chat.setdefault("asr", {})
+    _apply_optional_secret_update(asr, incoming_asr, existing_secret=current_asr_secret)
 
     incoming_human_ops = incoming.get("human_ops") if isinstance(incoming.get("human_ops"), dict) else {}
     incoming_observe_model = (

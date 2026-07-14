@@ -34,6 +34,7 @@ from app.desktop_service_wiring import (
     create_desktop_service_lifecycle,
 )
 from app.pet_bridge import create_pet_bridge_class
+from app.native_approval_notifications import NativeApprovalNotificationController
 from app.qt_bindings import load_qt_bindings
 from app.settings_window import SettingsWindowController
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
@@ -756,6 +757,11 @@ class DesktopPet(QMainWindow):
         self.vision_controller = ScreenVisionController(self)
 
         self.bridge = create_connected_pet_bridge(self, PetBridge)
+        self.approval_notification_controller = NativeApprovalNotificationController(
+            source_root=ROOT_DIR / "app" / "native_approval_notifier",
+            cache_root=ROOT_DIR / "data" / "native_helpers",
+            on_decision=self.bridge.approvalNotificationDecision.emit,
+        )
 
         browser_setup = setup_desktop_browser(
             self,
@@ -941,6 +947,12 @@ class DesktopPet(QMainWindow):
     def hide_click_preview(self) -> None:
         _click_preview.hide_click_preview(self)
 
+    def show_approval_notification(self, payload: str) -> None:
+        self.approval_notification_controller.show(payload)
+
+    def cancel_approval_notification(self, proposal_id: str) -> None:
+        self.approval_notification_controller.cancel(proposal_id)
+
     def open_settings_page(self) -> None:
         self.ensure_backend_service()
         url = self._settings_page_url()
@@ -1033,6 +1045,9 @@ class DesktopPet(QMainWindow):
 
     def closeEvent(self, event) -> None:
         event.accept()
+        controller = getattr(self, "approval_notification_controller", None)
+        if controller is not None:
+            controller.stop_all()
         try:
             self.save_config()
         except Exception as exc:

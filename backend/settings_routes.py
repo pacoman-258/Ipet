@@ -19,6 +19,8 @@ class SettingsRouteDependencies:
     normalize_private_config: Callable[[], dict[str, Any]]
     apply_settings_update: Callable[..., dict[str, Any]]
     save_config: Callable[[dict[str, Any]], None]
+    list_persona_prompts: Callable[[], list[dict[str, Any]]] = lambda: []
+    list_chrome_profiles: Callable[[], Any] = lambda: ()
 
 
 def create_settings_router(deps: SettingsRouteDependencies) -> APIRouter:
@@ -47,6 +49,30 @@ def create_settings_router(deps: SettingsRouteDependencies) -> APIRouter:
     @router.get("/api/settings/config")
     async def get_settings_config() -> dict[str, Any]:
         return deps.settings_payload()
+
+    @router.get("/api/settings/persona-prompts")
+    async def get_persona_prompts() -> dict[str, Any]:
+        return {"prompts": deps.list_persona_prompts()}
+
+    @router.get("/api/settings/chrome-profiles")
+    async def get_chrome_profiles() -> dict[str, Any]:
+        try:
+            profiles = deps.list_chrome_profiles()
+        except ValueError as exc:
+            return {"profiles": [], "error": str(exc)}
+        payload: list[dict[str, Any]] = []
+        for profile in profiles:
+            if isinstance(profile, dict):
+                directory = str(profile.get("directory") or "").strip()
+                display_name = str(profile.get("display_name") or directory).strip() or directory
+                active = bool(profile.get("active", False))
+            else:
+                directory = str(getattr(profile, "directory", "") or "").strip()
+                display_name = str(getattr(profile, "display_name", "") or directory).strip() or directory
+                active = bool(getattr(profile, "active", False))
+            if directory:
+                payload.append({"directory": directory, "display_name": display_name, "active": active})
+        return {"profiles": payload, "error": ""}
 
     @router.put("/api/settings/config")
     async def put_settings_config(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Qwen 本地 TTS 原生流式低延迟报告</title>
+  </head>
+  <body>
+    <h1>Qwen 本地 TTS 原生流式低延迟</h1>
+    <dl>
+      <dt>目标</dt><dd>按既定 1–4 顺序让 Ipet 使用 Qwen 原生 PCM 流、后台预热、固定音色 ID，并保持句子生成串行。</dd>
+      <dt>工作拆分</dt><dd>单人完成模型服务、Ipet 后端代理、浏览器播放调度、回归测试与真实测速。</dd>
+      <dt>变更文件</dt><dd>/Users/lyj/lyj/tool/TTS/app.py；body/qwen_tts.py；backend/tts.py；backend/audio_routes.py；backend/app_route_context.py；backend/app_route_dependencies.py；backend/app.py；frontend/speech.js；tests/test_qwen_tts_local.py；tests/test_frontend_speech_source.py；本报告。</dd>
+      <dt>达成效果</dt><dd>模型服务新增固定音色 ipet_xiaozhao、/v1/audio/speech/clone/stream 的 PCM NDJSON 流，以及不阻塞服务启动的后台预热。Ipet 普通完整 WAV 路径改用 reference_id，避免每句上传 ex.mp3；本地 Qwen 在 /api/tts/stream 原样代理 PCM。前端以 Web Audio 播放，在约 0.96 秒音频缓冲后开口，并在一句播放完前不请求下一句，遵守模型单推理锁。</dd>
+      <dt>真实验证</dt><dd>测试文案“流式播放可以更快开始说话。”：原生接口首 PCM 0.938 秒、结束 3.602 秒；Ipet 适配层首 PCM 0.894 秒、结束 3.566 秒；Ipet HTTP 路由首 PCM 0.874 秒、结束 3.558 秒，均得到 4 包、1.920 秒 PCM 音频。不可用模型地址返回流内 error，前端按 Qwen 规则显示“TTS异常”且不播放。</dd>
+      <dt>自动验证</dt><dd>Python 编译检查与 node --check 通过；python -m unittest tests.test_qwen_tts_local tests.test_frontend_speech_source tests.test_backend_app_route_dependencies tests.test_neo_backend_contract -v 通过（98 项）。</dd>
+      <dt>剩余工作</dt><dd>Qwen 在本机实测生成速度仍约为实时播放的 1.85 倍；短句的预缓冲可避免开头卡顿，但极长单句不可能同时做到零等待和永不间断。当前按句切分是可用的延迟折中。</dd>
+      <dt>建议下一步</dt><dd>在桌面 Ipet 中以两句以上回复试听，观察首句开口和句间衔接；若需要更低首声延迟，再针对 0.96 秒缓冲作可听感调参。</dd>
+    </dl>
+  </body>
+</html>
