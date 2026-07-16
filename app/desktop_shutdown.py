@@ -15,6 +15,9 @@ class DesktopShutdownController:
         owner._shutdown_in_progress = True
 
         owner.vision_controller.stop()
+        environment_controller = getattr(owner, "environment_controller", None)
+        if environment_controller is not None:
+            environment_controller.stop()
         self._stop_config_poll_timer()
         self._remove_application_event_filter()
         self._dispose_control_panel()

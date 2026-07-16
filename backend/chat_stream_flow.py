@@ -232,6 +232,7 @@ class ChatStreamFlowDependencies:
     )
     mark_memory_recalled: Callable[[str, str], None] = lambda memory_id, assistant_text: None
     build_memory_candidates: Callable[..., list[dict[str, Any]]] = lambda **kwargs: []
+    consume_proactive_reply_context: Callable[[str], str] = lambda session_id: ""
 
 
 async def stream_chat_response(
@@ -264,6 +265,14 @@ async def stream_chat_response(
     except (TypeError, ValueError):
         memory_retention_days = 365
     memory_mode = "temporary" if memory_config.get("conversation_saving") is False else requested_memory_mode
+    proactive_reply_context = ""
+    if text:
+        try:
+            proactive_reply_context = deps.consume_proactive_reply_context(session_id)
+        except Exception:
+            proactive_reply_context = ""
+    if memory_mode == "temporary":
+        proactive_reply_context = ""
     model = str(request_payload.get("model") or brain_config.get("model_name") or "gpt-5.4")
     endpoint_configured = bool(str(brain_config.get("model_endpoint") or "").strip())
     provider_hint = deps.normalize_provider(brain_config.get("provider") or "openai_compatible")
@@ -352,6 +361,8 @@ async def stream_chat_response(
     else:
         snapshot = deps.topic_store.get_context_snapshot(session_id)
         conversation_history = _bounded_conversation_history(snapshot.model_messages if snapshot is not None else ())
+        if proactive_reply_context:
+            conversation_history = [{"role": "system", "content": proactive_reply_context}, *conversation_history]
         if memory_config.get("long_term_enabled") is not False:
             try:
                 memory_context, due_memory_ids = deps.relationship_memory_context(text, memory_config)

@@ -77,7 +77,19 @@ class NeoBackendContractTests(unittest.TestCase):
         config = payload["config"]
         self.assertEqual(
             set(config),
-            {"model_path", "chat", "pet", "window", "brain", "human_ops", "memory", "skills", "diagnostics"},
+            {
+                "model_path",
+                "chat",
+                "pet",
+                "window",
+                "brain",
+                "human_ops",
+                "vision",
+                "environment",
+                "memory",
+                "skills",
+                "diagnostics",
+            },
         )
         self.assertNotIn("runtime", config)
         self.assertNotIn("hermes", config)
@@ -87,6 +99,8 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(config["brain"]["provider"], "openai_compatible")
         self.assertNotIn("api_key", config["human_ops"]["observe_model"])
         self.assertEqual(config["human_ops"]["observe_model"]["api_key_preview"], "")
+        self.assertNotIn("api_key", config["vision"]["analyzer"])
+        self.assertEqual(config["environment"]["mode"], "off")
 
     def test_settings_assets_disable_cache(self) -> None:
         for path in ("/settings", "/settings.css", "/settings.js"):

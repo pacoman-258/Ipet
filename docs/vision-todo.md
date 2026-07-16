@@ -4,13 +4,13 @@
 
 ## Current Baseline
 
-Ipet vision v1 can capture the screen, keep the latest frame in memory, attach bounded observations, and provide grounded evidence to Brain. It prevents unsupported visual claims by requiring Brain to acknowledge uncertainty when no fresh evidence exists.
+Ipet now has a privacy-first ambient presence loop in addition to turn-scoped visual grounding. The desktop can sample foreground application and idle time, keep expiring screen state, route meaningful changes, create shadow or active proactive opportunities, ask the configured persona to return only `say` or `stop`, deliver through the pet UI/TTS, and feed delivery outcome back into cooldown policy.
 
-The current gap is understanding and initiative. v1 can hold evidence, but it does not yet continuously analyze images, maintain a world state, detect meaningful changes, or decide when to speak first.
+The remaining gap is richer activity-specific perception. Coding, desktop, and chat modes still need distinct evidence rules; generic window or OCR changes must not be treated as semantic understanding.
 
 ## Design Principles
 
-- Build perception before moderation. Heavy privacy/safety gating is postponed until the system can reliably see, summarize, and produce evidence.
+- Privacy filtering precedes frame storage, analysis, candidate generation, and dispatch.
 - Keep every visual claim evidence-backed with `claim`, `evidence`, `region`, `confidence`, and `source`.
 - Do not send raw screenshots by default. Ipet owns capture, analysis, state, and evidence governance; optional analyzer providers must be configured explicitly by the user.
 - Prefer local analyzers first: macOS UI metadata, OCR, accessibility tree, and optional local model adapters.
@@ -24,8 +24,8 @@ Implementation note:
 
 - `backend/vision_analyzer.py` now defines the v2 analyzer boundary, merge helpers, bounded analyzer metadata, and a mockable local command runner.
 - Implemented analyzer providers now include `macos_vision_ocr`, `openai_compatible_vlm`, and `local_vlm`. OCR decodes `data:image/jpeg/png;base64` frames to a temporary local file and invokes a local `/usr/bin/swift` helper using Apple's Vision OCR framework. VLM providers send the image only to a user-configured multimodal endpoint using the locally saved VLM API Key.
-- The settings page lets the user enter VLM Base URL and VLM API Key directly, fetch the endpoint's model list through `/api/vision/models`, and one-click fill the selected model name into the analyzer config.
-- `/api/vision/frame` invokes the analyzer only after local token validation and only when `vision.analyzer.enabled=true`; analyzer failure adds `unknowns`/`last_error` without fabricating observations.
+- Passive analyzer configuration remains an advanced local-config contract rather than a public settings control. The settings Human Ops page separately configures the turn-scoped observe model.
+- `/api/vision/frame` invokes the analyzer as a serialized background task only after local token validation and only when `vision.analyzer.enabled=true`; stale analysis is discarded and analyzer failure adds `unknowns`/`last_error` without fabricating observations.
 - Caller-supplied observations remain first-class and are merged with analyzer observations using bounded claim/source de-duplication.
 
 Scope:
@@ -65,7 +65,7 @@ Current status:
 - `/api/vision/frame` evaluates routing before analyzer enrichment. Repeated unchanged frames reuse existing evidence, cooldown blocks repeated VLM calls for the same desktop context, and a global analyzer lock prevents parallel VLM calls.
 - `main.py` now sends capture metadata and prefers macOS current-visible-Space all-display capture through `/usr/sbin/screencapture`, with Qt all-screen composition as fallback.
 - `/api/vision/status` and `/api/vision/context` expose route/capture metadata without exposing `data_url` by default.
-- Settings expose visual change threshold, VLM cooldown seconds, and stable-after-change milliseconds.
+- Routing thresholds remain normalized local configuration; the public settings page exposes the safer Environment mode, intensity, privacy, and initiative controls.
 
 Scope:
 
@@ -97,6 +97,8 @@ Definition of done:
 
 Goal: generate possible主动发言 without sending them yet.
 
+Current status: implemented by the bounded process-local `EnvironmentService`. `shadow` mode records `would_speak` audit entries without calling Brain; confidence, quiet hours, cooldowns, daily limits, and unanswered backoff suppress noisy candidates.
+
 Scope:
 
 - Add a candidate engine that receives vision events and returns bounded candidate messages.
@@ -104,11 +106,11 @@ Scope:
 - Add confidence thresholds.
 - Keep candidates separate from chat history until explicitly dispatched.
 
-Expected files:
+Implemented files:
 
-- `backend/proactive.py`: event-to-candidate policy and cooldowns.
-- `backend/app.py`: local APIs for pending candidates.
-- `tests/test_proactive.py`: candidate generation and cooldown tests.
+- `backend/environment.py`: event-to-opportunity policy, privacy, cooldowns, and process-local audit.
+- `backend/environment_routes.py`: authenticated ingestion and safe status/pulse/feedback APIs.
+- `tests/test_environment.py`: opportunity, privacy, cooldown, backoff, and reply-context tests.
 
 Definition of done:
 
@@ -120,21 +122,21 @@ Definition of done:
 
 Goal: allow Ipet to speak first under controlled conditions.
 
+Current status: implemented through `/api/environment/pulse` and `/api/environment/feedback` plus `frontend/proactive_presence.js`. Delivery never fabricates a user message or persists a synthetic exchange. The older proposed `/api/proactive/*` names were replaced by the single environment surface.
+
 Scope:
 
-- Add APIs:
-  - `GET /api/proactive/pending`
-  - `POST /api/proactive/dispatch`
-  - `POST /api/proactive/clear`
-- Add frontend bridge support for displaying or sending proactive messages.
-- Mark proactive messages with `source=vision_proactive`, `event_id`, and `frame_id`.
-- Do not pretend proactive output came from the user.
+- `GET /api/environment/status`
+- `POST /api/environment/pulse`
+- `POST /api/environment/feedback`
+- `POST /api/environment/clear`
+- Frontend presentation and optional TTS without pretending output came from the user.
 
-Expected files:
+Implemented files:
 
-- `backend/app.py`: proactive endpoints.
-- `index.html`: display and dispatch support.
-- `tests/test_proactive_api.py`: API contract tests.
+- `backend/environment_routes.py`: proactive endpoints and Brain `say/stop` restriction.
+- `frontend/proactive_presence.js`: client busy gate, message/TTS delivery, and feedback.
+- `tests/test_environment_routes.py` and `tests/test_frontend_proactive_presence_source.py`: API and frontend contracts.
 
 Definition of done:
 
@@ -162,6 +164,8 @@ Definition of done:
 
 Goal: make proactive vision feel like a character, not a logging system.
 
+Current status: the active opportunity reuses the selected persona, bounded recent conversation, and approved relationship context. The delivered utterance is process-local one-turn context for a natural reply; raw environment evidence is not durable memory. Intensity levels `quiet`, `balanced`, `active`, and `neuro_like` are available.
+
 Scope:
 
 - Store recent visual context in short-term memory only.
@@ -182,6 +186,8 @@ Definition of done:
 
 Goal: add the stricter safety layer after the perception loop works.
 
+Current status: baseline hardening is implemented. Sensitive built-in markers and user blocked apps run before frame storage, window titles are double-gated, sensor/frame ingestion uses a local token, browser-facing APIs reject untrusted origins, and settings expose safe audit reasons. Content classifiers and per-window allow lists remain future work.
+
 Scope:
 
 - Sensitive-content classifiers for credentials, private messages, financial/medical/identity data, and personal photos.
@@ -197,6 +203,4 @@ Definition of done:
 
 ## Immediate Implementation Target
 
-Start with Phase 1 only: Vision Analyzer v2.
-
-Do not implement proactive dispatch, activity-specific modes, memory, or the Phase 7 privacy hardening in the same task. The analyzer should make Ipet better at producing grounded observations while preserving the existing v1 behavior: evidence-backed answers only, and refusal when evidence is missing.
+Build Phase 5 adapters on top of the completed privacy and initiative contracts. Start with `coding_companion`: accept only evidence-backed test/build success or failure labels, keep raw terminal text out of proactive state, and measure false-positive and repetition rates in shadow mode before enabling active delivery.

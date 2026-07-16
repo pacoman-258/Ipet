@@ -52,6 +52,17 @@ def neo_aspect_settings_sections() -> list[dict[str, object]]:
             ],
         },
         {
+            "id": "environment",
+            "title": "Environment & Presence",
+            "items": [
+                "presence metadata",
+                "privacy filters",
+                "shadow mode",
+                "initiative cooldown",
+                "quiet hours",
+            ],
+        },
+        {
             "id": "skills",
             "title": "Skills",
             "items": [

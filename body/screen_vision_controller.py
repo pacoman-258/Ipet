@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app import desktop_runtime as _desktop_runtime
+from backend.environment import normalize_environment_config
 from backend.vision import normalize_vision_config
 from body import screen_capture as _screen_capture
 
@@ -163,6 +164,9 @@ class ScreenVisionController:
     def apply_config(self, config: dict) -> None:
         source = config if isinstance(config, dict) else {}
         self._config = normalize_vision_config(source.get("vision", {}))
+        environment_config = normalize_environment_config(source.get("environment", {}))
+        if environment_config["mode"] != "off" and environment_config["screen_context_enabled"]:
+            self._config["enabled"] = True
         chat_cfg = source.get("chat", {}) if isinstance(source.get("chat", {}), dict) else {}
         self._backend_url = str(chat_cfg.get("backend_url") or DEFAULT_BACKEND_URL).strip() or DEFAULT_BACKEND_URL
         if not self._config["enabled"]:

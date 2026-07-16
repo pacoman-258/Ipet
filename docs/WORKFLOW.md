@@ -54,6 +54,18 @@ The chat worklog exposes curated events under eight categories: `planning`, `sea
 
 Token counters use provider-reported input, output, and total usage. Providers without usage data do not trigger character-based estimates.
 
+## Ambient Presence And Initiative
+
+Ambient presence is a Body-owned enhancement, not a hidden autonomous task. It has three explicit modes: `off` collects nothing, `shadow` records bounded “would speak” event types without calling Brain or sending output, and `active` may deliver a proactive `say`. The default is `off`.
+
+The metadata lane samples only foreground application and idle duration. Window titles are omitted at Body and stripped again by the backend unless the user explicitly enables them. Screen context is a separate opt-in; when disabled, ambient presence does not capture screenshots. Raw screenshots, OCR text, and environment events never enter conversation history or durable memory. Fresh frames and events are process-local, bounded, and expire.
+
+Every event passes through the local privacy filter before frame storage or semantic analysis. Password managers, private browsing, financial, payment, medical, and identity contexts, plus user-configured blocked applications, become only `privacy_blocked`; their application, title, text, and image are not retained. Environment APIs accept only local trusted origins, and sensor/frame ingestion additionally requires the desktop local token.
+
+The initiative gate converts allow-listed facts such as `user_returned`, `focus_milestone`, `test_passed`, or `build_failed` into opportunities. Confidence, per-kind and global cooldown, quiet hours, daily limit, client busy state, and unanswered-message backoff are checked before Brain. `neuro_like` intensity may also consider application changes; quieter levels do not. The settings audit explains queued, suppressed, shadowed, delivered, deferred, and privacy-blocked decisions without exposing captured text.
+
+For an eligible opportunity, Brain receives bounded event facts as untrusted data plus normal persona and relationship context. Only `say` or `stop` is accepted; any observe, action, or memory decision is discarded. Frontend delivery rechecks chat, ASR, TTS, visibility, and recent user activity, then reports `delivered`, `deferred`, or `dismissed`. A delivered proactive utterance is not forged into `TopicStore`; it becomes one process-local reply context for the user's next message. Temporary conversations never receive proactive output or that context. Any side effect mentioned after a proactive exchange still requires its ordinary Human Ops proposal.
+
 ## Conversation Memory
 
 Persistent conversations use bounded summaries and recent complete exchanges from `TopicStore`. Temporary conversations remain process-local, never read or write `TopicStore`, and cannot merge with a persistent session. Memory-mode switches are rejected while an older response or approval chain is active.

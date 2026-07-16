@@ -37,8 +37,10 @@ from app.pet_bridge import create_pet_bridge_class
 from app.native_approval_notifications import NativeApprovalNotificationController
 from app.qt_bindings import load_qt_bindings
 from app.settings_window import SettingsWindowController
+from backend.environment import DEFAULT_ENVIRONMENT_CONFIG, normalize_environment_config
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
 from body import live2d_assets as _live2d_assets
+from body.environment_controller import EnvironmentController
 from body.screen_vision_controller import ScreenVisionController
 
 
@@ -409,6 +411,7 @@ DEFAULT_CONFIG = create_default_config(
     default_chat_model=DEFAULT_CHAT_MODEL,
     default_brain_model=DEFAULT_BRAIN_MODEL,
     default_model_path=_find_default_model(),
+    default_environment_config=DEFAULT_ENVIRONMENT_CONFIG,
 )
 
 CUSTOM_HTTP_TTS_PRESETS = _configuration.CUSTOM_HTTP_TTS_PRESETS
@@ -441,6 +444,7 @@ def load_config() -> dict:
         default_brain_model=DEFAULT_BRAIN_MODEL,
         normalize_model_path_func=normalize_model_path,
         normalize_vision_config_func=normalize_vision_config,
+        normalize_environment_config_func=normalize_environment_config,
     )
 
 
@@ -584,6 +588,7 @@ def _build_body_bridge() -> BodyBridge:
         local_file_url=_body_local_file_url,
         extract_pet_display_name=extract_pet_display_name,
         normalize_vision_config=normalize_vision_config,
+        normalize_environment_config=normalize_environment_config,
         json_dumps=json.dumps,
         run_javascript=_run_body_bridge_javascript,
         extract_lipsync_meta=extract_lipsync_meta,
@@ -611,6 +616,7 @@ def _build_desktop_config_actions(owner) -> DesktopConfigActions:
         default_brain_model=DEFAULT_BRAIN_MODEL,
         normalize_model_path=normalize_model_path,
         normalize_vision_config=normalize_vision_config,
+        normalize_environment_config=normalize_environment_config,
         keep_neo_config_shape=_keep_neo_config_shape,
         normalize_neo_chat_config=_normalize_neo_chat_config,
         screen_provider=QGuiApplication.primaryScreen,
@@ -755,6 +761,7 @@ class DesktopPet(QMainWindow):
         self._drag_start_geometry = self.geometry()
         self._python_event_filters_installed = False
         self.vision_controller = ScreenVisionController(self)
+        self.environment_controller = EnvironmentController(self, timer_factory=QTimer)
 
         self.bridge = create_connected_pet_bridge(self, PetBridge)
         self.approval_notification_controller = NativeApprovalNotificationController(
@@ -786,6 +793,7 @@ class DesktopPet(QMainWindow):
         self.ensure_backend_service()
         self.ensure_asr_service()
         self.vision_controller.apply_config(self.config)
+        self.environment_controller.apply_config(self.config)
 
         self._config_poll_timer = QTimer(self)
         self._config_poll_timer.timeout.connect(self.on_config_poll)

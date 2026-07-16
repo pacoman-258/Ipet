@@ -24,6 +24,7 @@ class DesktopConfigActions:
         load_config: Callable[[], dict] | None = None,
         set_geometry: Callable[[Any, int, int, int, int], None] | None = None,
         apply_window_geometry_from_config: Callable[[Any], None] | None = None,
+        normalize_environment_config: Callable[[dict], dict] | None = None,
     ) -> None:
         self.owner = owner
         self.json = json_module
@@ -34,6 +35,7 @@ class DesktopConfigActions:
         self.default_brain_model = default_brain_model
         self.normalize_model_path = normalize_model_path
         self.normalize_vision_config = normalize_vision_config
+        self.normalize_environment_config = normalize_environment_config or (lambda value: dict(value or {}))
         self.keep_neo_config_shape = keep_neo_config_shape
         self.normalize_neo_chat_config = normalize_neo_chat_config
         self.screen_provider = screen_provider
@@ -106,6 +108,7 @@ class DesktopConfigActions:
         config = owner.config
         config["model_path"] = self.normalize_model_path(config.get("model_path", ""))
         config["vision"] = self.normalize_vision_config(config.get("vision", {}))
+        config["environment"] = self.normalize_environment_config(config.get("environment", {}))
         self.keep_neo_config_shape(config)
         self.normalize_neo_chat_config(config)
         config["window"]["x"] = owner.x()
@@ -140,6 +143,9 @@ class DesktopConfigActions:
         else:
             owner.stop_asr_service()
         owner.vision_controller.apply_config(owner.config)
+        environment_controller = getattr(owner, "environment_controller", None)
+        if environment_controller is not None:
+            environment_controller.apply_config(owner.config)
         owner.apply_config_to_web()
 
     def reset_to_default(self) -> None:

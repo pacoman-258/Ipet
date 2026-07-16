@@ -22,6 +22,7 @@ from human_ops import ReviewableProposal
 from human_ops.chrome_profiles import list_chrome_profiles
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore
+from .environment import EnvironmentService
 from .ipet_memory_store import (
     IpetMemoryStore,
     build_memory_candidates_from_turn,
@@ -34,6 +35,7 @@ from .tts import (
     tts_available,
 )
 from .vision_analyzer import VisionAnalyzer
+from .vision import VisionService
 from . import asr_disabled_routes as _asr_disabled_route_helpers
 from . import audio_routes as _audio_route_helpers
 from . import app_route_context as _app_route_context_helpers
@@ -47,7 +49,9 @@ from . import app_action_adapters as _app_action_adapter_helpers
 from . import app_adapters as _app_adapters
 from . import health_routes as _health_route_helpers
 from . import human_ops_decision_routes as _human_ops_decision_route_helpers
+from . import environment_routes as _environment_route_helpers
 from . import memory_routes as _memory_route_helpers
+from . import proactive_context as _proactive_context_helpers
 from . import app_proposal_adapters as _human_ops_proposal_flow_helpers
 from . import settings_assets as _settings_asset_helpers
 from . import app_settings_adapters as _settings_adapter_helpers
@@ -75,6 +79,8 @@ DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
 
 TOPIC_STORE = TopicStore(CHAT_TOPICS_ROOT)
 MEMORY_STORE = IpetMemoryStore(IPET_MEMORY_ROOT)
+ENVIRONMENT_SERVICE = EnvironmentService(NEO_DEFAULTS.get("environment", {}))
+VISION_SERVICE = VisionService(NEO_DEFAULTS.get("vision", {}))
 HUMAN_OPS_PENDING_PROPOSALS: dict[str, dict[str, Any]] = {}
 
 
@@ -380,6 +386,10 @@ def _build_memory_candidates(**kwargs: Any) -> list[dict[str, Any]]:
     return build_memory_candidates_from_turn(**kwargs)
 
 
+def _consume_proactive_reply_context(session_id: str) -> str:
+    return ENVIRONMENT_SERVICE.consume_user_reply_context(session_id)
+
+
 def _proposal_arguments(proposal: ReviewableProposal) -> dict[str, Any]:
     return _human_ops_proposal_flow_helpers.proposal_arguments(proposal)
 
@@ -433,6 +443,27 @@ def _chat_stream_route_deps() -> _chat_stream_route_helpers.ChatStreamFlowDepend
     return _app_route_dependency_helpers.create_chat_stream_route_deps(_route_dependency_context())
 
 
+def _proactive_conversation_history(session_id: str, opportunity: dict[str, Any]) -> list[dict[str, str]]:
+    return _proactive_context_helpers.build_proactive_conversation_history(
+        topic_store=TOPIC_STORE,
+        session_id=session_id,
+        opportunity=opportunity,
+        private_config=_normalize_private_config(),
+        relationship_memory_context=_relationship_memory_context,
+    )
+
+
+def _environment_route_deps() -> _environment_route_helpers.EnvironmentRouteDependencies:
+    return _environment_route_helpers.EnvironmentRouteDependencies(
+        environment_service=ENVIRONMENT_SERVICE,
+        vision_service=VISION_SERVICE,
+        normalize_private_config=_normalize_private_config,
+        run_brain_turn=run_brain_turn,
+        decision_from_completion=_decision_from_completion,
+        proactive_conversation_history=_proactive_conversation_history,
+    )
+
+
 def _human_ops_decision_route_deps() -> _human_ops_decision_route_helpers.HumanOpsApprovalFlowDependencies:
     return _app_route_dependency_helpers.create_human_ops_decision_route_deps(_route_dependency_context())
 
@@ -440,3 +471,4 @@ def _human_ops_decision_route_deps() -> _human_ops_decision_route_helpers.HumanO
 _health_route_helpers.register_health_routes(app, _health_route_deps)
 _chat_stream_route_helpers.register_chat_stream_routes(app, _chat_stream_route_deps)
 _human_ops_decision_route_helpers.register_human_ops_decision_routes(app, _human_ops_decision_route_deps)
+_environment_route_helpers.register_environment_routes(app, _environment_route_deps())

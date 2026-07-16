@@ -79,6 +79,29 @@
     clickPreviewSize: $("click-preview-size"),
     clickPreviewDot: $("click-preview-dot"),
     clickPreviewCaption: $("click-preview-caption"),
+    environmentMode: $("environment-mode"),
+    environmentIntensity: $("environment-intensity"),
+    environmentMetadataEnabled: $("environment-metadata-enabled"),
+    environmentScreenContextEnabled: $("environment-screen-context-enabled"),
+    environmentIncludeWindowTitles: $("environment-include-window-titles"),
+    environmentSpeakEnabled: $("environment-speak-enabled"),
+    environmentOpenChatOnSpeak: $("environment-open-chat-on-speak"),
+    environmentSensorIntervalSec: $("environment-sensor-interval-sec"),
+    environmentPollIntervalSec: $("environment-poll-interval-sec"),
+    environmentCooldownMinutes: $("environment-cooldown-minutes"),
+    environmentUnansweredBackoffMinutes: $("environment-unanswered-backoff-minutes"),
+    environmentDailyLimit: $("environment-daily-limit"),
+    environmentMinimumConfidence: $("environment-minimum-confidence"),
+    environmentAwayMinutes: $("environment-away-minutes"),
+    environmentFocusMinutes: $("environment-focus-minutes"),
+    environmentQuietHoursStart: $("environment-quiet-hours-start"),
+    environmentQuietHoursEnd: $("environment-quiet-hours-end"),
+    environmentBlockedApps: $("environment-blocked-apps"),
+    environmentRefreshBtn: $("environment-refresh-btn"),
+    environmentClearBtn: $("environment-clear-btn"),
+    environmentStatusCards: $("environment-status-cards"),
+    environmentAuditList: $("environment-audit-list"),
+    environmentStatusText: $("environment-status-text"),
     memoryConversationSaving: $("memory-conversation-saving"),
     memoryLongTermEnabled: $("memory-long-term-enabled"),
     memoryPreferencesEnabled: $("memory-preferences-enabled"),
@@ -246,6 +269,14 @@
             ? "Brain 直接观察 · 动作需批准"
             : "Brain 直接观察 · 动作审批关闭",
       ],
+      [
+        "Environment",
+        neo.environment.mode === "active"
+          ? `主动 · ${neo.environment.intensity}`
+          : neo.environment.mode === "shadow"
+            ? "影子模式（只记录）"
+            : "环境感知关闭",
+      ],
       ["Memory", neo.memory.long_term_enabled ? "长期记忆开启" : "长期记忆关闭"],
       ["Skills", neo.skills.review_required ? "保存前审阅" : "审阅关闭"],
       ["Diagnostics", lastLoadedAt || "等待加载"],
@@ -307,6 +338,68 @@
     if (!text) return "未设置";
     const date = new Date(text);
     return Number.isNaN(date.getTime()) ? text : date.toLocaleString();
+  }
+
+  function environmentModeLabel(mode) {
+    return { off: "关闭", shadow: "影子模式", active: "主动模式" }[String(mode || "off")] || "关闭";
+  }
+
+  function renderEnvironmentStatus(payload = null) {
+    const status = payload || {};
+    const presence = status.presence && typeof status.presence === "object" ? status.presence : {};
+    const cards = [
+      ["运行模式", environmentModeLabel(status.mode)],
+      ["当前应用", presence.privacy_blocked ? "隐私保护中" : presence.foreground_app || "尚无元数据"],
+      ["空闲时长", `${Math.max(0, Math.round(Number(presence.idle_seconds || 0) / 60))} 分钟`],
+      ["待处理机会", String(Number(status.pending_count || 0))],
+    ];
+    if (els.environmentStatusCards) {
+      els.environmentStatusCards.innerHTML = cards.map(
+        ([label, value], index) => `
+          <div class="summary-card tone-${(index % 4) + 1}">
+            <span class="stat-icon"></span>
+            <strong class="stat-number">${escapeHtml(value)}</strong>
+            <span class="stat-label">${escapeHtml(label)}</span>
+          </div>
+        `,
+      ).join("");
+    }
+    const audit = Array.isArray(status.recent_audit) ? status.recent_audit.slice().reverse() : [];
+    if (els.environmentAuditList) {
+      els.environmentAuditList.innerHTML = audit.length
+        ? audit.map((item) => `
+            <div class="review-item">
+              <strong>${escapeHtml(item.action || "event")}</strong>
+              <span>${escapeHtml([item.kind, item.reason].filter(Boolean).join(" · ") || "已记录")}</span>
+              <small>${escapeHtml(formatMemoryTime(item.timestamp ? new Date(Number(item.timestamp) * 1000).toISOString() : ""))}</small>
+            </div>
+          `).join("")
+        : '<div class="review-item"><strong>暂无事件</strong><span>影子模式下会显示“本来会说什么类型”，但不会发送消息。</span></div>';
+    }
+    if (els.environmentStatusText) {
+      els.environmentStatusText.textContent = status.mode === "shadow"
+        ? "影子模式正在运行：只记录候选，不生成、不发送、不朗读。"
+        : status.mode === "active"
+          ? "主动模式正在运行；繁忙、安静时段和隐私场景会自动抑制。"
+          : "环境感知已关闭，不采集元数据，也不会主动开口。";
+    }
+  }
+
+  async function loadEnvironmentStatus() {
+    if (settingsPayload?.static_preview) {
+      renderEnvironmentStatus({ ...mergedNeo(settingsPayload.config || {}).environment, presence: {}, recent_audit: [] });
+      return;
+    }
+    renderEnvironmentStatus(await fetchJson("/api/environment/status"));
+  }
+
+  async function clearEnvironmentStatus() {
+    if (settingsPayload?.static_preview) {
+      renderEnvironmentStatus({ ...mergedNeo(settingsPayload.config || {}).environment, presence: {}, recent_audit: [] });
+      return;
+    }
+    renderEnvironmentStatus(await fetchJson("/api/environment/clear", { method: "POST", body: "{}" }));
+    showToast("环境记录已清空");
   }
 
   function setMemoryCatalogStatus(message) {
@@ -709,6 +802,14 @@
       renderMemoryCatalog();
       setMemoryCatalogStatus(`关系记忆不可用：${error.message || String(error)}`);
     }
+    try {
+      await loadEnvironmentStatus();
+    } catch (error) {
+      renderEnvironmentStatus();
+      if (els.environmentStatusText) {
+        els.environmentStatusText.textContent = `环境状态不可用：${error.message || String(error)}`;
+      }
+    }
     if (!settingsPayload.static_preview) {
       setStatus("设置已加载。");
     }
@@ -733,6 +834,7 @@
     populateForm(settingsPayload.config || {});
     renderPersonaPromptState();
     await loadMemoryCatalog();
+    await loadEnvironmentStatus();
     setStatus("设置已保存，Ipet 会按新配置刷新。");
     showToast("已保存");
   }
@@ -742,6 +844,7 @@
     const defaults = neoDefaults();
     current.brain = defaults.brain;
     current.human_ops = defaults.human_ops;
+    current.environment = defaults.environment;
     current.memory = defaults.memory;
     current.skills = defaults.skills;
     populateForm(current);
@@ -776,6 +879,8 @@
     els.opsPlaywrightProfile?.addEventListener("change", renderChromeProfileStatus);
     els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
     els.memoryRefreshBtn?.addEventListener("click", () => wrap(loadMemoryCatalog));
+    els.environmentRefreshBtn?.addEventListener("click", () => wrap(loadEnvironmentStatus));
+    els.environmentClearBtn?.addEventListener("click", () => wrap(clearEnvironmentStatus));
     document.querySelectorAll("[data-memory-tab]").forEach((button) => {
       button.addEventListener("click", () => setMemoryTab(button.dataset.memoryTab || "saved"));
     });

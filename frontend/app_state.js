@@ -13,6 +13,13 @@
       background_image: "",
       background_image_url: "",
       background_overlay_opacity: 0.42,
+      environment: {
+        mode: "off",
+        intensity: "balanced",
+        poll_interval_sec: 15,
+        speak_enabled: true,
+        open_chat_on_speak: true,
+      },
       chat: {
         backend_url: "http://127.0.0.1:8008",
         model: "gpt-5.4",

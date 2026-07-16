@@ -59,6 +59,7 @@ class FrontendAppStateSourceTests(unittest.TestCase):
             console.log(JSON.stringify({
               namespaceFrozen: Object.isFrozen(sandbox.window.IpetAppState),
               independentTop: stateA !== stateB,
+              independentEnvironment: stateA.environment !== stateB.environment,
               independentChat: stateA.chat !== stateB.chat,
               independentSkills: stateA.chat.skills !== stateB.chat.skills,
               independentAsr: stateA.chat.asr !== stateB.chat.asr,
@@ -79,6 +80,7 @@ class FrontendAppStateSourceTests(unittest.TestCase):
 
         self.assertTrue(payload["namespaceFrozen"])
         self.assertTrue(payload["independentTop"])
+        self.assertTrue(payload["independentEnvironment"])
         self.assertTrue(payload["independentChat"])
         self.assertTrue(payload["independentSkills"])
         self.assertTrue(payload["independentAsr"])
@@ -97,6 +99,7 @@ class FrontendAppStateSourceTests(unittest.TestCase):
         self.assertEqual(state["background_image"], "")
         self.assertEqual(state["background_image_url"], "")
         self.assertEqual(state["background_overlay_opacity"], 0.42)
+        self.assertEqual(state["environment"]["mode"], "off")
 
         chat = state["chat"]
         self.assertEqual(chat["backend_url"], "http://127.0.0.1:8008")

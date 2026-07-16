@@ -18,6 +18,10 @@ Memory & Skills remembers and teaches.
 ```mermaid
 flowchart TD
     User[User] --> Body[Body]
+    Body --> Presence[Environment & Presence]
+    Presence --> Brain
+    Brain --> Presence
+    Presence --> Body
     Body --> Brain[Brain]
     Brain --> Body
     Brain --> HumanOps[Human Ops]
@@ -41,6 +45,25 @@ Body is the product surface and local machine boundary. It owns:
 - frontend event rendering
 
 Body does not invent durable facts. It observes, renders, executes approved actions, and reports results back to Brain.
+
+### Environment & Presence
+
+Environment & Presence is a process-local Body/Backend subsystem. `body/environment_controller.py` produces a metadata-only presence sample; optional screen capture remains in `body/screen_vision_controller.py`. `backend/environment.py` owns privacy filtering, expiring state, opportunity policy, cooldowns, and audit metadata. `backend/environment_routes.py` owns local authenticated ingestion, safe status, proactive pulse/feedback, and the restored vision frame boundary. `frontend/proactive_presence.js` is the final busy-state gate and presentation adapter.
+
+The subsystem deliberately separates perception from expression:
+
+```text
+Body metadata / optional frame
+  -> privacy filter
+  -> expiring semantic event
+  -> shadow or active opportunity gate
+  -> Brain say/stop wording
+  -> frontend busy-state recheck
+  -> visible message / optional TTS
+  -> delivery feedback and one-turn reply context
+```
+
+Screenshots and raw screen text are never durable relationship memory. Persona may shape wording but cannot change observed facts, privacy policy, opportunity limits, or Human Ops authority. Environment settings are part of the Settings Console contract; `off` is the default, and screen semantics plus window titles require separate opt-ins.
 
 ## 4. Brain
 
@@ -125,6 +148,12 @@ User input
   -> Body observe result
   -> Memory & Skills write when allowed
   -> Brain terminal summary
+```
+
+Ambient flow is independent of the user-turn executor:
+
+```text
+Body presence sample -> privacy/event gate -> optional Brain say/stop -> Body presentation -> feedback
 ```
 
 The design intentionally avoids hidden long autonomous chains. If the next step changes risk or scope, Brain must stop and ask for a new Human Ops decision.

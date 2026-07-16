@@ -75,6 +75,27 @@
             timeout_sec: 90,
           },
         },
+        environment: {
+          mode: "off",
+          intensity: "balanced",
+          metadata_enabled: true,
+          screen_context_enabled: false,
+          include_window_titles: false,
+          sensor_interval_sec: 5,
+          event_ttl_sec: 600,
+          poll_interval_sec: 15,
+          initiative_cooldown_minutes: 30,
+          unanswered_backoff_minutes: 120,
+          daily_initiative_limit: 6,
+          minimum_confidence: 0.75,
+          away_threshold_minutes: 10,
+          focus_minutes: 45,
+          quiet_hours_start: 22,
+          quiet_hours_end: 8,
+          speak_enabled: true,
+          open_chat_on_speak: true,
+          blocked_apps: [],
+        },
         memory: {
           conversation_saving: true,
           long_term_enabled: true,
@@ -114,6 +135,7 @@
             ...((config.human_ops || {}).observe_model || {}),
           },
         },
+        environment: { ...defaults.environment, ...(config.environment || {}) },
         memory: { ...defaults.memory, ...(config.memory || {}) },
         skills: { ...defaults.skills, ...(config.skills || {}) },
       };
@@ -406,6 +428,25 @@
       setValue(els.clickPreviewLabel, neo.human_ops.click_preview.label || "目标位置");
       setValue(els.clickPreviewSize, Number(neo.human_ops.click_preview.size || 16));
 
+      setValue(els.environmentMode, neo.environment.mode || "off");
+      setValue(els.environmentIntensity, neo.environment.intensity || "balanced");
+      setChecked(els.environmentMetadataEnabled, neo.environment.metadata_enabled);
+      setChecked(els.environmentScreenContextEnabled, neo.environment.screen_context_enabled);
+      setChecked(els.environmentIncludeWindowTitles, neo.environment.include_window_titles);
+      setChecked(els.environmentSpeakEnabled, neo.environment.speak_enabled);
+      setChecked(els.environmentOpenChatOnSpeak, neo.environment.open_chat_on_speak);
+      setValue(els.environmentSensorIntervalSec, Number(neo.environment.sensor_interval_sec || 5));
+      setValue(els.environmentPollIntervalSec, Number(neo.environment.poll_interval_sec || 15));
+      setValue(els.environmentCooldownMinutes, Number(neo.environment.initiative_cooldown_minutes || 30));
+      setValue(els.environmentUnansweredBackoffMinutes, Number(neo.environment.unanswered_backoff_minutes || 120));
+      setValue(els.environmentDailyLimit, Number(neo.environment.daily_initiative_limit || 6));
+      setValue(els.environmentMinimumConfidence, Number(neo.environment.minimum_confidence ?? 0.75));
+      setValue(els.environmentAwayMinutes, Number(neo.environment.away_threshold_minutes || 10));
+      setValue(els.environmentFocusMinutes, Number(neo.environment.focus_minutes || 45));
+      setValue(els.environmentQuietHoursStart, Number(neo.environment.quiet_hours_start ?? 22));
+      setValue(els.environmentQuietHoursEnd, Number(neo.environment.quiet_hours_end ?? 8));
+      setValue(els.environmentBlockedApps, textFromLines(neo.environment.blocked_apps));
+
       setChecked(els.memoryConversationSaving, neo.memory.conversation_saving);
       setChecked(els.memoryLongTermEnabled, neo.memory.long_term_enabled);
       setChecked(els.memoryPreferencesEnabled, neo.memory.preferences_enabled);
@@ -527,6 +568,28 @@
         next.human_ops.observe_model.api_key = els.opsObserveApiKey.value;
       }
       next.human_ops.observe_model.api_key_clear = !!els.opsObserveApiKeyClear?.checked;
+
+      next.environment = {
+        ...(next.environment || {}),
+        mode: stringValue(els.environmentMode, "off"),
+        intensity: stringValue(els.environmentIntensity, "balanced"),
+        metadata_enabled: !!els.environmentMetadataEnabled?.checked,
+        screen_context_enabled: !!els.environmentScreenContextEnabled?.checked,
+        include_window_titles: !!els.environmentIncludeWindowTitles?.checked,
+        speak_enabled: !!els.environmentSpeakEnabled?.checked,
+        open_chat_on_speak: !!els.environmentOpenChatOnSpeak?.checked,
+        sensor_interval_sec: intValue(els.environmentSensorIntervalSec, 5),
+        poll_interval_sec: intValue(els.environmentPollIntervalSec, 15),
+        initiative_cooldown_minutes: intValue(els.environmentCooldownMinutes, 30),
+        unanswered_backoff_minutes: intValue(els.environmentUnansweredBackoffMinutes, 120),
+        daily_initiative_limit: intValue(els.environmentDailyLimit, 6),
+        minimum_confidence: numberValue(els.environmentMinimumConfidence, 0.75),
+        away_threshold_minutes: intValue(els.environmentAwayMinutes, 10),
+        focus_minutes: intValue(els.environmentFocusMinutes, 45),
+        quiet_hours_start: intValue(els.environmentQuietHoursStart, 22),
+        quiet_hours_end: intValue(els.environmentQuietHoursEnd, 8),
+        blocked_apps: linesValue(els.environmentBlockedApps),
+      };
 
       next.memory = {
         ...(next.memory || {}),

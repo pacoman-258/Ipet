@@ -712,6 +712,34 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不喜欢被催促", calls[0]["conversation_history"][0]["content"])
         self.assertEqual(recalled, ["due-1"])
 
+    async def test_persistent_turn_naturally_resumes_latest_proactive_message(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls: list[dict[str, Any]] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            decision = BrainDecision.say("嗯，那就好。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {"conversation_saving": True, "long_term_enabled": False},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            consume_proactive_reply_context=lambda session_id: (
+                "[本轮主动陪伴上下文]\n你刚才主动对用户说过：回来啦？" if session_id == "friend" else ""
+            ),
+        )
+
+        await _collect_events(stream_chat_response({"text": "嗯，刚吃完饭", "session_id": "friend"}, deps))
+
+        self.assertEqual(calls[0]["conversation_history"][0]["role"], "system")
+        self.assertIn("回来啦", calls[0]["conversation_history"][0]["content"])
+
     async def test_post_turn_extractor_creates_non_blocking_implicit_candidate(self) -> None:
         topic_store = TopicStoreSpy()
         created: list[tuple[dict[str, Any], dict[str, Any]]] = []

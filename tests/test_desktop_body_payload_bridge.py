@@ -96,6 +96,7 @@ class BodyPayloadBridgeTests(unittest.TestCase):
         self.assertEqual(payload["chat"]["mouth_parameter_ids"], ["ParamMouthOpenY"])
         self.assertEqual(payload["chat"]["mouth_form_parameter_ids"], ["ParamMouthForm"])
         self.assertEqual(payload["vision"], {"normalized": {"enabled": True}})
+        self.assertEqual(payload["environment"], {})
 
     def test_js_bridge_scripts_apply_config_and_actions(self) -> None:
         from app.body_bridge import BodyBridge
@@ -144,7 +145,7 @@ class BodyPayloadBridgeTests(unittest.TestCase):
             'window.PET_APP && window.PET_APP.applyConfig({"model_url": "local://pet.model3.json", '
             '"pet": {"background_image_url": ""}, "chat": {"pet_display_name": "Ipet", '
             '"available_expressions": [], "lip_sync_gain": 1.0, "mouth_parameter_ids": [], '
-            '"mouth_form_parameter_ids": []}, "vision": {}});',
+            '"mouth_form_parameter_ids": []}, "vision": {}, "environment": {}});',
         )
         self.assertEqual(
             scripts[1],

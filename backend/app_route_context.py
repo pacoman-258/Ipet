@@ -161,6 +161,10 @@ class _LiveRouteDependencyContext:
             assistant_text,
         )
         self.build_memory_candidates = lambda **kwargs: self._call("_build_memory_candidates", **kwargs)
+        self.consume_proactive_reply_context = lambda session_id: self._call(
+            "_consume_proactive_reply_context",
+            session_id,
+        )
 
     @property
     def default_topic_title(self) -> str:

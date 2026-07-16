@@ -30,9 +30,9 @@ class SettingsFormSourceTests(unittest.TestCase):
         self.form_js = SETTINGS_FORM_JS.read_text(encoding="utf-8")
 
     def test_settings_page_loads_form_before_model_picker_and_settings_controller(self) -> None:
-        form_script = '<script src="/settings_form.js?v=1"></script>'
+        form_script = '<script src="/settings_form.js?v=2"></script>'
         model_picker_script = '<script src="/settings_model_picker.js?v=1"></script>'
-        settings_script = '<script src="/settings.js?v=9"></script>'
+        settings_script = '<script src="/settings.js?v=10"></script>'
 
         self.assertIn(form_script, self.html)
         self.assertIn(model_picker_script, self.html)

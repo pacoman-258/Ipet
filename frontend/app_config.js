@@ -6,6 +6,7 @@
     const asrController = deps.asrController || {};
     const chatSidebarsController = deps.chatSidebarsController || {};
     const petSceneController = deps.petSceneController || {};
+    const proactivePresenceController = deps.proactivePresenceController || {};
 
     const syncPetDisplayName = typeof deps.syncPetDisplayName === "function" ? deps.syncPetDisplayName : () => {};
     const normalizeAsrConfig =
@@ -61,6 +62,9 @@
           setAsrStatus(defaultAsrStatusText(), "idle");
           syncChatInputAvailability();
         }
+      }
+      if (incoming.environment && typeof incoming.environment === "object") {
+        proactivePresenceController.applyConfig?.(incoming.environment);
       }
       syncPetDisplayName();
       state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});

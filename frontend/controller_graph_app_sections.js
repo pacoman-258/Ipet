@@ -18,6 +18,19 @@
       window: runtimeWindow,
     });
     controllerRegistry.speech = speechController;
+    const proactivePresenceController = runtimeWindow.IpetProactivePresence.createProactivePresenceController({
+      state,
+      speechController,
+      getChatState: () => graphState.chatState,
+      getMemoryMode: facade.getCurrentMemoryMode,
+      isAsrBusy: () => graphState.asrController.isBusy(),
+      appendMessage: facade.appendMessage,
+      openChat: facade.openChat,
+      fetch: typeof runtimeWindow.fetch === "function" ? runtimeWindow.fetch.bind(runtimeWindow) : undefined,
+      window: runtimeWindow,
+      document: runtimeWindow.document,
+    });
+    controllerRegistry.proactivePresence = proactivePresenceController;
     const chatStreamController = runtimeWindow.IpetChatStream.createChatStreamController({
       state,
       normalizeChatMode: facade.normalizeChatMode,
@@ -99,13 +112,19 @@
     });
     controllerRegistry.chatSubmit = graphState.chatSubmitController;
 
-    return { speechController, chatStreamController };
+    return { speechController, proactivePresenceController, chatStreamController };
   }
 
   function wireBootstrapSection(sectionContext, sectionControllers) {
     const { runtimeWindow, state, refs, facade, controllerRegistry, graphState } = sectionContext;
     const { asrController } = graphState;
-    const { chatSidebarsController, petSceneController, chatPanelController, shellBridgeController } = sectionControllers;
+    const {
+      chatSidebarsController,
+      petSceneController,
+      chatPanelController,
+      shellBridgeController,
+      proactivePresenceController,
+    } = sectionControllers;
     const {
       canvas,
       navSettingsButtonEl,
@@ -134,6 +153,7 @@
       asrController,
       chatSidebarsController,
       petSceneController,
+      proactivePresenceController,
       syncPetDisplayName: facade.syncPetDisplayName,
       normalizeAsrConfig: facade.normalizeAsrConfig,
       topicHistoryEnabled: facade.topicHistoryEnabled,
@@ -240,7 +260,10 @@
 
   function createControllerGraphAppSections(sectionContext, sectionControllers) {
     const speechControllers = wireSpeechSection(sectionContext, sectionControllers);
-    const bootstrapControllers = wireBootstrapSection(sectionContext, sectionControllers);
+    const bootstrapControllers = wireBootstrapSection(sectionContext, {
+      ...sectionControllers,
+      ...speechControllers,
+    });
 
     return {
       ...speechControllers,

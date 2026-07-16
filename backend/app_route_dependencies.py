@@ -80,6 +80,7 @@ class AppRouteDependencyContext:
     relationship_memory_context: Callable[[str, dict[str, Any]], tuple[str, list[str]]] | None = None
     mark_memory_recalled: Callable[[str, str], None] | None = None
     build_memory_candidates: Callable[..., list[dict[str, Any]]] | None = None
+    consume_proactive_reply_context: Callable[[str], str] | None = None
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
@@ -176,6 +177,7 @@ def create_chat_stream_route_deps(context: AppRouteDependencyContext) -> _chat_s
         relationship_memory_context=context.relationship_memory_context or (lambda user_text, config: ("", [])),
         mark_memory_recalled=context.mark_memory_recalled or (lambda memory_id, assistant_text: None),
         build_memory_candidates=context.build_memory_candidates or (lambda **kwargs: []),
+        consume_proactive_reply_context=context.consume_proactive_reply_context or (lambda session_id: ""),
     )
 
 

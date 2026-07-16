@@ -58,6 +58,12 @@ def normalize_private_config(
     raw_observe_model = raw_human_ops.get("observe_model") if isinstance(raw_human_ops.get("observe_model"), dict) else {}
     if raw_observe_model.get("api_key"):
         observe_model["api_key"] = str(raw_observe_model.get("api_key") or "")
+    vision = config.setdefault("vision", {})
+    raw_vision = source.get("vision") if isinstance(source.get("vision"), dict) else {}
+    analyzer = vision.setdefault("analyzer", {})
+    raw_analyzer = raw_vision.get("analyzer") if isinstance(raw_vision.get("analyzer"), dict) else {}
+    if raw_analyzer.get("api_key"):
+        analyzer["api_key"] = str(raw_analyzer.get("api_key") or "")
     return config
 
 
@@ -104,6 +110,18 @@ def public_config(private_config: dict[str, Any]) -> dict[str, Any]:
     observe_model.pop("api_key_clear", None)
     observe_model["api_key_set"] = bool(observe_secret)
     observe_model["api_key_preview"] = secret_preview(observe_secret)
+    vision = public.get("vision")
+    if not isinstance(vision, dict):
+        vision = {}
+        public["vision"] = vision
+    analyzer = vision.get("analyzer")
+    if not isinstance(analyzer, dict):
+        analyzer = {}
+        vision["analyzer"] = analyzer
+    analyzer_secret = str(analyzer.pop("api_key", "") or "")
+    analyzer.pop("api_key_clear", None)
+    analyzer["api_key_set"] = bool(analyzer_secret)
+    analyzer["api_key_preview"] = secret_preview(analyzer_secret)
     return public
 
 
@@ -170,6 +188,9 @@ def apply_settings_update(
         current_human_ops.get("observe_model") if isinstance(current_human_ops.get("observe_model"), dict) else {}
     )
     current_observe_secret = str(current_observe_model.get("api_key") or "")
+    current_vision = current_config.get("vision") if isinstance(current_config.get("vision"), dict) else {}
+    current_analyzer = current_vision.get("analyzer") if isinstance(current_vision.get("analyzer"), dict) else {}
+    current_analyzer_secret = str(current_analyzer.get("api_key") or "")
     next_config = deep_merge(current_config, incoming)
 
     incoming_brain = incoming.get("brain") if isinstance(incoming.get("brain"), dict) else {}
@@ -189,6 +210,14 @@ def apply_settings_update(
     human_ops = next_config.setdefault("human_ops", {})
     observe_model = human_ops.setdefault("observe_model", {})
     _apply_optional_secret_update(observe_model, incoming_observe_model, existing_secret=current_observe_secret)
+
+    incoming_vision = incoming.get("vision") if isinstance(incoming.get("vision"), dict) else {}
+    incoming_analyzer = (
+        incoming_vision.get("analyzer") if isinstance(incoming_vision.get("analyzer"), dict) else {}
+    )
+    vision = next_config.setdefault("vision", {})
+    analyzer = vision.setdefault("analyzer", {})
+    _apply_optional_secret_update(analyzer, incoming_analyzer, existing_secret=current_analyzer_secret)
 
     return normalize_private_config(
         next_config,

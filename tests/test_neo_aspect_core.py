@@ -124,7 +124,10 @@ class NeoAspectSettingsTests(unittest.TestCase):
         sections = neo_aspect_settings_sections()
         section_ids = [item["id"] for item in sections]
 
-        self.assertEqual(section_ids, ["body", "brain", "human_ops", "memory", "skills", "diagnostics"])
+        self.assertEqual(
+            section_ids,
+            ["body", "brain", "human_ops", "memory", "environment", "skills", "diagnostics"],
+        )
 
     def test_settings_schema_removes_runtime_management_content(self) -> None:
         text = repr(neo_aspect_settings_sections()).lower()

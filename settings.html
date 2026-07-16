@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ipet 设置</title>
-  <link rel="stylesheet" href="/settings.css?v=10" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/settings.css?v=11" />
 </head>
 <body data-mode="ios" data-theme="light">
   <div class="app-shell">
@@ -31,7 +32,7 @@
           <div class="overview-header">
             <div>
               <h2>Ipet Neo Aspect</h2>
-              <p>设置页保留原来的桌面窗口风格，内容改为身体、大脑、人类式操作、记忆与技能。</p>
+              <p>在这里管理身体、大脑、人类式操作、环境感知、关系记忆与技能。</p>
             </div>
             <div class="overview-status-card" aria-label="控制台状态">
               <span class="status-dot active"></span>
@@ -367,6 +368,87 @@
           </div>
         </section>
 
+        <section id="environment" class="panel-card desktop-window" data-window-title="Environment">
+          <div class="section-head">
+            <div>
+              <h3>Environment & Presence</h3>
+              <p>让 Ipet 感知“你在不在、是否刚完成一件事”，再经过冷却、安静时段和隐私闸门决定要不要开口。</p>
+            </div>
+          </div>
+
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>运行模式</span>
+              <select id="environment-mode">
+                <option value="off">关闭</option>
+                <option value="shadow">影子模式（只记录，不说话）</option>
+                <option value="active">主动模式</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>主动程度</span>
+              <select id="environment-intensity">
+                <option value="quiet">安静</option>
+                <option value="balanced">平衡</option>
+                <option value="active">活跃</option>
+                <option value="neuro_like">Neuro-like（允许应用切换触发）</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="environment-metadata-enabled" type="checkbox" />
+              <span>采集前台应用与空闲时长</span>
+            </label>
+            <label class="toggle-card">
+              <input id="environment-screen-context-enabled" type="checkbox" />
+              <span>允许屏幕语义（明确开启才截图）</span>
+            </label>
+            <label class="toggle-card">
+              <input id="environment-include-window-titles" type="checkbox" />
+              <span>上传窗口标题（默认关闭）</span>
+            </label>
+            <label class="toggle-card">
+              <input id="environment-speak-enabled" type="checkbox" />
+              <span>主动消息使用语音</span>
+            </label>
+            <label class="toggle-card">
+              <input id="environment-open-chat-on-speak" type="checkbox" />
+              <span>主动开口时展开聊天</span>
+            </label>
+          </div>
+
+          <p class="memory-privacy-note">屏幕语义关闭时只发送前台应用名与空闲秒数；窗口标题默认不离开 Body。敏感应用与自定义黑名单会在截图进入内存前拦截，原始环境事件与截图均不写入长期记忆。</p>
+
+          <div class="form-grid two-col">
+            <label class="field"><span>元数据采样（秒）</span><input id="environment-sensor-interval-sec" type="number" min="2" max="60" /></label>
+            <label class="field"><span>主动轮询（秒）</span><input id="environment-poll-interval-sec" type="number" min="5" max="300" /></label>
+            <label class="field"><span>开口冷却（分钟）</span><input id="environment-cooldown-minutes" type="number" min="1" max="1440" /></label>
+            <label class="field"><span>未回应退避（分钟）</span><input id="environment-unanswered-backoff-minutes" type="number" min="5" max="10080" /></label>
+            <label class="field"><span>每日主动上限</span><input id="environment-daily-limit" type="number" min="1" max="48" /></label>
+            <label class="field"><span>最低置信度</span><input id="environment-minimum-confidence" type="number" min="0.5" max="1" step="0.01" /></label>
+            <label class="field"><span>离开判定（分钟）</span><input id="environment-away-minutes" type="number" min="1" max="240" /></label>
+            <label class="field"><span>专注里程碑（分钟）</span><input id="environment-focus-minutes" type="number" min="5" max="240" /></label>
+            <label class="field"><span>安静时段开始（0-23）</span><input id="environment-quiet-hours-start" type="number" min="0" max="23" /></label>
+            <label class="field"><span>安静时段结束（0-23）</span><input id="environment-quiet-hours-end" type="number" min="0" max="23" /></label>
+            <label class="field wide">
+              <span>永不观察的应用（每行一个）</span>
+              <textarea id="environment-blocked-apps" rows="5" placeholder="例如：公司密码管理器"></textarea>
+            </label>
+          </div>
+
+          <div class="memory-toolbar">
+            <div class="button-row wrap">
+              <button id="environment-refresh-btn" class="ghost-button" type="button">刷新状态</button>
+              <button id="environment-clear-btn" class="ghost-button" type="button">清空临时记录</button>
+            </div>
+          </div>
+          <p id="environment-status-text" class="inline-status" aria-live="polite">正在读取环境状态...</p>
+          <div id="environment-status-cards" class="hero-summary"></div>
+          <div id="environment-audit-list" class="review-list"></div>
+        </section>
+
         <section id="memory" class="panel-card desktop-window" data-window-title="Memory">
           <div class="section-head">
             <div>
@@ -489,6 +571,7 @@
       <button class="desktop-icon tone-green" data-window-target="body" data-title="Body"><span>B</span><strong>身体</strong></button>
       <button class="desktop-icon tone-purple" data-window-target="brain" data-title="Brain"><span>Ψ</span><strong>大脑</strong></button>
       <button class="desktop-icon tone-red" data-window-target="human-ops" data-title="Human Ops"><span>●</span><strong>操作</strong></button>
+      <button class="desktop-icon tone-green" data-window-target="environment" data-title="Environment"><span>◎</span><strong>环境</strong></button>
       <button class="desktop-icon tone-pink" data-window-target="memory" data-title="Memory"><span>◇</span><strong>记忆</strong></button>
       <button class="desktop-icon tone-orange" data-window-target="skills" data-title="Skills"><span>S</span><strong>技能</strong></button>
       <button class="desktop-icon tone-gray" data-window-target="diagnostics" data-title="Diagnostics"><span>⌁</span><strong>诊断</strong></button>
@@ -499,14 +582,15 @@
       <button class="dock-item" data-window-target="body" data-title="Body" title="Body"><span class="dock-glyph">B</span><strong>身体</strong></button>
       <button class="dock-item" data-window-target="brain" data-title="Brain" title="Brain"><span class="dock-glyph">🧠</span><strong>大脑</strong></button>
       <button class="dock-item" data-window-target="human-ops" data-title="Human Ops" title="Human Ops"><span class="dock-glyph">☺</span><strong>操作</strong></button>
+      <button class="dock-item" data-window-target="environment" data-title="Environment" title="Environment"><span class="dock-glyph">◎</span><strong>环境</strong></button>
       <button class="dock-item" data-window-target="memory" data-title="Memory" title="Memory"><span class="dock-glyph">📖</span><strong>记忆</strong></button>
       <button class="dock-item" data-window-target="skills" data-title="Skills" title="Skills"><span class="dock-glyph">☭</span><strong>技能</strong></button>
       <button class="dock-item" data-window-target="diagnostics" data-title="Diagnostics" title="Diagnostics"><span class="dock-glyph">⌁</span><strong>诊断</strong></button>
     </nav>
   </div>
 
-  <script src="/settings_form.js?v=1"></script>
+  <script src="/settings_form.js?v=2"></script>
   <script src="/settings_model_picker.js?v=1"></script>
-  <script src="/settings.js?v=9"></script>
+  <script src="/settings.js?v=10"></script>
 </body>
 </html>

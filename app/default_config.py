@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.environment import DEFAULT_ENVIRONMENT_CONFIG
+
 
 def _clone_json_value(value: Any) -> Any:
     return json.loads(json.dumps(value))
@@ -16,9 +18,11 @@ def create_default_config(
     default_chat_model: str,
     default_brain_model: str,
     default_model_path: str,
+    default_environment_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "vision": _clone_json_value(default_vision_config),
+        "environment": _clone_json_value(default_environment_config or DEFAULT_ENVIRONMENT_CONFIG),
         "model_path": default_model_path,
         "brain": {
             "provider": "openai_compatible",

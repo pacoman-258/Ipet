@@ -3,11 +3,15 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .environment import DEFAULT_ENVIRONMENT_CONFIG
 from .tts import DEFAULT_PROVIDER as DEFAULT_TTS_PROVIDER
+from .vision import DEFAULT_VISION_CONFIG
 
 
 NEO_DEFAULTS: dict[str, Any] = {
     "model_path": "",
+    "vision": deepcopy(DEFAULT_VISION_CONFIG),
+    "environment": deepcopy(DEFAULT_ENVIRONMENT_CONFIG),
     "chat": {
         "backend_url": "http://127.0.0.1:8008",
         "model": "gpt-5.4",

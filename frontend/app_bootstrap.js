@@ -216,6 +216,9 @@
           await stopTask();
           return;
         }
+        if (matchesPushToTalkKey(event) && ["speaking", "tts"].includes(getChatState())) {
+          stopSpeaking(false);
+        }
         if (!matchesPushToTalkKey(event) || !shouldHandlePushToTalk(event, { allowWithoutFocus: true })) {
           return;
         }

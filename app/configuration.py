@@ -94,6 +94,7 @@ def load_config(
     default_brain_model: str,
     normalize_model_path_func: Callable[[str], str],
     normalize_vision_config_func: Callable[[dict], dict],
+    normalize_environment_config_func: Callable[[dict], dict] | None = None,
 ) -> dict:
     if not config_path.exists():
         return copy_config(default_config)
@@ -118,6 +119,8 @@ def load_config(
         pet_cfg["background_overlay_opacity"] = 0.42
     pet_cfg["background_overlay_opacity"] = max(0.0, min(0.9, pet_cfg["background_overlay_opacity"]))
     config["vision"] = normalize_vision_config_func(config.get("vision", {}))
+    if normalize_environment_config_func is not None:
+        config["environment"] = normalize_environment_config_func(config.get("environment", {}))
     keep_neo_config_shape(config, default_config=default_config)
     normalize_neo_chat_config(
         config,
