@@ -22,6 +22,11 @@ from human_ops import ReviewableProposal
 from human_ops.chrome_profiles import list_chrome_profiles
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore
+from .ipet_memory_store import (
+    IpetMemoryStore,
+    build_memory_candidates_from_turn,
+    build_relationship_memory_context,
+)
 from .tts import (
     cleanup_old_audio,
     stream_qwen_tts_local,
@@ -42,6 +47,7 @@ from . import app_action_adapters as _app_action_adapter_helpers
 from . import app_adapters as _app_adapters
 from . import health_routes as _health_route_helpers
 from . import human_ops_decision_routes as _human_ops_decision_route_helpers
+from . import memory_routes as _memory_route_helpers
 from . import app_proposal_adapters as _human_ops_proposal_flow_helpers
 from . import settings_assets as _settings_asset_helpers
 from . import app_settings_adapters as _settings_adapter_helpers
@@ -64,9 +70,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
 AUDIO_CACHE_DIR = ROOT_DIR / "backend" / "audio_cache"
 CHAT_TOPICS_ROOT = ROOT_DIR / "data" / "chat_topics"
+IPET_MEMORY_ROOT = ROOT_DIR / "data" / "ipet_memory"
 DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
 
 TOPIC_STORE = TopicStore(CHAT_TOPICS_ROOT)
+MEMORY_STORE = IpetMemoryStore(IPET_MEMORY_ROOT)
 HUMAN_OPS_PENDING_PROPOSALS: dict[str, dict[str, Any]] = {}
 
 
@@ -221,6 +229,17 @@ def _settings_route_deps() -> _settings_route_helpers.SettingsRouteDependencies:
 _settings_route_helpers.register_settings_routes(app, _settings_route_deps())
 
 
+def _memory_route_deps() -> _memory_route_helpers.MemoryRouteDependencies:
+    return _memory_route_helpers.MemoryRouteDependencies(
+        memory_store=MEMORY_STORE,
+        pending_proposals=HUMAN_OPS_PENDING_PROPOSALS,
+        normalize_private_config=_normalize_private_config,
+    )
+
+
+_memory_route_helpers.register_memory_routes(app, _memory_route_deps)
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return _brain_response_helpers.sse(event, data)
 
@@ -294,6 +313,71 @@ def _create_human_ops_act_proposal(decision: BrainDecision, *, session_id: str, 
         user_text=user_text,
         deps=_human_ops_proposal_flow_deps(),
     )
+
+
+def _create_human_ops_memory_proposal(
+    decision_or_candidate: BrainDecision | dict[str, Any],
+    *,
+    session_id: str,
+    user_text: str,
+    turn_id: str,
+    origin: str,
+    retention_days: int,
+) -> tuple[str, ReviewableProposal]:
+    return _human_ops_proposal_flow_helpers.create_human_ops_memory_proposal(
+        decision_or_candidate,
+        session_id=session_id,
+        user_text=user_text,
+        turn_id=turn_id,
+        origin=origin,
+        retention_days=retention_days,
+        memory_store=MEMORY_STORE,
+        deps=_human_ops_proposal_flow_deps(),
+    )
+
+
+def _perform_memory_operation(proposal: ReviewableProposal) -> dict[str, Any]:
+    if proposal.proposal_type != "remember":
+        return {"ok": False, "error": "unsupported_memory_proposal"}
+    return MEMORY_STORE.apply_operation(proposal.payload)
+
+
+def _record_memory_review_exchange(*, session_id: str, user_text: str, assistant_text: str) -> None:
+    TOPIC_STORE.append_exchange(session_id, user_text=user_text, assistant_text=assistant_text)
+
+
+def _relationship_memory_context(user_text: str, memory_config: dict[str, Any]) -> tuple[str, list[str]]:
+    allowed_kinds = {"profile", "preference", "boundary", "person", "open_loop", "shared_moment", "general"}
+    if memory_config.get("preferences_enabled") is False:
+        allowed_kinds.discard("preference")
+    if memory_config.get("relationship_enabled") is False:
+        allowed_kinds.difference_update({"person", "open_loop", "shared_moment"})
+    def memory_int(name: str, fallback: int) -> int:
+        try:
+            return int(memory_config.get(name, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    return build_relationship_memory_context(
+        MEMORY_STORE,
+        user_text,
+        allowed_kinds=allowed_kinds,
+        limit=5,
+        follow_up_enabled=memory_config.get("follow_up_enabled") is not False,
+        follow_up_cooldown_hours=max(1, memory_int("follow_up_cooldown_hours", 24)),
+        quiet_hours_start=max(0, min(23, memory_int("quiet_hours_start", 22))),
+        quiet_hours_end=max(0, min(23, memory_int("quiet_hours_end", 8))),
+    )
+
+
+def _mark_memory_recalled(memory_id: str, assistant_text: str) -> None:
+    mentioned_ids = {str(record.get("id") or "") for record in MEMORY_STORE.search(assistant_text, limit=5)}
+    if memory_id in mentioned_ids:
+        MEMORY_STORE.mark_recalled(memory_id)
+
+
+def _build_memory_candidates(**kwargs: Any) -> list[dict[str, Any]]:
+    return build_memory_candidates_from_turn(**kwargs)
 
 
 def _proposal_arguments(proposal: ReviewableProposal) -> dict[str, Any]:

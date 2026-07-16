@@ -226,6 +226,12 @@ class ChatStreamFlowDependencies:
     normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] = (
         lambda decision, observation: decision
     )
+    create_human_ops_memory_proposal: Callable[..., tuple[str, Any]] = lambda *args, **kwargs: ("", None)
+    relationship_memory_context: Callable[[str, dict[str, Any]], tuple[str, list[str]]] = (
+        lambda user_text, memory_config: ("", [])
+    )
+    mark_memory_recalled: Callable[[str, str], None] = lambda memory_id, assistant_text: None
+    build_memory_candidates: Callable[..., list[dict[str, Any]]] = lambda **kwargs: []
 
 
 async def stream_chat_response(
@@ -253,6 +259,10 @@ async def stream_chat_response(
     if playwright_profile:
         brain_config["playwright_profile"] = playwright_profile
     memory_config = private_config.get("memory", {}) if isinstance(private_config.get("memory"), dict) else {}
+    try:
+        memory_retention_days = max(1, int(memory_config.get("retention_days") or 365))
+    except (TypeError, ValueError):
+        memory_retention_days = 365
     memory_mode = "temporary" if memory_config.get("conversation_saving") is False else requested_memory_mode
     model = str(request_payload.get("model") or brain_config.get("model_name") or "gpt-5.4")
     endpoint_configured = bool(str(brain_config.get("model_endpoint") or "").strip())
@@ -260,6 +270,7 @@ async def stream_chat_response(
     provider_ready = endpoint_configured or provider_hint in ENDPOINTLESS_PROVIDERS
     initial_provider = provider_hint if provider_ready else "local_placeholder"
     usage_totals: dict[str, int] = {}
+    brain_call_succeeded = False
 
     async def run_brain(**kwargs: Any) -> Any:
         TASK_CONTROL.check(turn_id, next_action="Brain 调用")
@@ -278,6 +289,7 @@ async def stream_chat_response(
         on_delta: Callable[[str], Awaitable[None]] | None = None,
         on_activity: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> tuple[str, str, str, BrainDecision]:
+        nonlocal brain_call_succeeded
         if not provider_ready:
             reply = (
                 "Neo Brain placeholder: 我已经收到你的消息。当前还没有配置 Brain 模型端点；"
@@ -301,6 +313,7 @@ async def stream_chat_response(
             if on_activity is not None:
                 brain_kwargs["on_activity"] = on_activity
             completion = await run_brain(**brain_kwargs)
+            brain_call_succeeded = True
             decision = deps.decision_from_completion(completion)
             return str(completion.text or decision.summary), completion.provider, completion.model, decision
         except BrainLLMError as exc:
@@ -333,11 +346,20 @@ async def stream_chat_response(
         _truncate_temporary_history(session_id, retry_from_assistant_turn)
     elif retry_from_assistant_turn > 0:
         deps.topic_store.truncate_from_assistant_turn(session_id, retry_from_assistant_turn)
+    due_memory_ids: list[str] = []
     if memory_mode == "temporary":
         conversation_history = _temporary_conversation_history(session_id)
     else:
         snapshot = deps.topic_store.get_context_snapshot(session_id)
         conversation_history = _bounded_conversation_history(snapshot.model_messages if snapshot is not None else ())
+        if memory_config.get("long_term_enabled") is not False:
+            try:
+                memory_context, due_memory_ids = deps.relationship_memory_context(text, memory_config)
+            except Exception:
+                # Long-term memory is an enhancement: a damaged record must not block ordinary chat.
+                memory_context, due_memory_ids = "", []
+            if memory_context:
+                conversation_history = [{"role": "system", "content": memory_context}, *conversation_history]
     streamed_visible = False
     if brain_config.get("streaming_enabled") is True and provider_ready:
         delta_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -389,6 +411,12 @@ async def stream_chat_response(
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
     else:
         reply, provider, used_model, decision = await resolve_reply(conversation_history)
+    if brain_call_succeeded:
+        for memory_id in due_memory_ids:
+            try:
+                deps.mark_memory_recalled(memory_id, str(reply or decision.summary))
+            except Exception:
+                continue
     react_budget = 3
     correction_used = False
     react_trace: list[dict[str, Any]] = []
@@ -408,6 +436,41 @@ async def stream_chat_response(
                 "goal": deps.decision_goal(decision),
             }
         )
+
+        if decision_kind == DecisionKind.PROPOSE_REMEMBER:
+            if memory_mode == "temporary":
+                reply = "这次是临时对话，我不会读取或写入长期关系记忆。切回持久对话后再告诉我想记住什么吧。"
+                decision = BrainDecision.say(reply)
+                break
+            if memory_config.get("long_term_enabled") is False:
+                reply = "长期记忆现在是关闭的，所以这条内容没有进入记忆候选。你可以在设置页重新开启。"
+                decision = BrainDecision.say(reply)
+                break
+            try:
+                proposal_id, proposal = deps.create_human_ops_memory_proposal(
+                    decision,
+                    session_id=session_id,
+                    user_text=text,
+                    turn_id=turn_id,
+                    origin="explicit",
+                    retention_days=memory_retention_days,
+                )
+            except (TypeError, ValueError) as exc:
+                reply = str(exc) or "这条内容不能进入长期记忆。"
+                decision = BrainDecision.say(reply)
+                break
+            yield deps.sse(
+                "phase",
+                {
+                    "category": "waiting_approval",
+                    "name": "memory_review",
+                    "status": "waiting",
+                    "status_id": f"approval:{proposal_id}",
+                    "text": "关系记忆正在等待你的批准",
+                },
+            )
+            yield deps.sse("approval_required", deps.proposal_event_payload(proposal_id, proposal))
+            return
 
         if decision_kind == DecisionKind.PROPOSE_ACT:
             supported_action, unsupported_action = deps.simple_human_action_support(decision)
@@ -700,6 +763,65 @@ async def stream_chat_response(
         )
     else:
         deps.topic_store.append_exchange(session_id, user_text=text, assistant_text=final_text)
+    implicit_memory_candidates: list[dict[str, Any]] = []
+    if memory_mode == "persistent" and memory_config.get("long_term_enabled") is not False:
+        try:
+            review_limit = max(1, int(memory_config.get("review_limit") or 20))
+        except (TypeError, ValueError):
+            review_limit = 20
+        pending_memory_count = sum(
+            1
+            for record in deps.pending_proposals.values()
+            if record.get("status") == "pending"
+            and getattr(record.get("proposal"), "proposal_type", "") == "remember"
+        )
+        if pending_memory_count < review_limit:
+            try:
+                implicit_memory_candidates = deps.build_memory_candidates(
+                    conversation_id=session_id,
+                    turn_id=turn_id,
+                    user_text=text,
+                    assistant_text=final_text,
+                    retention_days=memory_retention_days,
+                )[:1]
+            except Exception:
+                implicit_memory_candidates = []
+            allowed_candidates = []
+            for candidate in implicit_memory_candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                kind = str(candidate.get("kind") or "general")
+                if kind == "preference" and memory_config.get("preferences_enabled") is False:
+                    continue
+                if kind in {"person", "open_loop", "shared_moment"} and memory_config.get("relationship_enabled") is False:
+                    continue
+                allowed_candidates.append(candidate)
+            implicit_memory_candidates = []
+            for candidate in allowed_candidates:
+                try:
+                    deps.create_human_ops_memory_proposal(
+                        candidate,
+                        session_id=session_id,
+                        user_text=text,
+                        turn_id=turn_id,
+                        origin="implicit",
+                        retention_days=memory_retention_days,
+                    )
+                except Exception:
+                    continue
+                implicit_memory_candidates.append(candidate)
+            if implicit_memory_candidates:
+                yield deps.sse(
+                    "phase",
+                    {
+                        "category": "planning",
+                        "name": "memory_candidate",
+                        "status": "completed",
+                        "text": "生成了 1 条待审阅关系记忆，可在设置页查看",
+                        "source": "memory",
+                        "transient": True,
+                    },
+                )
     done_payload = {
         "turn_id": turn_id,
         "session_id": session_id,
@@ -709,6 +831,7 @@ async def stream_chat_response(
         "decision": decision.to_dict(),
         "retry_from_assistant_turn": retry_from_assistant_turn or None,
         "memory_mode": memory_mode,
+        "memory_candidate_count": len(implicit_memory_candidates),
     }
     if last_observation is not None:
         done_payload["observation"] = last_observation

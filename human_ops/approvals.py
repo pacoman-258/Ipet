@@ -66,6 +66,22 @@ class ReviewableProposal:
             preview=preview,
         )
 
+    @classmethod
+    def remember(
+        cls,
+        *,
+        summary: str,
+        payload: dict[str, Any],
+    ) -> "ReviewableProposal":
+        operation = str(payload.get("operation") or "save").strip()
+        if operation not in {"save", "forget", "resolve", "snooze"}:
+            raise ValueError(f"unsupported memory operation: {operation}")
+        return cls(
+            proposal_type="remember",
+            summary=str(summary or "").strip(),
+            payload={**dict(payload or {}), "operation": operation},
+        )
+
     def approve(self) -> "ReviewableProposal":
         return ReviewableProposal(
             proposal_type=self.proposal_type,

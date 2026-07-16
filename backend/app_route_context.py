@@ -100,6 +100,11 @@ class _LiveRouteDependencyContext:
             session_id=session_id,
             user_text=user_text,
         )
+        self.create_human_ops_memory_proposal = lambda decision_or_candidate, **kwargs: self._call(
+            "_create_human_ops_memory_proposal",
+            decision_or_candidate,
+            **kwargs,
+        )
         self.proposal_event_payload = lambda proposal_id, proposal: self._call(
             "_proposal_event_payload",
             proposal_id,
@@ -143,6 +148,19 @@ class _LiveRouteDependencyContext:
             execution=execution,
         )
         self.request_native_approval = lambda proposal: self._call("_request_native_human_ops_approval", proposal)
+        self.perform_memory_operation = lambda proposal: self._call("_perform_memory_operation", proposal)
+        self.record_memory_review_exchange = lambda **kwargs: self._call("_record_memory_review_exchange", **kwargs)
+        self.relationship_memory_context = lambda user_text, memory_config: self._call(
+            "_relationship_memory_context",
+            user_text,
+            memory_config,
+        )
+        self.mark_memory_recalled = lambda memory_id, assistant_text: self._call(
+            "_mark_memory_recalled",
+            memory_id,
+            assistant_text,
+        )
+        self.build_memory_candidates = lambda **kwargs: self._call("_build_memory_candidates", **kwargs)
 
     @property
     def default_topic_title(self) -> str:

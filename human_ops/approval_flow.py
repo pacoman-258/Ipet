@@ -110,6 +110,11 @@ class HumanOpsApprovalFlowDependencies:
     normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] = (
         lambda decision, observation: decision
     )
+    perform_memory_operation: Callable[[ReviewableProposal], dict[str, Any]] = lambda proposal: {
+        "ok": False,
+        "error": "memory_store_unavailable",
+    }
+    record_memory_review_exchange: Callable[..., None] = lambda **kwargs: None
 
 
 def stream_human_ops_proposal_decision(
@@ -126,6 +131,8 @@ def stream_human_ops_proposal_decision(
     proposal = record.get("proposal")
     if not isinstance(proposal, ReviewableProposal):
         raise HumanOpsProposalNotFound("Human Ops proposal not found.")
+    if record.get("status") not in {"pending", "invalidated_by_stop"}:
+        raise HumanOpsProposalNotFound("Human Ops proposal is no longer pending.")
     session_id = str(record.get("session_id") or "default")
     task_id = str(record.get("task_id") or proposal_key)
     label = deps.proposal_tool_label(proposal)
@@ -146,7 +153,16 @@ def stream_human_ops_proposal_decision(
         if not approved:
             record["status"] = "rejected"
             user_text = str(decision_payload.get("user_text") or "").strip()
-            final_text = "已拒绝这次操作。" + (f" 调整说明：{user_text}" if user_text else "")
+            if proposal.proposal_type == "remember":
+                final_text = "好，这条关系记忆没有保存。" + (f" 调整说明：{user_text}" if user_text else "")
+                if record.get("origin") == "explicit":
+                    deps.record_memory_review_exchange(
+                        session_id=session_id,
+                        user_text=str(record.get("user_text") or ""),
+                        assistant_text=final_text,
+                    )
+            else:
+                final_text = "已拒绝这次操作。" + (f" 调整说明：{user_text}" if user_text else "")
             yield deps.sse("display_segment", {"text": final_text})
             yield deps.sse(
                 "done",
@@ -165,6 +181,69 @@ def stream_human_ops_proposal_decision(
             raise TaskStopped()
         TASK_CONTROL.check(task_id, next_action="待审批动作")
         record["status"] = "approved"
+
+        if proposal.proposal_type == "remember":
+            yield deps.sse(
+                "phase",
+                {
+                    "category": "acting",
+                    "name": "memory_review_apply",
+                    "status": "running",
+                    "text": label,
+                    "source": "memory",
+                },
+            )
+            try:
+                TASK_CONTROL.enter_atomic(task_id)
+                try:
+                    execution = deps.perform_memory_operation(proposal.approve())
+                finally:
+                    TASK_CONTROL.exit_atomic(task_id)
+            except Exception as exc:
+                execution = {"ok": False, "error": str(exc)}
+            operation = str(proposal.payload.get("operation") or "save").strip()
+            if execution.get("ok") is False:
+                record["status"] = "failed"
+                final_text = f"这条关系记忆没有处理成功：{str(execution.get('error') or '未知错误')[:180]}"
+            elif operation == "forget":
+                record["status"] = "executed"
+                final_text = "已经忘记这条关系记忆，之后不会再检索到它。"
+            elif operation == "resolve":
+                record["status"] = "executed"
+                final_text = "好，这件事已经标记为完成，我不会再追问啦。"
+            elif operation == "snooze":
+                record["status"] = "executed"
+                final_text = "好，我先不追问，到了新的时间再轻轻问你一次。"
+            elif execution.get("duplicate"):
+                record["status"] = "executed"
+                final_text = "这条关系记忆已经保存过啦，没有重复写入。"
+            elif execution.get("saved"):
+                record["status"] = "executed"
+                final_text = "记住了。以后在相关话题里，我会自然地接上这件事。"
+            else:
+                record["status"] = "failed"
+                final_text = "这条内容不适合进入长期记忆，所以没有保存。"
+            if record.get("origin") == "explicit":
+                deps.record_memory_review_exchange(
+                    session_id=session_id,
+                    user_text=str(record.get("user_text") or ""),
+                    assistant_text=final_text,
+                )
+            yield deps.sse("display_segment", {"text": final_text})
+            yield deps.sse(
+                "done",
+                {
+                    "turn_id": proposal_key,
+                    "proposal_id": proposal_key,
+                    "session_id": session_id,
+                    "text": final_text,
+                    "approved": True,
+                    "execution": execution,
+                    "memory_mode": "persistent",
+                },
+            )
+            return
+
         action_type = str(proposal.payload.get("action_type") or "").strip()
         phase_name = "human_ops_click" if action_type == "click" else (
             "human_ops_filesystem" if action_type.startswith("file_") else "human_ops_action"

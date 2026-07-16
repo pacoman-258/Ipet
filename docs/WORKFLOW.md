@@ -60,6 +60,14 @@ Persistent conversations use bounded summaries and recent complete exchanges fro
 
 Long-term memory and learned procedures require explicit Human Ops review. Features without a verified review path must not write durable state.
 
+Relationship memory follows one closed loop: detect a candidate, review it, persist only an approved record, retrieve a bounded relevant subset, and let the user correct or forget it. Explicit `propose_remember` decisions pause at Human Ops; rejection writes no memory. Post-turn extraction may create at most one non-blocking, process-local candidate and never persists it before approval. Temporary conversations neither retrieve long-term memory nor create candidates.
+
+Approved records use the existing Markdown memory store and carry a stable id, kind, summary, source conversation and turn, visible reason, scope, sensitivity, status, retention/expiry, and optional follow-up time. Active, unexpired records alone are retrievable. A correction may supersede one unambiguous active record; superseded, resolved, expired, and forgotten records are never injected together with current facts. Forgetting removes the long-term memory file immediately; deleting the source conversation remains a separate user action.
+
+Each persistent turn injects no more than five relevant approved records and no more than 1,200 characters as fact data, never as instructions. Direct text/topic matches outrank generic preference fallback. The pet uses a memory only when it naturally helps the current reply and does not mention it merely to prove recall.
+
+An approved `open_loop` may become eligible for one gentle follow-up after its due time. Follow-ups respect the configured quiet hours and cooldown. Delivery to Brain is not counted as a completed follow-up unless the visible reply actually refers to the remembered topic. The user can resolve or snooze an open loop through a reviewed `propose_remember` status change or directly in the settings Memory console.
+
 ## Brain Decision Contract
 
 Brain returns exactly one `BrainDecision`:
@@ -133,6 +141,8 @@ Changed risk or repeated failure returns to Human Ops or stops; the executor doe
 Durable memory records its source, visible reason, scope, retention expectation, and privacy constraints. Learned skills record their trigger, bounded procedure, required approvals, and verification method.
 
 Memory & Skills never stores raw screenshots, generated audio, local secrets, or unreviewed destructive procedures.
+
+The settings Memory console lists saved records, process-local pending candidates, and open loops. User-initiated edits, forgetting, resolving, and snoozing are explicit console operations. Model-originated writes and status changes always use Human Ops review even if an older local configuration says memory review is disabled.
 
 ## Observe Result And Summary
 

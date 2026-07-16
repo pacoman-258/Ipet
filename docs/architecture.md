@@ -66,7 +66,7 @@ Brain returns exactly one structured next step:
 
 Brain does not directly mutate files, settings, memory, UI, or processes. It asks other modules to do bounded work.
 
-LLM output is classified into `BrainDecision`. Providers are asked to return a compact JSON object such as `{"kind":"say","text":"..."}`. Plain text is accepted as `say` so chat remains usable. The current executable path is only `say`; `observe`, `act`, `remember`, `learn_skill`, and `stop` are reserved for the approval and execution loops.
+LLM output is classified into `BrainDecision`. Providers are asked to return a compact JSON object such as `{"kind":"say","text":"..."}`. Plain text is accepted as `say` so chat remains usable. `say`, `think`, `observe`, `propose_act`, `propose_remember`, and `stop` have executable runtime paths; `propose_learn_skill` remains reserved until its own reviewed persistence loop is complete.
 
 Brain calls a user-selected LLM provider through a narrow API boundary. The supported providers are OpenAI-compatible chat completions, Ollama chat, Anthropic-compatible messages, Google AI Studio Gemini `generateContent`, and the locally installed Codex CLI. Provider endpoint, model name, temperature, optional streaming, and optional API key are configured in the web settings page and saved only in local configuration. Google AI Studio uses the official Gemini API endpoint by default. The Codex option needs neither endpoint nor API key: it reuses the local Codex login and its account-side usage entitlement without copying credentials into Ipet.
 
@@ -109,6 +109,10 @@ Memory & Skills owns the durable learning surface:
 - retention and privacy rules
 
 Memory entries should include source, reason, scope, and retention expectation. Learned skills should include trigger, procedure, approval needs, and verification method.
+
+Relationship memory remains file-backed under local ignored state. Brain can explicitly propose save, correction, forget, open-loop resolution, or snooze, but Human Ops owns the pending proposal and applies it only after approval. A deterministic post-turn extractor can create one implicit candidate without changing durable state. The settings Memory API exposes approved records and process-local candidates, while user edits and forgetting remain explicit console actions.
+
+Before a persistent Brain turn, Memory selects at most five active, unexpired records under a 1,200-character budget. The resulting block is injected as non-command fact data. Temporary turns bypass this path entirely. Open loops add due-time, quiet-hour, cooldown, resolve, and snooze state without introducing a scheduler service; they become eligible when the user next talks to Ipet.
 
 ## 7. Data Flow
 

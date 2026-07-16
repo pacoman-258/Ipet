@@ -69,12 +69,15 @@ class SettingsFormSourceTests(unittest.TestCase):
             "web_search_enabled: !!els.brainWebSearchEnabled?.checked",
             "playwright_profile: stringValue(els.opsPlaywrightProfile)",
             "model_endpoint: isEndpointlessProvider(observeProvider) ? \"\" : stringValue(els.opsObserveModelEndpoint)",
-            "review_queue: linesValue(els.memoryReviewQueue)",
+            "follow_up_enabled: !!els.memoryFollowUpEnabled?.checked",
+            "follow_up_cooldown_hours: intValue(els.memoryFollowUpCooldownHours, 24)",
             "recipes: linesValue(els.skillsRecipeList)",
             "proposal_queue: linesValue(els.skillsProposalQueue)",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.form_js)
+
+        self.assertNotIn("memoryReviewQueue", self.form_js)
 
         read_form = self.form_js.split("  function readForm() {", 1)[1].split("  return {", 1)[0]
         self.assertNotIn("backend_url", read_form)

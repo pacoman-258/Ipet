@@ -57,6 +57,7 @@ class AppRouteDependencyContext:
     blocked_react_decision: Callable[[str, BrainDecision | None], BrainDecision] | None = None
     unsupported_simple_action_prompt: Callable[..., str] | None = None
     create_human_ops_act_proposal: Callable[..., tuple[str, ReviewableProposal]] | None = None
+    create_human_ops_memory_proposal: Callable[..., tuple[str, ReviewableProposal]] | None = None
     proposal_event_payload: Callable[[str, ReviewableProposal], dict[str, Any]] | None = None
     perform_human_ops_observe: Callable[[BrainDecision, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
     has_partial_coordinate_pair: Callable[[str], bool] | None = None
@@ -74,6 +75,11 @@ class AppRouteDependencyContext:
     with_inherited_enter_expected_text: Callable[..., BrainDecision] | None = None
     request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
     normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] | None = None
+    perform_memory_operation: Callable[[ReviewableProposal], dict[str, Any]] | None = None
+    record_memory_review_exchange: Callable[..., None] | None = None
+    relationship_memory_context: Callable[[str, dict[str, Any]], tuple[str, list[str]]] | None = None
+    mark_memory_recalled: Callable[[str, str], None] | None = None
+    build_memory_candidates: Callable[..., list[dict[str, Any]]] | None = None
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
@@ -165,6 +171,11 @@ def create_chat_stream_route_deps(context: AppRouteDependencyContext) -> _chat_s
         pending_proposals=context.pending_proposals if context.pending_proposals is not None else {},
         normalize_observed_click_coordinates=context.normalize_observed_click_coordinates
         or (lambda decision, observation: decision),
+        create_human_ops_memory_proposal=context.create_human_ops_memory_proposal
+        or (lambda *args, **kwargs: ("", None)),
+        relationship_memory_context=context.relationship_memory_context or (lambda user_text, config: ("", [])),
+        mark_memory_recalled=context.mark_memory_recalled or (lambda memory_id, assistant_text: None),
+        build_memory_candidates=context.build_memory_candidates or (lambda **kwargs: []),
     )
 
 
@@ -199,4 +210,7 @@ def create_human_ops_decision_route_deps(
         request_native_approval=context.request_native_approval,
         normalize_observed_click_coordinates=context.normalize_observed_click_coordinates
         or (lambda decision, observation: decision),
+        perform_memory_operation=context.perform_memory_operation
+        or (lambda proposal: {"ok": False, "error": "memory_store_unavailable"}),
+        record_memory_review_exchange=context.record_memory_review_exchange or (lambda **kwargs: None),
     )

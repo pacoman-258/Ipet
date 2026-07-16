@@ -617,6 +617,172 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0][1]["memory_mode"], "temporary")
         self.assertEqual(events[-1][1]["memory_mode"], "temporary")
 
+    async def test_explicit_remember_decision_stops_at_human_ops_review_without_persisting_chat(self) -> None:
+        topic_store = TopicStoreSpy()
+        created: list[dict[str, Any]] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            decision = BrainDecision.propose_remember("preference", "我不喜欢被催促。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        def create_memory_proposal(_decision: BrainDecision, **kwargs: Any) -> tuple[str, object]:
+            created.append(kwargs)
+            return "memory-proposal", object()
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {"conversation_saving": True, "long_term_enabled": True},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            create_human_ops_memory_proposal=create_memory_proposal,
+            proposal_event_payload=lambda proposal_id, _proposal: {"proposal_id": proposal_id},
+        )
+
+        events = await _collect_events(stream_chat_response({"text": "记住我不喜欢被催", "session_id": "friend"}, deps))
+
+        self.assertEqual(events[-1], ("approval_required", {"proposal_id": "memory-proposal"}))
+        self.assertEqual(topic_store.appended, [])
+        self.assertEqual(created[0]["origin"], "explicit")
+
+    async def test_temporary_mode_neither_reads_nor_proposes_relationship_memory(self) -> None:
+        topic_store = TopicStoreSpy()
+        context_calls: list[str] = []
+        proposal_calls: list[str] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            decision = BrainDecision.propose_remember("preference", "我喜欢红茶。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {"conversation_saving": True, "long_term_enabled": True},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            relationship_memory_context=lambda text, _config: (context_calls.append(text) or "memory", []),
+            create_human_ops_memory_proposal=lambda *_args, **_kwargs: proposal_calls.append("created"),
+            build_memory_candidates=lambda **_kwargs: [{"summary": "不该生成"}],
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {"text": "临时聊聊", "session_id": "private", "memory_mode": "temporary"},
+                deps,
+            )
+        )
+
+        self.assertEqual(context_calls, [])
+        self.assertEqual(proposal_calls, [])
+        self.assertEqual(topic_store.operations, [])
+        self.assertIn("不会读取或写入", events[-1][1]["text"])
+
+    async def test_persistent_turn_injects_bounded_memory_context_and_marks_due_delivery(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls: list[dict[str, Any]] = []
+        recalled: list[str] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            decision = BrainDecision.say("我记得，会慢一点来。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {"conversation_saving": True, "long_term_enabled": True},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            relationship_memory_context=lambda _text, _config: ("[已批准记忆]\n- 不喜欢被催促", ["due-1"]),
+            mark_memory_recalled=lambda memory_id, _assistant_text: recalled.append(memory_id),
+        )
+
+        await _collect_events(stream_chat_response({"text": "我有点忙", "session_id": "persistent"}, deps))
+
+        self.assertEqual(calls[0]["conversation_history"][0]["role"], "system")
+        self.assertIn("不喜欢被催促", calls[0]["conversation_history"][0]["content"])
+        self.assertEqual(recalled, ["due-1"])
+
+    async def test_post_turn_extractor_creates_non_blocking_implicit_candidate(self) -> None:
+        topic_store = TopicStoreSpy()
+        created: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            decision = BrainDecision.say("好，我会注意语气。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        candidate = {"summary": "我不喜欢被催促。", "kind": "boundary"}
+
+        def create_candidate(memory: dict[str, Any], **kwargs: Any) -> tuple[str, object]:
+            created.append((memory, kwargs))
+            return "implicit-memory", object()
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {"conversation_saving": True, "long_term_enabled": True, "review_limit": 20},
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            build_memory_candidates=lambda **_kwargs: [candidate],
+            create_human_ops_memory_proposal=create_candidate,
+        )
+
+        events = await _collect_events(stream_chat_response({"text": "我不喜欢被催", "session_id": "friend"}, deps))
+
+        self.assertNotIn("approval_required", [name for name, _payload in events])
+        self.assertEqual(events[-1][1]["memory_candidate_count"], 1)
+        self.assertEqual(created[0][0], candidate)
+        self.assertEqual(created[0][1]["origin"], "implicit")
+
+    async def test_relationship_memory_failures_degrade_without_blocking_chat(self) -> None:
+        topic_store = TopicStoreSpy()
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            decision = BrainDecision.say("普通聊天仍然可用。")
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="codex", model="test")
+
+        def fail_memory_context(_text: str, _config: dict[str, Any]) -> tuple[str, list[str]]:
+            raise ValueError("damaged memory metadata")
+
+        def fail_memory_extraction(**_kwargs: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("extractor unavailable")
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"provider": "codex", "model_name": "test"},
+                "human_ops": {},
+                "memory": {
+                    "conversation_saving": True,
+                    "long_term_enabled": True,
+                    "retention_days": "invalid",
+                },
+            },
+            normalize_provider=lambda _value: "codex",
+            run_brain_turn=run_brain_turn,
+            relationship_memory_context=fail_memory_context,
+            build_memory_candidates=fail_memory_extraction,
+        )
+
+        events = await _collect_events(stream_chat_response({"text": "继续聊天", "session_id": "friend"}, deps))
+
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["text"], "普通聊天仍然可用。")
+        self.assertEqual(events[-1][1]["memory_candidate_count"], 0)
+        self.assertEqual(topic_store.appended, [("friend", "继续聊天", "普通聊天仍然可用。")])
+
 
 if __name__ == "__main__":
     unittest.main()

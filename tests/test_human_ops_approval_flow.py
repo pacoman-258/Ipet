@@ -190,6 +190,49 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(done["execution"])
         self.assertIn("调整说明：先不要点", done["text"])
 
+    async def test_memory_approval_uses_memory_store_callback_without_body_action(self) -> None:
+        proposal = ReviewableProposal.remember(
+            summary="Ipet 想保存这条关系记忆：我不喜欢被催促。",
+            payload={
+                "operation": "save",
+                "memory": {"summary": "我不喜欢被催促。", "kind": "boundary"},
+            },
+        )
+        pending = {
+            "memory-1": {
+                "proposal": proposal,
+                "session_id": "friend",
+                "user_text": "记住我不喜欢被催",
+                "status": "pending",
+                "origin": "explicit",
+            }
+        }
+        exchanges: list[dict[str, str]] = []
+
+        async def body_action(_proposal: ReviewableProposal) -> dict[str, Any]:
+            raise AssertionError("memory approval must not execute a Body action")
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=body_action,
+            proposal_tool_label=lambda _proposal: "保存 boundary：我不喜欢被催促。",
+            perform_memory_operation=lambda approved: {
+                "ok": approved.approved,
+                "saved": True,
+                "operation": "save",
+            },
+            record_memory_review_exchange=lambda **kwargs: exchanges.append(kwargs),
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision("memory-1", {"approved": True}, deps)
+        )
+
+        self.assertEqual(pending["memory-1"]["status"], "executed")
+        self.assertEqual(events[-1][1]["execution"]["saved"], True)
+        self.assertIn("记住了", events[-1][1]["text"])
+        self.assertEqual(exchanges[0]["session_id"], "friend")
+
     async def test_approve_continuation_uses_injected_dependencies_and_emits_next_approval(self) -> None:
         proposal = ReviewableProposal.act(
             action_type="type_text",

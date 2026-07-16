@@ -1534,6 +1534,96 @@ button:hover {
   text-align: right;
 }
 
+.memory-toolbar,
+.memory-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-toolbar {
+  margin-top: 18px;
+}
+
+.memory-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-tabs .active {
+  border-color: rgba(88, 86, 214, 0.42);
+  background: rgba(88, 86, 214, 0.1);
+  color: #3f3aa8;
+}
+
+.memory-record-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.memory-record {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 9px;
+  background: #fbfbfd;
+}
+
+.memory-record.is-inactive {
+  opacity: 0.62;
+}
+
+.memory-record-head > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-record p,
+.memory-record small {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-record small,
+.memory-privacy-note,
+.memory-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memory-kind,
+.memory-status {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(88, 86, 214, 0.1);
+  color: #4b47a8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.memory-status {
+  background: rgba(52, 199, 89, 0.1);
+  color: #1f7a3b;
+}
+
+.memory-record-actions {
+  margin-top: 3px;
+}
+
+.memory-record-actions button {
+  min-width: 72px;
+}
+
+.memory-privacy-note {
+  margin: 12px 0 0;
+}
+
 .toast {
   top: 12px;
 }

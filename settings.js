@@ -83,9 +83,17 @@
     memoryLongTermEnabled: $("memory-long-term-enabled"),
     memoryPreferencesEnabled: $("memory-preferences-enabled"),
     memoryRelationshipEnabled: $("memory-relationship-enabled"),
+    memoryFollowUpEnabled: $("memory-follow-up-enabled"),
+    memoryFollowUpCooldownHours: $("memory-follow-up-cooldown-hours"),
+    memoryQuietHoursStart: $("memory-quiet-hours-start"),
+    memoryQuietHoursEnd: $("memory-quiet-hours-end"),
     memoryRetentionDays: $("memory-retention-days"),
     memoryReviewLimit: $("memory-review-limit"),
-    memoryReviewQueue: $("memory-review-queue"),
+    memoryRefreshBtn: $("memory-refresh-btn"),
+    memoryCatalogStatus: $("memory-catalog-status"),
+    memorySavedList: $("memory-saved-list"),
+    memoryPendingList: $("memory-pending-list"),
+    memoryOpenLoopList: $("memory-open-loop-list"),
     skillsRecipesEnabled: $("skills-recipes-enabled"),
     skillsAutoPropose: $("skills-auto-propose"),
     skillsReviewRequired: $("skills-review-required"),
@@ -97,6 +105,7 @@
   let lastLoadedAt = "";
   let personaPromptCatalog = [];
   let chromeProfileCatalog = [];
+  let memoryCatalog = { records: [], pending: [] };
 
   function setStatus(message) {
     if (els.statusBanner) {
@@ -291,6 +300,183 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#39;");
+  }
+
+  function formatMemoryTime(value) {
+    const text = String(value || "").trim();
+    if (!text) return "未设置";
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? text : date.toLocaleString();
+  }
+
+  function setMemoryCatalogStatus(message) {
+    if (els.memoryCatalogStatus) {
+      els.memoryCatalogStatus.textContent = String(message || "");
+    }
+  }
+
+  function memoryRecordCard(record, openLoop = false) {
+    const status = String(record.status || "active");
+    const inactive = status !== "active";
+    return `
+      <article class="memory-record${inactive ? " is-inactive" : ""}" data-memory-id="${escapeHtml(record.id)}">
+        <div class="memory-record-head">
+          <div>
+            <span class="memory-kind">${escapeHtml(record.kind || "general")}</span>
+            <strong>${escapeHtml(record.title || "关系记忆")}</strong>
+          </div>
+          <span class="memory-status">${escapeHtml(status)}</span>
+        </div>
+        <p>${escapeHtml(record.summary || "")}</p>
+        <small>保存原因：${escapeHtml(record.reason || "用户批准保存")} · 来源会话：${escapeHtml(record.source_conversation_id || "未知")}</small>
+        <small>保留至：${escapeHtml(formatMemoryTime(record.expires_at))}${openLoop ? ` · 回访：${escapeHtml(formatMemoryTime(record.follow_up_at))}` : ""}</small>
+        <div class="button-row wrap memory-record-actions">
+          ${openLoop && status === "active" ? '<button class="ghost-button" type="button" data-memory-action="resolve">完成</button><button class="ghost-button" type="button" data-memory-action="snooze">稍后 1 天</button>' : ""}
+          <button class="ghost-button" type="button" data-memory-action="edit">编辑</button>
+          <button class="danger-button" type="button" data-memory-action="forget">忘记</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function pendingMemoryCard(candidate) {
+    const memory = candidate.memory || candidate.target || {};
+    const operation = ({ forget: "忘记", resolve: "完成", snooze: "稍后回访", save: "保存" })[candidate.operation] || "保存";
+    const reviewActions = candidate.origin === "implicit"
+      ? '<button class="primary-button" type="button" data-memory-candidate-action="approve">批准</button><button class="danger-button" type="button" data-memory-candidate-action="reject">拒绝</button>'
+      : '<small>这条显式提案正在对话或系统通知中等待审批。</small>';
+    return `
+      <article class="memory-record" data-proposal-id="${escapeHtml(candidate.proposal_id)}">
+        <div class="memory-record-head">
+          <div>
+            <span class="memory-kind">${escapeHtml(candidate.origin || "explicit")}</span>
+            <strong>${operation}候选</strong>
+          </div>
+          <span class="memory-status">pending</span>
+        </div>
+        <p>${escapeHtml(memory.summary || candidate.summary || "")}</p>
+        <small>原因：${escapeHtml(memory.reason || "等待用户审阅")} · 来源会话：${escapeHtml(candidate.source_conversation_id || "未知")}</small>
+        <div class="button-row wrap memory-record-actions">
+          ${reviewActions}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderMemoryCatalog() {
+    const records = Array.isArray(memoryCatalog.records) ? memoryCatalog.records : [];
+    const pending = Array.isArray(memoryCatalog.pending) ? memoryCatalog.pending : [];
+    const saved = records.filter((record) => record.kind !== "open_loop");
+    const openLoops = records.filter((record) => record.kind === "open_loop");
+    if (els.memorySavedList) {
+      els.memorySavedList.innerHTML = saved.length
+        ? saved.map((record) => memoryRecordCard(record)).join("")
+        : '<p class="memory-empty">还没有已保存的关系记忆。</p>';
+    }
+    if (els.memoryPendingList) {
+      els.memoryPendingList.innerHTML = pending.length
+        ? pending.map(pendingMemoryCard).join("")
+        : '<p class="memory-empty">没有待审阅候选。</p>';
+    }
+    if (els.memoryOpenLoopList) {
+      els.memoryOpenLoopList.innerHTML = openLoops.length
+        ? openLoops.map((record) => memoryRecordCard(record, true)).join("")
+        : '<p class="memory-empty">没有开放事项。</p>';
+    }
+    setMemoryCatalogStatus(`已保存 ${records.length} 条 · 待审阅 ${pending.length} 条 · 开放事项 ${openLoops.filter((item) => item.status === "active").length} 条`);
+  }
+
+  async function loadMemoryCatalog() {
+    if (settingsPayload?.static_preview) {
+      memoryCatalog = { records: [], pending: [] };
+      renderMemoryCatalog();
+      setMemoryCatalogStatus("静态预览不读取本地关系记忆。");
+      return;
+    }
+    setMemoryCatalogStatus("正在读取关系记忆...");
+    const payload = await fetchJson("/api/memory");
+    memoryCatalog = {
+      records: Array.isArray(payload.records) ? payload.records : [],
+      pending: Array.isArray(payload.pending) ? payload.pending : [],
+    };
+    renderMemoryCatalog();
+  }
+
+  function setMemoryTab(tabName) {
+    const requested = String(tabName || "saved");
+    document.querySelectorAll("[data-memory-tab]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.memoryTab === requested);
+    });
+    document.querySelectorAll("[data-memory-panel]").forEach((panel) => {
+      const active = panel.dataset.memoryPanel === requested;
+      panel.hidden = !active;
+      panel.classList.toggle("active", active);
+    });
+  }
+
+  async function updateMemory(memoryId, changes) {
+    await fetchJson(`/api/memory/${encodeURIComponent(memoryId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ changes }),
+    });
+    await loadMemoryCatalog();
+  }
+
+  async function handleMemoryRecordAction(event) {
+    const button = event.target.closest("[data-memory-action]");
+    if (!button) return;
+    const card = button.closest("[data-memory-id]");
+    const memoryId = String(card?.dataset.memoryId || "");
+    const record = memoryCatalog.records.find((item) => item.id === memoryId);
+    if (!memoryId || !record) return;
+    const action = button.dataset.memoryAction;
+    if (action === "edit") {
+      const summary = window.prompt("编辑记忆内容", String(record.summary || ""));
+      if (summary == null || !summary.trim() || summary.trim() === String(record.summary || "").trim()) return;
+      await updateMemory(memoryId, { summary: summary.trim() });
+      showToast("记忆已更新");
+      return;
+    }
+    if (action === "forget") {
+      if (!window.confirm("确定忘记这条长期记忆吗？原始对话不会随之删除。")) return;
+      await fetchJson(`/api/memory/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+      await loadMemoryCatalog();
+      showToast("已经忘记");
+      return;
+    }
+    if (action === "resolve") {
+      await updateMemory(memoryId, { status: "resolved" });
+      showToast("开放事项已完成");
+      return;
+    }
+    if (action === "snooze") {
+      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await updateMemory(memoryId, { status: "active", follow_up_at: tomorrow });
+      showToast("一天后再问");
+    }
+  }
+
+  async function decideMemoryCandidate(proposalId, approved) {
+    const response = await fetch(`/api/human-ops/proposals/${encodeURIComponent(proposalId)}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved: !!approved }),
+    });
+    const body = await response.text();
+    if (!response.ok) {
+      throw new Error(body || `memory review http ${response.status}`);
+    }
+    await loadMemoryCatalog();
+    showToast(approved ? "记忆已批准" : "候选已拒绝");
+  }
+
+  async function handleMemoryCandidateAction(event) {
+    const button = event.target.closest("[data-memory-candidate-action]");
+    if (!button) return;
+    const card = button.closest("[data-proposal-id]");
+    const proposalId = String(card?.dataset.proposalId || "");
+    if (!proposalId) return;
+    await decideMemoryCandidate(proposalId, button.dataset.memoryCandidateAction === "approve");
   }
 
   function providerLabel(value) {
@@ -516,6 +702,13 @@
     populateForm(settingsPayload.config || {});
     renderPersonaPromptState();
     renderChromeProfileStatus();
+    try {
+      await loadMemoryCatalog();
+    } catch (error) {
+      memoryCatalog = { records: [], pending: [] };
+      renderMemoryCatalog();
+      setMemoryCatalogStatus(`关系记忆不可用：${error.message || String(error)}`);
+    }
     if (!settingsPayload.static_preview) {
       setStatus("设置已加载。");
     }
@@ -539,6 +732,7 @@
     lastLoadedAt = new Date().toLocaleTimeString();
     populateForm(settingsPayload.config || {});
     renderPersonaPromptState();
+    await loadMemoryCatalog();
     setStatus("设置已保存，Ipet 会按新配置刷新。");
     showToast("已保存");
   }
@@ -581,6 +775,13 @@
     ));
     els.opsPlaywrightProfile?.addEventListener("change", renderChromeProfileStatus);
     els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
+    els.memoryRefreshBtn?.addEventListener("click", () => wrap(loadMemoryCatalog));
+    document.querySelectorAll("[data-memory-tab]").forEach((button) => {
+      button.addEventListener("click", () => setMemoryTab(button.dataset.memoryTab || "saved"));
+    });
+    els.memorySavedList?.addEventListener("click", (event) => wrap(() => handleMemoryRecordAction(event)));
+    els.memoryOpenLoopList?.addEventListener("click", (event) => wrap(() => handleMemoryRecordAction(event)));
+    els.memoryPendingList?.addEventListener("click", (event) => wrap(() => handleMemoryCandidateAction(event)));
     els.brainProvider?.addEventListener("change", syncProviderControls);
     els.opsObserveModelProvider?.addEventListener("change", syncProviderControls);
     els.chatAsrProvider?.addEventListener("change", syncProviderControls);

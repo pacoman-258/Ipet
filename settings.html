@@ -281,8 +281,8 @@
               <span>act 需要批准</span>
             </label>
             <label class="toggle-card">
-              <input id="ops-require-memory-review" type="checkbox" />
-              <span>remember 需要批准</span>
+              <input id="ops-require-memory-review" type="checkbox" checked disabled />
+              <span>长期记忆始终需批准</span>
             </label>
             <label class="toggle-card">
               <input id="ops-require-skill-review" type="checkbox" />
@@ -392,6 +392,10 @@
               <input id="memory-relationship-enabled" type="checkbox" />
               <span>记录关系记忆</span>
             </label>
+            <label class="toggle-card">
+              <input id="memory-follow-up-enabled" type="checkbox" />
+              <span>开放事项到期后轻声回访</span>
+            </label>
           </div>
 
           <div class="form-grid two-col">
@@ -403,11 +407,33 @@
               <span>待审阅上限</span>
               <input id="memory-review-limit" type="number" min="1" step="1" />
             </label>
-            <label class="field wide">
-              <span>记忆草案队列</span>
-              <textarea id="memory-review-queue" rows="6" placeholder="每行一条待审阅记忆。"></textarea>
+            <label class="field">
+              <span>回访冷却（小时）</span>
+              <input id="memory-follow-up-cooldown-hours" type="number" min="1" step="1" />
+            </label>
+            <label class="field">
+              <span>安静时段开始（0-23）</span>
+              <input id="memory-quiet-hours-start" type="number" min="0" max="23" step="1" />
+            </label>
+            <label class="field">
+              <span>安静时段结束（0-23）</span>
+              <input id="memory-quiet-hours-end" type="number" min="0" max="23" step="1" />
             </label>
           </div>
+
+          <div class="memory-toolbar">
+            <div class="memory-tabs" role="tablist" aria-label="关系记忆分类">
+              <button class="ghost-button active" type="button" data-memory-tab="saved">已保存</button>
+              <button class="ghost-button" type="button" data-memory-tab="pending">待审阅</button>
+              <button class="ghost-button" type="button" data-memory-tab="open-loops">开放事项</button>
+            </div>
+            <button id="memory-refresh-btn" class="ghost-button" type="button">刷新记忆</button>
+          </div>
+          <p id="memory-catalog-status" class="inline-status" aria-live="polite">正在读取关系记忆...</p>
+          <div id="memory-saved-list" class="memory-record-list active" data-memory-panel="saved"></div>
+          <div id="memory-pending-list" class="memory-record-list" data-memory-panel="pending" hidden></div>
+          <div id="memory-open-loop-list" class="memory-record-list" data-memory-panel="open-loops" hidden></div>
+          <p class="memory-privacy-note">“忘记”会停止检索并删除长期记忆文件；原始对话记录仍需在对话历史中单独删除。</p>
         </section>
 
         <section id="skills" class="panel-card desktop-window" data-window-title="Skills">

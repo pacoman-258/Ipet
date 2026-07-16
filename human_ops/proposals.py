@@ -29,6 +29,15 @@ def _default_intent_predicate(_text: str) -> bool:
 
 
 def proposal_tool_label(proposal: ReviewableProposal) -> str:
+    if proposal.proposal_type == "remember":
+        operation = str(proposal.payload.get("operation") or "save").strip()
+        memory = proposal.payload.get("memory") if isinstance(proposal.payload.get("memory"), dict) else {}
+        if operation in {"forget", "resolve", "snooze"}:
+            target = proposal.payload.get("target") if isinstance(proposal.payload.get("target"), dict) else {}
+            verb = {"forget": "忘记", "resolve": "完成", "snooze": "稍后回访"}[operation]
+            return f"{verb}：{str(target.get('summary') or proposal.summary).strip()}"
+        kind = str(memory.get("kind") or "general").strip()
+        return f"保存 {kind}：{str(memory.get('summary') or proposal.summary).strip()}"
     action_type = str(proposal.payload.get("action_type") or "").strip()
     args = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
     target_app = str(args.get("target_app") or "").strip()
@@ -60,6 +69,7 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
 
 def proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> dict[str, Any]:
     action_type = str(proposal.payload.get("action_type") or "").strip()
+    tool_name = action_type or ("memory" if proposal.proposal_type == "remember" else "")
     return {
         "turn_id": proposal_id,
         "proposal_id": proposal_id,
@@ -67,10 +77,53 @@ def proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> di
         "action_type": action_type,
         "text": proposal.summary,
         "summary": proposal.summary,
-        "tools": [{"name": action_type, "summary": proposal_tool_label(proposal)}] if action_type else [],
+        "tools": [{"name": tool_name, "summary": proposal_tool_label(proposal)}] if tool_name else [],
         "preview": proposal.preview.to_dict() if proposal.preview else None,
         "requires_review": True,
     }
+
+
+def build_human_ops_memory_proposal(
+    *,
+    operation: str,
+    memory: dict[str, Any] | None = None,
+    target: dict[str, Any] | None = None,
+    follow_up_at: str = "",
+) -> ReviewableProposal:
+    normalized_operation = str(operation or "save").strip()
+    if normalized_operation == "forget":
+        target_record = dict(target or {})
+        memory_id = str(target_record.get("id") or "").strip()
+        if not memory_id:
+            raise ValueError("找不到要忘记的长期记忆。")
+        summary = str(target_record.get("summary") or target_record.get("title") or memory_id).strip()
+        return ReviewableProposal.remember(
+            summary=f"Ipet 想忘记这条关系记忆：{summary}",
+            payload={"operation": "forget", "memory_id": memory_id, "target": target_record},
+        )
+    if normalized_operation in {"resolve", "snooze"}:
+        target_record = dict(target or {})
+        memory_id = str(target_record.get("id") or "").strip()
+        if not memory_id:
+            raise ValueError("找不到要更新的开放事项。")
+        summary = str(target_record.get("summary") or target_record.get("title") or memory_id).strip()
+        verb = "标记为完成" if normalized_operation == "resolve" else "稍后再回访"
+        payload = {"operation": normalized_operation, "memory_id": memory_id, "target": target_record}
+        if normalized_operation == "snooze":
+            payload["follow_up_at"] = str(follow_up_at or "").strip()
+        return ReviewableProposal.remember(
+            summary=f"Ipet 想把开放事项{verb}：{summary}",
+            payload=payload,
+        )
+
+    candidate = dict(memory or {})
+    summary = str(candidate.get("summary") or "").strip()
+    if not summary:
+        raise ValueError("记忆候选不能为空。")
+    return ReviewableProposal.remember(
+        summary=f"Ipet 想保存这条关系记忆：{summary}",
+        payload={"operation": "save", "memory": candidate},
+    )
 
 
 def should_default_continue_after_approval(

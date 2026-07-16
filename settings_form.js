@@ -80,6 +80,10 @@
           long_term_enabled: true,
           preferences_enabled: true,
           relationship_enabled: true,
+          follow_up_enabled: true,
+          follow_up_cooldown_hours: 24,
+          quiet_hours_start: 22,
+          quiet_hours_end: 8,
           retention_days: 365,
           review_limit: 20,
           review_queue: [],
@@ -387,7 +391,7 @@
       setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
       setChecked(els.opsAccessibility, neo.human_ops.accessibility);
       setChecked(els.opsRequireActReview, neo.human_ops.require_act_review);
-      setChecked(els.opsRequireMemoryReview, neo.human_ops.require_memory_review);
+      setChecked(els.opsRequireMemoryReview, true);
       setChecked(els.opsRequireSkillReview, neo.human_ops.require_skill_review);
       setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
       setChecked(els.opsObserveModelEnabled, neo.human_ops.observe_model.enabled);
@@ -406,9 +410,12 @@
       setChecked(els.memoryLongTermEnabled, neo.memory.long_term_enabled);
       setChecked(els.memoryPreferencesEnabled, neo.memory.preferences_enabled);
       setChecked(els.memoryRelationshipEnabled, neo.memory.relationship_enabled);
+      setChecked(els.memoryFollowUpEnabled, neo.memory.follow_up_enabled);
+      setValue(els.memoryFollowUpCooldownHours, Number(neo.memory.follow_up_cooldown_hours || 24));
+      setValue(els.memoryQuietHoursStart, Number(neo.memory.quiet_hours_start ?? 22));
+      setValue(els.memoryQuietHoursEnd, Number(neo.memory.quiet_hours_end ?? 8));
       setValue(els.memoryRetentionDays, Number(neo.memory.retention_days || 365));
       setValue(els.memoryReviewLimit, Number(neo.memory.review_limit || 20));
-      setValue(els.memoryReviewQueue, textFromLines(neo.memory.review_queue));
 
       setChecked(els.skillsRecipesEnabled, neo.skills.recipes_enabled);
       setChecked(els.skillsAutoPropose, neo.skills.auto_propose);
@@ -497,7 +504,7 @@
         observe_screen: !!els.opsObserveScreen?.checked,
         accessibility: !!els.opsAccessibility?.checked,
         require_act_review: !!els.opsRequireActReview?.checked,
-        require_memory_review: !!els.opsRequireMemoryReview?.checked,
+        require_memory_review: true,
         require_skill_review: !!els.opsRequireSkillReview?.checked,
         clipboard_write_review: !!els.opsClipboardReview?.checked,
         observe_model: {
@@ -527,9 +534,12 @@
         long_term_enabled: !!els.memoryLongTermEnabled?.checked,
         preferences_enabled: !!els.memoryPreferencesEnabled?.checked,
         relationship_enabled: !!els.memoryRelationshipEnabled?.checked,
+        follow_up_enabled: !!els.memoryFollowUpEnabled?.checked,
+        follow_up_cooldown_hours: intValue(els.memoryFollowUpCooldownHours, 24),
+        quiet_hours_start: intValue(els.memoryQuietHoursStart, 22),
+        quiet_hours_end: intValue(els.memoryQuietHoursEnd, 8),
         retention_days: intValue(els.memoryRetentionDays, 365),
         review_limit: intValue(els.memoryReviewLimit, 20),
-        review_queue: linesValue(els.memoryReviewQueue),
       };
 
       next.skills = {

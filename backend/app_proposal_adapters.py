@@ -4,6 +4,7 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 from brain.decisions import BrainDecision
+from backend.ipet_memory_store import IpetMemoryStore
 from human_ops.approvals import ReviewableProposal
 
 from . import human_ops_proposal_flow as _human_ops_proposal_flow_helpers
@@ -72,6 +73,29 @@ def create_human_ops_act_proposal(
         decision,
         session_id=session_id,
         user_text=user_text,
+        deps=deps,
+    )
+
+
+def create_human_ops_memory_proposal(
+    decision_or_candidate: BrainDecision | dict[str, Any],
+    *,
+    session_id: str,
+    user_text: str,
+    turn_id: str,
+    origin: str,
+    retention_days: int,
+    memory_store: IpetMemoryStore,
+    deps: ProposalFlowDependencies,
+) -> tuple[str, ReviewableProposal]:
+    return _human_ops_proposal_flow_helpers.create_human_ops_memory_proposal(
+        decision_or_candidate,
+        session_id=session_id,
+        user_text=user_text,
+        turn_id=turn_id,
+        origin=origin,
+        retention_days=retention_days,
+        memory_store=memory_store,
         deps=deps,
     )
 
