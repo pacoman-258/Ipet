@@ -21,8 +21,13 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertTrue(context_helpers._looks_like_desktop_action_request("帮我打开微信"))
         self.assertTrue(context_helpers._looks_like_app_launch_request("帮我打开微信"))
         self.assertEqual(context_helpers._app_launch_target("帮我打开微信"), "WeChat")
+        self.assertTrue(context_helpers._looks_like_chat_reply_request("在 QQ 回复小明"))
+        self.assertTrue(context_helpers._looks_like_desktop_action_request("暂停音乐"))
+        self.assertTrue(context_helpers._looks_like_desktop_action_request("在访达选择文件"))
         self.assertFalse(context_helpers._looks_like_click_request("帮我打开微信"))
         localized_app_names = {
+            "打开QQ": "QQ",
+            "打开音乐": "Music",
             "打开网易云音乐": "NeteaseMusic",
             "启动腾讯会议": "TencentMeeting",
             "打开库乐队": "GarageBand",
@@ -116,6 +121,115 @@ class ComputerUseContextTests(unittest.TestCase):
         search = next(item for item in context["affordances"] if item["kind"] == "search_field")
         self.assertEqual(search["label"], "搜索框")
 
+    def test_accessibility_elements_become_semantic_affordances(self) -> None:
+        ax_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "copied",
+        }
+        context = context_helpers._infer_computer_use_context(
+            "AX 读取成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "wechat",
+                        "name": "微信",
+                        "bundle_id": "com.tencent.xinWeChat",
+                        "surface": "wechat_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXTextArea",
+                            "label": "消息输入框",
+                            "identifier": "message-input",
+                            "supports": ["focus", "type_text"],
+                            "focused": True,
+                            "ax_ref": ax_ref,
+                        }
+                    ],
+                }
+            },
+            "回复消息",
+        )
+
+        self.assertEqual(context["surface"]["kind"], "wechat_gui")
+        self.assertEqual(context["surface"]["source"], "macos_accessibility")
+        self.assertEqual(context["affordances"][0]["kind"], "chat_input")
+        self.assertEqual(context["affordances"][0]["supports"], ["click", "type_text", "key_press"])
+        self.assertEqual(context["affordances"][0]["ax_ref"], ax_ref)
+        self.assertTrue(context["chat_context"]["input_focused"])
+        self.assertTrue(context_helpers._observation_has_reviewable_click_affordance(context))
+
+    def test_accessibility_affordance_preserves_hierarchy_path_and_search_quality(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 读取成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "music",
+                        "name": "音乐",
+                        "surface": "music_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXRow",
+                            "label": "专辑",
+                            "label_source": "descendant",
+                            "semantic_path": "资料库 > 专辑",
+                            "supports": ["select"],
+                            "ax_ref": {"fingerprint": "album-row"},
+                        }
+                    ],
+                    "search": {
+                        "query": "打开专辑",
+                        "matched_count": 2,
+                        "actionable_match_count": 1,
+                        "visible_match_count": 1,
+                        "contextual_count": 1,
+                        "sufficient": True,
+                    },
+                }
+            },
+            "打开专辑",
+        )
+
+        self.assertEqual(context["affordances"][0]["label"], "专辑")
+        self.assertEqual(context["affordances"][0]["semantic_path"], "资料库 > 专辑")
+        self.assertTrue(context["ax_search"]["sufficient"])
+        self.assertEqual(context["ax_search"]["actionable_match_count"], 1)
+
+    def test_hidden_menu_item_is_not_a_page_affordance_without_menu_query(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索不足",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ", "surface": "qq_gui"},
+                    "elements": [
+                        {
+                            "role": "AXMenuItem",
+                            "label": "搜索",
+                            "supports": ["press"],
+                            "semantic_path": "编辑 > 搜索",
+                            "ax_ref": {"fingerprint": "hidden-search"},
+                        }
+                    ],
+                    "search": {
+                        "query": "搜索",
+                        "sufficient": False,
+                        "insufficiency_reason": "only_hidden_menu_matches",
+                    },
+                }
+            },
+            "找到搜索框",
+        )
+
+        self.assertEqual(context["affordances"], [])
+        self.assertFalse(context["ax_search"]["sufficient"])
+
     def test_computer_use_context_text_includes_chat_context(self) -> None:
         context_text = context_helpers._computer_use_context_text(
             {
@@ -133,6 +247,82 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertIn("Structured computer-use context", context_text)
         self.assertIn("chat_context", context_text)
         self.assertIn("下午3点记得带资料", context_text)
+
+    def test_accessibility_context_exposes_cache_index_without_full_tree(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索完成",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "snapshot_id": "axc-123",
+                    "total_element_count": 420,
+                    "app": {
+                        "app_id": "qq",
+                        "name": "QQ",
+                        "bundle_id": "com.tencent.qq",
+                        "surface": "qq_gui",
+                    },
+                    "search": {
+                        "query": "张三",
+                        "cache_hit": True,
+                        "persistent": True,
+                        "source": "disk",
+                        "stale": True,
+                        "stale_reason": "process_changed",
+                        "age_ms": 1250,
+                        "returned_count": 4,
+                        "matched_count": 1,
+                        "search_truncated": True,
+                        "index": {
+                            "roles": {"AXRow": 400, "AXButton": 20},
+                            "supports": {"select": 400, "press": 20},
+                            "actionable": 420,
+                        },
+                    },
+                    "elements": [],
+                }
+            },
+            "查找张三",
+        )
+
+        self.assertEqual(context["ax_search"]["tool"], "observe.ax_query")
+        self.assertEqual(context["ax_search"]["total_element_count"], 420)
+        self.assertEqual(context["ax_search"]["returned_count"], 4)
+        self.assertTrue(context["ax_search"]["persistent"])
+        self.assertEqual(context["ax_search"]["source"], "disk")
+        self.assertTrue(context["ax_search"]["stale"])
+        self.assertEqual(context["ax_search"]["stale_reason"], "process_changed")
+        self.assertEqual(context["ax_search"]["age_ms"], 1250)
+        context_text = context_helpers._computer_use_context_text(context)
+        self.assertIn('"ax_search"', context_text)
+        self.assertNotIn("联系人399", context_text)
+
+    def test_legacy_large_ax_frame_is_still_capped_before_brain_context(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 读取成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "qq",
+                        "name": "QQ",
+                        "surface": "qq_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXButton",
+                            "label": f"按钮{index}",
+                            "supports": ["press"],
+                            "ax_ref": {"fingerprint": f"ref-{index}"},
+                        }
+                        for index in range(100)
+                    ],
+                }
+            },
+            "按钮",
+        )
+
+        self.assertEqual(len(context["affordances"]), 16)
 
 
 if __name__ == "__main__":

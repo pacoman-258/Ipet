@@ -141,6 +141,31 @@ class ActiveVisionMacOSModuleTests(unittest.TestCase):
         self.assertTrue(all(item["source"] == "running_app" for item in candidates))
         self.assertTrue(all(item["focusable"] for item in candidates))
 
+    def test_ax_enumeration_can_include_hidden_apps_with_a_larger_limit(self) -> None:
+        macos = importlib.import_module("body.active_vision_macos")
+        apps = []
+        for index, hidden in enumerate((True, False, False)):
+            app = mock.Mock()
+            app.localizedName.return_value = f"App {index}"
+            app.bundleIdentifier.return_value = f"example.app{index}"
+            app.processIdentifier.return_value = 700 + index
+            app.isActive.return_value = index == 1
+            app.isHidden.return_value = hidden
+            app.activationPolicy.return_value = 0
+            apps.append(app)
+        appkit = mock.Mock()
+        appkit.NSWorkspace.sharedWorkspace.return_value.runningApplications.return_value = apps
+
+        with mock.patch.dict("sys.modules", {"AppKit": appkit}):
+            candidates = macos.enumerate_active_vision_running_app_candidates(
+                platform_name="darwin",
+                include_hidden=True,
+                limit=2,
+            )
+
+        self.assertEqual([item["app"] for item in candidates], ["App 0", "App 1"])
+        self.assertEqual([item["pid"] for item in candidates], ["700", "701"])
+
 
 if __name__ == "__main__":
     unittest.main()

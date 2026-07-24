@@ -593,13 +593,13 @@
       const qtBridge = getQtBridge();
       const notificationAvailable = qtBridge && typeof qtBridge.showApprovalNotification === "function";
       statusEl.textContent = notificationAvailable
-        ? "审批通知已发送到 macOS 通知中心；批准只执行这一项，拒绝不会停止整个任务。"
+        ? "审批通知已发送。请在通知中选择明显的批准/拒绝按钮；若横幅会自动收起，请将 Ipet Approvals 的通知样式设为“提醒”。"
         : "无法连接 macOS 审批通知桥；本次操作不会执行。";
       approvalCardEl.appendChild(statusEl);
       if (turnId && notificationAvailable) {
         qtBridge.showApprovalNotification(JSON.stringify({
           proposal_id: turnId,
-          title: "Ipet 需要你的批准",
+          title: "⚠️ Ipet 操作审批",
           message: String(payload.text || payload.summary || "是否批准这一步操作？"),
           timeout_sec: 300,
         }));

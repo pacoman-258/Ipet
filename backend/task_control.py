@@ -113,7 +113,8 @@ class LocalTaskControl:
             if str(proposal.get("task_id") or "") != task_id or proposal.get("status") != "pending":
                 continue
             proposal["status"] = "invalidated_by_stop"
-            record.skipped.append("待审批动作")
+            skipped = "待执行动作" if proposal.get("authorization_mode") == "full" else "待审批动作"
+            record.skipped.append(skipped)
         record.state = "stopped"
         record.updated_at = time()
         return record.payload()

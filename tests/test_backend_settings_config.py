@@ -94,6 +94,9 @@ class BackendSettingsConfigTests(unittest.TestCase):
                                 "api_key_clear": True,
                             }
                         },
+                        "chat": {
+                            "tts_api_key": "fish-secret",
+                        },
                         "runtime": {"legacy": True},
                     }
                 ),
@@ -112,6 +115,7 @@ class BackendSettingsConfigTests(unittest.TestCase):
             self.assertEqual(private_config["brain"]["model_name"], "neo-custom")
             self.assertEqual(private_config["brain"]["api_key"], "secret-value")
             self.assertEqual(private_config["human_ops"]["observe_model"]["api_key"], "observe-secret")
+            self.assertEqual(private_config["chat"]["tts_api_key"], "fish-secret")
             self.assertNotIn("runtime", private_config)
             self.assertNotIn("api_key", public["brain"])
             self.assertNotIn("api_key_clear", public["brain"])
@@ -119,6 +123,9 @@ class BackendSettingsConfigTests(unittest.TestCase):
             self.assertNotIn("api_key", public["human_ops"]["observe_model"])
             self.assertNotIn("api_key_clear", public["human_ops"]["observe_model"])
             self.assertEqual(public["human_ops"]["observe_model"]["api_key_preview"], "ob***et")
+            self.assertNotIn("tts_api_key", public["chat"])
+            self.assertNotIn("tts_api_key_clear", public["chat"])
+            self.assertEqual(public["chat"]["tts_api_key_preview"], "fi***et")
 
             saved_path = Path(tmp) / "saved_config.json"
             settings_config.save_config(private_config, config_path=saved_path)
@@ -158,6 +165,65 @@ class BackendSettingsConfigTests(unittest.TestCase):
             )
             self.assertNotIn("api_key", cleared["brain"])
             self.assertNotIn("api_key_clear", cleared["brain"])
+
+    def test_apply_settings_update_preserves_or_clears_fish_audio_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pet_config.json"
+            current = settings_config.normalize_private_config(
+                {"chat": {"tts_api_key": "saved-fish-secret"}},
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+
+            preserved = settings_config.apply_settings_update(
+                {"chat": {"tts_provider": "fish_audio", "tts_api_key": ""}},
+                current=current,
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+            self.assertEqual(preserved["chat"]["tts_api_key"], "saved-fish-secret")
+
+            cleared = settings_config.apply_settings_update(
+                {"chat": {"tts_api_key_clear": True}},
+                current=current,
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+            self.assertNotIn("tts_api_key", cleared["chat"])
+            self.assertNotIn("tts_api_key_clear", cleared["chat"])
+
+    def test_action_authorization_mode_is_explicit_and_migrates_legacy_review_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "pet_config.json"
+
+            legacy_full = settings_config.normalize_private_config(
+                {"human_ops": {"require_act_review": False}},
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+            explicit_full = settings_config.normalize_private_config(
+                {"human_ops": {"authorization_mode": "full", "require_act_review": True}},
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+            invalid = settings_config.normalize_private_config(
+                {"human_ops": {"authorization_mode": "unknown", "require_act_review": True}},
+                config_path=config_path,
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+
+        self.assertEqual(legacy_full["human_ops"]["authorization_mode"], "full")
+        self.assertFalse(legacy_full["human_ops"]["require_act_review"])
+        self.assertEqual(explicit_full["human_ops"]["authorization_mode"], "full")
+        self.assertFalse(explicit_full["human_ops"]["require_act_review"])
+        self.assertEqual(invalid["human_ops"]["authorization_mode"], "review")
+        self.assertTrue(invalid["human_ops"]["require_act_review"])
 
     def test_apply_settings_update_preserves_observe_secret_clear_and_set_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

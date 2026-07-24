@@ -26,17 +26,21 @@
     });
     dispatch_resume(self.terminationSource);
     center.delegate = self;
-    UNNotificationAction *approve = [UNNotificationAction actionWithIdentifier:@"IPET_APPROVE" title:@"批准" options:UNNotificationActionOptionNone];
-    UNNotificationAction *reject = [UNNotificationAction actionWithIdentifier:@"IPET_REJECT" title:@"拒绝" options:UNNotificationActionOptionDestructive];
+    UNNotificationAction *approve = [UNNotificationAction actionWithIdentifier:@"IPET_APPROVE" title:@"✅ 批准此操作" options:UNNotificationActionOptionNone];
+    UNNotificationAction *reject = [UNNotificationAction actionWithIdentifier:@"IPET_REJECT" title:@"⛔ 拒绝此操作" options:UNNotificationActionOptionDestructive];
     UNNotificationCategory *category = [UNNotificationCategory categoryWithIdentifier:@"IPET_HUMAN_OPS_APPROVAL" actions:@[approve, reject] intentIdentifiers:@[] options:UNNotificationCategoryOptionCustomDismissAction];
     [center setNotificationCategories:[NSSet setWithObject:category]];
     [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound) completionHandler:^(BOOL granted, NSError *error) {
         if (!granted || error) { [self finish:NO reason:@"notification_permission_denied"]; return; }
         UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-        content.title = [request[@"title"] isKindOfClass:NSString.class] ? request[@"title"] : @"Ipet 需要你的批准";
-        content.body = [request[@"body"] isKindOfClass:NSString.class] ? request[@"body"] : @"是否批准这一步操作？";
+        content.title = [request[@"title"] isKindOfClass:NSString.class] ? request[@"title"] : @"⚠️ Ipet 操作审批";
+        content.subtitle = @"请明确选择：批准此操作 或 拒绝此操作";
+        NSString *body = [request[@"body"] isKindOfClass:NSString.class] ? request[@"body"] : @"是否批准这一步操作？";
+        content.body = [body stringByAppendingString:@"\n\n请使用通知中的两个操作按钮作出决定。"];
         content.sound = UNNotificationSound.defaultSound;
         content.categoryIdentifier = @"IPET_HUMAN_OPS_APPROVAL";
+        content.threadIdentifier = @"ipet-human-ops-approvals";
+        if (@available(macOS 12.0, *)) content.interruptionLevel = UNNotificationInterruptionLevelTimeSensitive;
         content.userInfo = @{@"proposal_id": self.proposalID};
         NSString *identifier = [@"ipet-approval-" stringByAppendingString:self.proposalID];
         [center addNotificationRequest:[UNNotificationRequest requestWithIdentifier:identifier content:content trigger:nil] withCompletionHandler:^(NSError *addError) {
@@ -48,7 +52,7 @@
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)(void))completionHandler {

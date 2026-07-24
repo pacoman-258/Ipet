@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 
 from brain.decisions import BrainDecision, DecisionKind
 from fastapi.responses import Response
+from human_ops.approval_flow import stream_human_ops_proposal_decision
 from human_ops.approvals import ReviewableProposal
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore, normalize_topic_id
@@ -29,12 +30,17 @@ class AppRouteDependencyContext:
     settings_js_response: Callable[[], Response] | None = None
     settings_form_js_response: Callable[[], Response] | None = None
     settings_model_picker_js_response: Callable[[], Response] | None = None
+    settings_live2d_js_response: Callable[[], Response] | None = None
     settings_payload: Callable[..., dict[str, Any]] | None = None
     normalize_private_config: Callable[[], dict[str, Any]] | None = None
     apply_settings_update: Callable[..., dict[str, Any]] | None = None
     save_config: Callable[[dict[str, Any]], None] | None = None
     list_persona_prompts: Callable[[], list[dict[str, Any]]] | None = None
     list_chrome_profiles: Callable[[], Any] | None = None
+    list_local_models: Callable[[], list[dict[str, Any]]] | None = None
+    preview_action: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    accessibility_index_status: Callable[[], Awaitable[dict[str, Any]]] | None = None
+    refresh_accessibility_index: Callable[[], Awaitable[dict[str, Any]]] | None = None
     normalize_provider: Callable[[Any], str] | None = None
     list_provider_models: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
     sanitize_brain_error: Callable[[Exception, dict[str, Any]], str] | None = None
@@ -74,6 +80,7 @@ class AppRouteDependencyContext:
     human_ops_continuation_prompt: Callable[..., str] | None = None
     with_inherited_enter_expected_text: Callable[..., BrainDecision] | None = None
     request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
+    notify_human_ops_action: Callable[..., Awaitable[dict[str, Any]]] | None = None
     normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] | None = None
     perform_memory_operation: Callable[[ReviewableProposal], dict[str, Any]] | None = None
     record_memory_review_exchange: Callable[..., None] | None = None
@@ -81,6 +88,7 @@ class AppRouteDependencyContext:
     mark_memory_recalled: Callable[[str, str], None] | None = None
     build_memory_candidates: Callable[..., list[dict[str, Any]]] | None = None
     consume_proactive_reply_context: Callable[[str], str] | None = None
+    schedule_accessibility_index_refresh: Callable[[], bool] | None = None
 
 
 def create_chat_topics_route_deps(context: AppRouteDependencyContext) -> _chat_topics_route_helpers.ChatTopicsRouteDependencies:
@@ -103,12 +111,17 @@ def create_settings_route_deps(context: AppRouteDependencyContext) -> _settings_
         settings_js_response=context.settings_js_response or (lambda: Response()),
         settings_form_js_response=context.settings_form_js_response or (lambda: Response()),
         settings_model_picker_js_response=context.settings_model_picker_js_response or (lambda: Response()),
+        settings_live2d_js_response=context.settings_live2d_js_response or (lambda: Response()),
         settings_payload=context.settings_payload or (lambda private_config=None: {}),
         normalize_private_config=context.normalize_private_config or (lambda: {}),
         apply_settings_update=context.apply_settings_update or (lambda incoming, *, current=None: {}),
         save_config=context.save_config or (lambda private_config: None),
         list_persona_prompts=context.list_persona_prompts or (lambda: []),
         list_chrome_profiles=context.list_chrome_profiles or (lambda: ()),
+        list_local_models=context.list_local_models or (lambda: []),
+        preview_action=context.preview_action,
+        accessibility_index_status=context.accessibility_index_status,
+        refresh_accessibility_index=context.refresh_accessibility_index,
     )
 
 
@@ -178,6 +191,13 @@ def create_chat_stream_route_deps(context: AppRouteDependencyContext) -> _chat_s
         mark_memory_recalled=context.mark_memory_recalled or (lambda memory_id, assistant_text: None),
         build_memory_candidates=context.build_memory_candidates or (lambda **kwargs: []),
         consume_proactive_reply_context=context.consume_proactive_reply_context or (lambda session_id: ""),
+        schedule_accessibility_index_refresh=context.schedule_accessibility_index_refresh
+        or (lambda: False),
+        stream_authorized_proposal=lambda proposal_id: stream_human_ops_proposal_decision(
+            proposal_id,
+            {"approved": True},
+            create_human_ops_decision_route_deps(context),
+        ),
     )
 
 
@@ -210,9 +230,12 @@ def create_human_ops_decision_route_deps(
         goal_status=context.goal_status or (lambda decision, *, operation_request: ""),
         goal_is_terminal=context.goal_is_terminal or (lambda status: False),
         request_native_approval=context.request_native_approval,
+        notify_human_ops_action=context.notify_human_ops_action,
         normalize_observed_click_coordinates=context.normalize_observed_click_coordinates
         or (lambda decision, observation: decision),
         perform_memory_operation=context.perform_memory_operation
         or (lambda proposal: {"ok": False, "error": "memory_store_unavailable"}),
         record_memory_review_exchange=context.record_memory_review_exchange or (lambda **kwargs: None),
+        schedule_accessibility_index_refresh=context.schedule_accessibility_index_refresh
+        or (lambda: False),
     )

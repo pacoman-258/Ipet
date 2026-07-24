@@ -80,6 +80,7 @@ class BrainDecision:
         observe_prompt: str = "",
         *,
         target_app: str = "",
+        ax_query: str = "",
         goal: dict[str, Any] | None = None,
     ) -> "BrainDecision":
         target_text = str(target or "screen").strip() or "screen"
@@ -90,6 +91,9 @@ class BrainDecision:
         target_app_text = str(target_app or "").strip()
         if target_app_text:
             payload["target_app"] = target_app_text
+        ax_query_text = str(ax_query or "").strip()
+        if ax_query_text:
+            payload["ax_query"] = ax_query_text[:240]
         if isinstance(goal, dict):
             payload["goal"] = dict(goal)
         return cls(DecisionKind.OBSERVE, f"Observe {target_text}", payload)

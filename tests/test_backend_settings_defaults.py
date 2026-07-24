@@ -20,6 +20,7 @@ class BackendSettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(settings_defaults.NEO_DEFAULTS["brain"]["model_name"], "gpt-5.4")
         self.assertEqual(settings_defaults.NEO_DEFAULTS["skills"]["recipes"], [])
         self.assertTrue(settings_defaults.NEO_DEFAULTS["human_ops"]["filesystem"]["enabled"])
+        self.assertEqual(settings_defaults.NEO_DEFAULTS["human_ops"]["authorization_mode"], "review")
         self.assertEqual(settings_defaults.NEO_DEFAULTS["human_ops"]["playwright_profile"], "")
         self.assertEqual(settings_defaults.NEO_DEFAULTS["human_ops"]["filesystem"]["allowed_roots"], [])
         self.assertEqual(settings_defaults.allowed_config_keys(), settings_defaults.ALLOWED_CONFIG_KEYS)

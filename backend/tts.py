@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -29,6 +31,11 @@ DEFAULT_PROVIDER = "edge_tts"
 DEFAULT_AUDIO_DURATION_MS = 600
 DEFAULT_CUSTOM_HTTP_TIMEOUT_SEC = 60.0
 QWEN_TTS_LOCAL_TIMEOUT_SEC = 180.0
+FISH_AUDIO_PROVIDER = "fish_audio"
+FISH_AUDIO_API_URL = "https://api.fish.audio/v1/tts"
+FISH_AUDIO_DEFAULT_MODEL = "s2.1-pro-free"
+FISH_AUDIO_API_KEY_ENV = "FISH_API_KEY"
+FISH_AUDIO_TIMEOUT_SEC = 60.0
 
 MEDIA_TYPE_TO_SUFFIX = {
     "audio/aac": ".aac",
@@ -72,14 +79,37 @@ def normalize_provider(provider: str | None) -> str:
 
 
 def list_supported_providers() -> list[str]:
-    return ["edge_tts", "custom_http", QWEN_TTS_LOCAL_PROVIDER]
+    return ["edge_tts", "custom_http", QWEN_TTS_LOCAL_PROVIDER, FISH_AUDIO_PROVIDER]
 
 
 def is_qwen_tts_local_provider(provider: str | None) -> bool:
     return normalize_provider(provider) == QWEN_TTS_LOCAL_PROVIDER
 
 
-def tts_available(provider: str | None = None, provider_url: str | None = None) -> bool:
+def is_fish_audio_provider(provider: str | None) -> bool:
+    return normalize_provider(provider) == FISH_AUDIO_PROVIDER
+
+
+def _resolve_fish_audio_api_key(api_key: str | None = None) -> str:
+    return str(api_key or os.environ.get(FISH_AUDIO_API_KEY_ENV, "") or "").strip()
+
+
+def _resolve_fish_audio_url(provider_url: str | None = None) -> str:
+    raw = str(provider_url or "").strip().rstrip("/")
+    if not raw or raw.startswith("{"):
+        return FISH_AUDIO_API_URL
+    if raw.endswith("/v1"):
+        return f"{raw}/tts"
+    return raw
+
+
+def tts_available(
+    provider: str | None = None,
+    provider_url: str | None = None,
+    *,
+    api_key: str | None = None,
+    reference_id: str | None = None,
+) -> bool:
     p = normalize_provider(provider)
     if p == "edge_tts":
         return edge_tts is not None
@@ -87,6 +117,8 @@ def tts_available(provider: str | None = None, provider_url: str | None = None) 
         return bool(str(provider_url or "").strip())
     if p == QWEN_TTS_LOCAL_PROVIDER:
         return QWEN_TTS_REFERENCE_AUDIO.is_file()
+    if p == FISH_AUDIO_PROVIDER:
+        return bool(_resolve_fish_audio_api_key(api_key)) and bool(str(reference_id or "").strip())
     return False
 
 
@@ -409,6 +441,75 @@ async def _synthesize_custom_http(
     )
 
 
+def _fish_audio_speed(rate: str) -> float:
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", str(rate or ""))
+    if not match:
+        return 1.0
+    try:
+        percent = float(match.group(0))
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.5, min(2.0, 1.0 + percent / 100.0))
+
+
+async def _synthesize_fish_audio(
+    *,
+    text: str,
+    cache_dir: Path,
+    file_id: str,
+    provider_url: str,
+    voice: str,
+    rate: str,
+    api_key: str,
+    reference_id: str,
+    model: str,
+) -> SynthesizedAudio:
+    token = _resolve_fish_audio_api_key(api_key)
+    if not token:
+        raise RuntimeError(f"Fish Audio API key is not configured; set {FISH_AUDIO_API_KEY_ENV} or save it in settings.")
+
+    resolved_reference_id = str(reference_id or voice or "").strip()
+    if not resolved_reference_id:
+        raise RuntimeError("Fish Audio voice model ID is not configured.")
+
+    endpoint = _resolve_fish_audio_url(provider_url)
+    payload = {
+        "text": text,
+        "reference_id": resolved_reference_id,
+        "format": "mp3",
+        "normalize": True,
+        "latency": "normal",
+        "prosody": {
+            "speed": _fish_audio_speed(rate),
+            "volume": 0,
+            "normalize_loudness": True,
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "model": str(model or FISH_AUDIO_DEFAULT_MODEL).strip() or FISH_AUDIO_DEFAULT_MODEL,
+    }
+    timeout = httpx.Timeout(connect=8.0, read=FISH_AUDIO_TIMEOUT_SEC, write=20.0, pool=8.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(endpoint, headers=headers, json=payload)
+        audio_bytes, duration_ms, suffix, media_type = await _extract_custom_http_audio(
+            client=client,
+            response=response,
+            request_url=endpoint,
+            text=text,
+        )
+
+    output_path = cache_dir / f"{file_id}{suffix}"
+    output_path.write_bytes(audio_bytes)
+    return SynthesizedAudio(
+        file_id=file_id,
+        path=output_path,
+        duration_ms=duration_ms,
+        media_type=media_type,
+    )
+
+
 async def _synthesize_qwen_tts_local(
     *,
     text: str,
@@ -484,6 +585,9 @@ async def synthesize_to_audio(
     volume: str = "+0%",
     provider: str = DEFAULT_PROVIDER,
     provider_url: str = "",
+    api_key: str = "",
+    reference_id: str = "",
+    model: str = "",
 ) -> SynthesizedAudio:
     cache_dir.mkdir(parents=True, exist_ok=True)
     file_id = uuid.uuid4().hex
@@ -516,6 +620,19 @@ async def synthesize_to_audio(
             volume=volume,
         )
 
+    if p == FISH_AUDIO_PROVIDER:
+        return await _synthesize_fish_audio(
+            text=text,
+            cache_dir=cache_dir,
+            file_id=file_id,
+            provider_url=provider_url,
+            voice=voice,
+            rate=rate,
+            api_key=api_key,
+            reference_id=reference_id,
+            model=model,
+        )
+
     if p == QWEN_TTS_LOCAL_PROVIDER:
         return await _synthesize_qwen_tts_local(
             text=text,
@@ -536,6 +653,9 @@ async def synthesize_to_mp3(
     volume: str = "+0%",
     provider: str = DEFAULT_PROVIDER,
     provider_url: str = "",
+    api_key: str = "",
+    reference_id: str = "",
+    model: str = "",
 ) -> tuple[str, Path, int]:
     result = await synthesize_to_audio(
         text=text,
@@ -545,5 +665,8 @@ async def synthesize_to_mp3(
         volume=volume,
         provider=provider,
         provider_url=provider_url,
+        api_key=api_key,
+        reference_id=reference_id,
+        model=model,
     )
     return result.file_id, result.path, result.duration_ms

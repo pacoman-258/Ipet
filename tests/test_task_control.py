@@ -52,6 +52,22 @@ class LocalTaskControlTests(unittest.TestCase):
             control.check("task-a", next_action="Brain 调用")
         self.assertIn("Brain 调用", control.get("task-a").skipped)
 
+    def test_stop_names_full_authorization_proposal_as_not_executed(self) -> None:
+        control = LocalTaskControl()
+        control.start("task-full", "session")
+        pending = {
+            "full": {
+                "task_id": "task-full",
+                "status": "pending",
+                "authorization_mode": "full",
+            }
+        }
+
+        result = control.stop("task-full", pending)
+
+        self.assertEqual(result["not_executed"], ["待执行动作"])
+        self.assertEqual(pending["full"]["status"], "invalidated_by_stop")
+
     def test_completed_and_uncertain_actions_are_reported_without_rollback(self) -> None:
         control = LocalTaskControl()
         control.start("task-a", "session")

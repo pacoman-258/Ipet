@@ -7,6 +7,7 @@ from brain.decisions import BrainDecision, DecisionKind
 from backend.task_control import TASK_CONTROL, TaskStopped
 
 from .approvals import ReviewableProposal
+from .authorization import AUTHORIZATION_MODE_FULL, full_authorization_enabled
 from .filesystem_actions import filesystem_action_success_field
 
 
@@ -34,11 +35,16 @@ def execution_verification(
         success_field: bool(data.get(success_field)) if success_field else False,
         "focused": bool(data.get("focused")) if action_type in {"launch_app", "click", "type_text", "key_press"} else True,
     }
+    semantic_ax_action = isinstance(arguments.get("ax_ref"), dict) and action_type in {"click", "type_text"}
+    if semantic_ax_action:
+        checks["ax_target_verified"] = bool(data.get("ax_target_verified"))
+        checks["ax_action_performed"] = bool(data.get("ax_action_performed"))
     contradictory = any(data.get(name) is False for name in checks)
     missing = [name for name, passed in checks.items() if name and not passed]
     key = str(arguments.get("key") or "enter").strip().lower()
     expected_text = str(arguments.get("expected_text") or "").strip()
     semantic_send_pending = action_type == "key_press" and key in {"enter", "return"} and bool(expected_text)
+    click_outcome_pending = action_type == "click" and not bool(data.get("postcondition_verified"))
     if contradictory:
         status = "failed"
         reason = "action result contradicts the expected native state"
@@ -48,12 +54,19 @@ def execution_verification(
     elif semantic_send_pending:
         status = "insufficient"
         reason = "native key delivery cannot confirm that the expected message appeared"
+    elif click_outcome_pending:
+        status = "insufficient"
+        reason = "native click delivery cannot confirm the intended post-action interface state"
     else:
         status = "verified"
         reason = "action result and native focus state passed"
     return {
         "status": status,
-        "method": "action_result_and_native_state",
+        "method": (
+            "macos_accessibility_action_and_native_state"
+            if semantic_ax_action
+            else "action_result_and_native_state"
+        ),
         "action_type": action_type,
         "checks": checks,
         "frontmost_app": str(data.get("frontmost_app") or "").strip(),
@@ -107,6 +120,7 @@ class HumanOpsApprovalFlowDependencies:
     goal_status: Callable[..., str]
     goal_is_terminal: Callable[[str], bool]
     request_native_approval: Callable[[ReviewableProposal], Awaitable[dict[str, Any]]] | None = None
+    notify_human_ops_action: Callable[..., Awaitable[dict[str, Any]]] | None = None
     normalize_observed_click_coordinates: Callable[[BrainDecision, dict[str, Any] | None], BrainDecision] = (
         lambda decision, observation: decision
     )
@@ -115,6 +129,7 @@ class HumanOpsApprovalFlowDependencies:
         "error": "memory_store_unavailable",
     }
     record_memory_review_exchange: Callable[..., None] = lambda **kwargs: None
+    schedule_accessibility_index_refresh: Callable[[], bool] = lambda: False
 
 
 def stream_human_ops_proposal_decision(
@@ -136,8 +151,26 @@ def stream_human_ops_proposal_decision(
     session_id = str(record.get("session_id") or "default")
     task_id = str(record.get("task_id") or proposal_key)
     label = deps.proposal_tool_label(proposal)
+    auto_authorized = (
+        proposal.proposal_type == "act"
+        and str(record.get("authorization_mode") or "").strip().lower() == AUTHORIZATION_MODE_FULL
+    )
+    authorization_payload = {
+        "auto_authorized": auto_authorized,
+        "authorization_mode": AUTHORIZATION_MODE_FULL if auto_authorized else "review",
+    }
 
     async def event_stream() -> AsyncIterator[str]:
+        def done_event(data: dict[str, Any]) -> str:
+            result = dict(data)
+            try:
+                result["accessibility_index_refresh_scheduled"] = bool(
+                    deps.schedule_accessibility_index_refresh()
+                )
+            except Exception:
+                result["accessibility_index_refresh_scheduled"] = False
+            return deps.sse("done", result)
+
         TASK_CONTROL.bind_current_task(task_id)
         yield deps.sse(
             "meta",
@@ -148,6 +181,7 @@ def stream_human_ops_proposal_decision(
                 "backend": "neo_aspect",
                 "provider": "human_ops",
                 "model": "desktop",
+                **authorization_payload,
             },
         )
         if not approved:
@@ -164,8 +198,7 @@ def stream_human_ops_proposal_decision(
             else:
                 final_text = "已拒绝这次操作。" + (f" 调整说明：{user_text}" if user_text else "")
             yield deps.sse("display_segment", {"text": final_text})
-            yield deps.sse(
-                "done",
+            yield done_event(
                 {
                     "turn_id": proposal_key,
                     "proposal_id": proposal_key,
@@ -179,8 +212,11 @@ def stream_human_ops_proposal_decision(
 
         if record.get("status") == "invalidated_by_stop":
             raise TaskStopped()
-        TASK_CONTROL.check(task_id, next_action="待审批动作")
-        record["status"] = "approved"
+        TASK_CONTROL.check(task_id, next_action="待执行动作" if auto_authorized else "待审批动作")
+        if auto_authorized:
+            record["authorized_by"] = "full_authorization"
+        else:
+            record["status"] = "approved"
 
         if proposal.proposal_type == "remember":
             yield deps.sse(
@@ -230,8 +266,7 @@ def stream_human_ops_proposal_decision(
                     assistant_text=final_text,
                 )
             yield deps.sse("display_segment", {"text": final_text})
-            yield deps.sse(
-                "done",
+            yield done_event(
                 {
                     "turn_id": proposal_key,
                     "proposal_id": proposal_key,
@@ -243,6 +278,49 @@ def stream_human_ops_proposal_decision(
                 },
             )
             return
+
+        if auto_authorized:
+            yield deps.sse(
+                "phase",
+                {
+                    "category": "acting",
+                    "name": "human_ops_action_notice",
+                    "status": "running",
+                    "text": f"完全授权已放行，正在通知：{label}",
+                    "source": "human_ops",
+                },
+            )
+            try:
+                if deps.notify_human_ops_action is None:
+                    raise RuntimeError("完全授权通知通道不可用")
+                notification = await deps.notify_human_ops_action(proposal, task_id=task_id)
+                if notification.get("notified") is not True:
+                    raise RuntimeError("完全授权通知未确认送达")
+                record["notification"] = dict(notification)
+            except Exception as exc:
+                execution = {"ok": False, "error": str(exc), "stage": "action_notification"}
+                final_text = f"完全授权操作未执行：通知失败（{str(exc)[:160]}）。"
+                record["status"] = "notification_failed"
+                yield deps.sse("display_segment", {"text": final_text})
+                yield done_event(
+                    {
+                        "turn_id": proposal_key,
+                        "proposal_id": proposal_key,
+                        "session_id": session_id,
+                        "text": final_text,
+                        "approved": True,
+                        "auto_authorized": True,
+                        "authorization_mode": AUTHORIZATION_MODE_FULL,
+                        "execution": execution,
+                    },
+                )
+                return
+            try:
+                TASK_CONTROL.check(task_id, next_action=f"通知后的动作：{label}")
+            except TaskStopped:
+                record["status"] = "invalidated_by_stop"
+                raise
+            record["status"] = "auto_authorized"
 
         action_type = str(proposal.payload.get("action_type") or "").strip()
         phase_name = "human_ops_click" if action_type == "click" else (
@@ -318,8 +396,7 @@ def stream_human_ops_proposal_decision(
                 record["status"] = "verification_failed"
                 final_text = f"动作返回后的结构化验证失败：{verification['reason']}。"
                 yield deps.sse("display_segment", {"text": final_text})
-                yield deps.sse(
-                    "done",
+                yield done_event(
                     {
                         "turn_id": proposal_key,
                         "proposal_id": proposal_key,
@@ -328,6 +405,7 @@ def stream_human_ops_proposal_decision(
                         "approved": True,
                         "execution": execution,
                         "verification": verification,
+                        **authorization_payload,
                     },
                 )
                 return
@@ -442,6 +520,27 @@ def stream_human_ops_proposal_decision(
                         )
                         if next_proposal_id in deps.pending_proposals:
                             deps.pending_proposals[next_proposal_id]["task_id"] = task_id
+                        current_private_config = deps.normalize_private_config()
+                        current_human_ops_config = (
+                            current_private_config.get("human_ops", {})
+                            if isinstance(current_private_config.get("human_ops"), dict)
+                            else {}
+                        )
+                        if (
+                            full_authorization_enabled(current_human_ops_config)
+                            and deps.notify_human_ops_action is not None
+                        ):
+                            if next_proposal_id in deps.pending_proposals:
+                                deps.pending_proposals[next_proposal_id]["authorization_mode"] = (
+                                    AUTHORIZATION_MODE_FULL
+                                )
+                            async for event in stream_human_ops_proposal_decision(
+                                next_proposal_id,
+                                {"approved": True},
+                                deps,
+                            ):
+                                yield event
+                            return
                         yield deps.sse(
                             "phase",
                             {
@@ -555,8 +654,7 @@ def stream_human_ops_proposal_decision(
                     break
                 if next_decision is not None and continuation_text:
                     yield deps.sse("display_segment", {"text": continuation_text})
-                    yield deps.sse(
-                        "done",
+                    yield done_event(
                         {
                             "turn_id": proposal_key,
                             "proposal_id": proposal_key,
@@ -566,6 +664,7 @@ def stream_human_ops_proposal_decision(
                             "execution": execution,
                             "decision": next_decision.to_dict(),
                             "observation": observation,
+                            **authorization_payload,
                         },
                     )
                     return
@@ -574,8 +673,7 @@ def stream_human_ops_proposal_decision(
                     "display_segment",
                     {"text": f"动作已执行，但继续推进任务失败：{deps.sanitize_brain_error(exc, brain_config)}"},
                 )
-        yield deps.sse(
-            "done",
+        yield done_event(
             {
                 "turn_id": proposal_key,
                 "proposal_id": proposal_key,
@@ -583,6 +681,7 @@ def stream_human_ops_proposal_decision(
                 "text": final_text,
                 "approved": True,
                 "execution": execution,
+                **authorization_payload,
             },
         )
 

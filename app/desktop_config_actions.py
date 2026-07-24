@@ -67,14 +67,21 @@ class DesktopConfigActions:
         }
 
         chat_cfg = config.get("chat", {})
+        tts_provider = panel.chat_tts_provider_combo.currentText().strip() or "edge_tts"
+        tts_voice_id = str(chat_cfg.get("tts_voice_id", "")).strip()
+        if tts_provider == "fish_audio":
+            tts_voice_id = panel.chat_voice_input.text().strip() or tts_voice_id
         config["chat"] = {
             "backend_url": str(chat_cfg.get("backend_url", self.default_backend_url)),
             "model": panel.chat_model_input.text().strip() or self.default_brain_model,
             "session_id": str(chat_cfg.get("session_id", "default")),
             "voice": panel.chat_voice_input.text().strip() or "zh-CN-XiaoxiaoNeural",
             "rate_pct": max(-50, min(100, int(panel.chat_rate_slider.value()))),
-            "tts_provider": panel.chat_tts_provider_combo.currentText().strip() or "edge_tts",
+            "tts_provider": tts_provider,
             "tts_provider_url": panel.chat_tts_provider_url_input.text().strip(),
+            "tts_api_key": str(chat_cfg.get("tts_api_key", "")),
+            "tts_voice_id": tts_voice_id,
+            "tts_model": str(chat_cfg.get("tts_model", "s2.1-pro-free")),
             "expression_mode": bool(panel.expression_mode_check.isChecked()),
             "expression_output_format": str(chat_cfg.get("expression_output_format", "ndjson_v1")),
             "asr": self._copy_config(chat_cfg.get("asr", self.default_asr_config)),

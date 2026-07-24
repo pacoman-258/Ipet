@@ -68,6 +68,21 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertNotIn("observe_task", decision.payload)
         self.assertFalse(decision.requires_review)
 
+    def test_observe_reply_preserves_bounded_ax_cache_query(self) -> None:
+        decision = parse_brain_reply(
+            """
+            {
+              "kind":"observe",
+              "target":"screen",
+              "target_app":"访达",
+              "ax_query":"Downloads AXRow"
+            }
+            """
+        )
+
+        self.assertEqual(decision.payload["target_app"], "访达")
+        self.assertEqual(decision.payload["ax_query"], "Downloads AXRow")
+
     def test_think_reply_preserves_goal_and_next_kind_without_review(self) -> None:
         decision = parse_brain_reply(
             """
@@ -130,6 +145,14 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("goal.status", system_text)
         self.assertIn("say 不是未完成操作目标的结束路径", system_text)
         self.assertIn("不要用 say 口头请求批准", system_text)
+        self.assertIn("observe.ax_query", system_text)
+        self.assertIn("当前 target_app", system_text)
+        self.assertIn("AXRole", system_text)
+        self.assertIn("question 不替代 ax_query", system_text)
+        self.assertIn("未返回的元素当作不存在", system_text)
+        self.assertIn("普通 macOS GUI 应用", system_text)
+        self.assertIn("不再构成白名单", system_text)
+        self.assertNotIn("ax_query 只是 QQ", system_text)
         self.assertNotIn("当前可执行的 kind 只有 \"say\"", system_text)
 
     def test_turn_prompt_renders_global_ipet_template_and_dynamic_layers(self) -> None:
@@ -226,7 +249,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("可点击中心点的 macOS 屏幕坐标", system_text)
         self.assertIn("坐标都足够可信时才提交 click proposal", system_text)
         self.assertIn("不要因为进入过 observe 就套用固定后续动作", system_text)
-        self.assertIn("用户批准后执行", system_text)
+        self.assertIn("逐项审批获批，或完全授权完成动作记录与通知后执行", system_text)
         self.assertIn("不要声称已点击", system_text)
 
     def test_turn_prompt_contains_human_computer_use_model(self) -> None:
@@ -290,10 +313,13 @@ class BrainStructuredReplyTests(unittest.TestCase):
 
         system_text = messages[0].content
         self.assertIn("不要想着终端命令", system_text)
-        self.assertIn("如果 persona 或用户配置暗示只能使用 GUI", system_text)
+        self.assertIn("如果 persona 或普通对话内容暗示只能使用 GUI", system_text)
         self.assertIn("terminal_shell", system_text)
         self.assertIn("terminal_tui", system_text)
-        self.assertGreater(system_text.rfind("如果 persona 或用户配置暗示只能使用 GUI"), system_text.find("不要想着终端命令"))
+        self.assertGreater(
+            system_text.rfind("如果 persona 或普通对话内容暗示只能使用 GUI"),
+            system_text.find("不要想着终端命令"),
+        )
 
 
 class BrainStructuredTurnTests(unittest.IsolatedAsyncioTestCase):

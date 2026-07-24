@@ -12,8 +12,19 @@
     diagnosticCards: $("diagnostic-cards"),
     diagnosticLog: $("diagnostic-log"),
     modelPath: $("model-path"),
+    localModelSelect: $("local-model-select"),
+    refreshLocalModelsBtn: $("refresh-local-models-btn"),
+    useLocalModelBtn: $("use-local-model-btn"),
+    previewLocalModelBtn: $("preview-local-model-btn"),
+    modelPreviewStatus: $("model-preview-status"),
+    modelMotionList: $("model-motion-list"),
+    modelExpressionList: $("model-expression-list"),
     chatVoice: $("chat-voice"),
     chatTtsProvider: $("chat-tts-provider"),
+    chatTtsVoiceId: $("chat-tts-voice-id"),
+    chatTtsModel: $("chat-tts-model"),
+    chatTtsApiKey: $("chat-tts-api-key"),
+    chatTtsApiKeyClear: $("chat-tts-api-key-clear"),
     chatRatePct: $("chat-rate-pct"),
     chatAsrEnabled: $("chat-asr-enabled"),
     chatAsrPushToTalkKey: $("chat-asr-push-to-talk-key"),
@@ -60,7 +71,9 @@
     opsPlaywrightProfileStatus: $("ops-playwright-profile-status"),
     opsObserveScreen: $("ops-observe-screen"),
     opsAccessibility: $("ops-accessibility"),
-    opsRequireActReview: $("ops-require-act-review"),
+    opsAxIndexRefresh: $("ops-ax-index-refresh"),
+    opsAxIndexStatus: $("ops-ax-index-status"),
+    opsAuthorizationMode: $("ops-authorization-mode"),
     opsRequireMemoryReview: $("ops-require-memory-review"),
     opsRequireSkillReview: $("ops-require-skill-review"),
     opsClipboardReview: $("ops-clipboard-review"),
@@ -265,9 +278,9 @@
         "Human Ops",
         neo.human_ops.observe_model.enabled
           ? `observe · ${neo.human_ops.observe_model.model_name || "独立模型"}`
-          : neo.human_ops.require_act_review
-            ? "Brain 直接观察 · 动作需批准"
-            : "Brain 直接观察 · 动作审批关闭",
+          : neo.human_ops.authorization_mode === "full" || neo.human_ops.require_act_review === false
+            ? "Brain 直接观察 · 完全授权"
+            : "Brain 直接观察 · 逐项审批",
       ],
       [
         "Environment",
@@ -302,7 +315,7 @@
     const diagnostics = [
       ["本体设置", "已加载"],
       ["最近观察", neo.human_ops.observe_screen ? "允许看屏幕" : "观察关闭"],
-      ["最近批准动作", "等待 human-op 提案"],
+      ["最近授权动作", "等待 human-op 提案"],
       ["最近失败动作", "暂无记录"],
     ];
     els.diagnosticCards.innerHTML = diagnostics
@@ -338,6 +351,66 @@
     if (!text) return "未设置";
     const date = new Date(text);
     return Number.isNaN(date.getTime()) ? text : date.toLocaleString();
+  }
+
+  function formatBytes(value) {
+    const bytes = Math.max(0, Number(value || 0));
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function renderAccessibilityIndexStatus(payload = null) {
+    if (!els.opsAxIndexStatus) return;
+    if (!payload) {
+      els.opsAxIndexStatus.textContent = "尚未建立持久索引";
+      return;
+    }
+    const apps = Array.isArray(payload.apps) ? payload.apps : [];
+    const stored = apps.filter((item) => item?.stored);
+    const appSummary = stored
+      .map((item) => `${item.name || item.app_id} ${Number(item.element_count || 0)} 项${item.stale ? "（待更新）" : ""}`)
+      .join(" · ");
+    els.opsAxIndexStatus.textContent = stored.length
+      ? `${stored.length} 个应用 · ${Number(payload.element_count || 0)} 项 · ${formatBytes(payload.size_bytes)}${appSummary ? ` · ${appSummary}` : ""}`
+      : "尚未建立持久索引";
+    els.opsAxIndexStatus.title = String(payload.storage_dir || "");
+  }
+
+  async function loadAccessibilityIndexStatus() {
+    if (settingsPayload?.static_preview) {
+      renderAccessibilityIndexStatus();
+      return;
+    }
+    renderAccessibilityIndexStatus(await fetchJson("/api/settings/accessibility-index"));
+  }
+
+  async function refreshAccessibilityIndex() {
+    if (settingsPayload?.static_preview) {
+      setStatus("静态预览不能读取 macOS Accessibility。");
+      return;
+    }
+    if (els.opsAxIndexRefresh) els.opsAxIndexRefresh.disabled = true;
+    if (els.opsAxIndexStatus) els.opsAxIndexStatus.textContent = "正在读取全部运行中的 GUI 应用并写入完整 AX 树…";
+    try {
+      const payload = await fetchJson("/api/settings/accessibility-index/refresh", { method: "POST" });
+      renderAccessibilityIndexStatus(payload);
+      if (payload.status === "busy") {
+        setStatus("AX 索引已有一次更新正在进行。");
+        showToast("AX 索引正在更新");
+        return;
+      }
+      if (payload.status && payload.status !== "success") {
+        setStatus(`AX 索引未更新：${String(payload.reason || payload.status)}`);
+        return;
+      }
+      const selfExcluded = Number(payload.self_excluded_count || 0);
+      const selfExcludedText = selfExcluded > 0 ? `，安全跳过 Ipet 自身 ${selfExcluded} 个进程` : "";
+      setStatus(`AX 持久索引已更新 ${Number(payload.updated_count || 0)} 个应用${selfExcludedText}。`);
+      showToast("AX 索引已更新");
+    } finally {
+      if (els.opsAxIndexRefresh) els.opsAxIndexRefresh.disabled = false;
+    }
   }
 
   function environmentModeLabel(mode) {
@@ -737,6 +810,34 @@
     showToast,
   });
 
+  const live2dFactory = window.IpetSettingsLive2d?.createSettingsLive2dController;
+  if (typeof live2dFactory !== "function") {
+    throw new Error("settings_live2d.js must load before settings.js");
+  }
+  const live2dController = live2dFactory({
+    els,
+    fetchJson,
+    getSettingsPayload: () => settingsPayload,
+    showToast,
+    runAction: (action) => wrap(action),
+  });
+
+  function loadLocalModels() {
+    return live2dController.loadLocalModels();
+  }
+
+  function populateLocalModels() {
+    live2dController.populateLocalModels();
+  }
+
+  function useSelectedLocalModel() {
+    return live2dController.useSelectedLocalModel();
+  }
+
+  function previewSelectedLocalModel() {
+    return live2dController.previewSelectedLocalModel();
+  }
+
   function setBrainModelStatus(message) {
     modelPickerController.setBrainModelStatus(message);
   }
@@ -796,6 +897,19 @@
     renderPersonaPromptState();
     renderChromeProfileStatus();
     try {
+      await loadAccessibilityIndexStatus();
+    } catch (error) {
+      renderAccessibilityIndexStatus();
+      if (els.opsAxIndexStatus) {
+        els.opsAxIndexStatus.textContent = `AX 索引不可用：${error.message || String(error)}`;
+      }
+    }
+    try {
+      await loadLocalModels();
+    } catch (error) {
+      populateLocalModels();
+    }
+    try {
       await loadMemoryCatalog();
     } catch (error) {
       memoryCatalog = { records: [], pending: [] };
@@ -833,6 +947,7 @@
     lastLoadedAt = new Date().toLocaleTimeString();
     populateForm(settingsPayload.config || {});
     renderPersonaPromptState();
+    populateLocalModels();
     await loadMemoryCatalog();
     await loadEnvironmentStatus();
     setStatus("设置已保存，Ipet 会按新配置刷新。");
@@ -849,6 +964,7 @@
     current.skills = defaults.skills;
     populateForm(current);
     renderPersonaPromptState();
+    populateLocalModels();
     setStatus("已恢复 Neo Aspect 默认值，保存后生效。");
   }
 
@@ -870,6 +986,11 @@
     els.saveConfigBtn?.addEventListener("click", () => wrap(saveSettings));
     els.resetFormBtn?.addEventListener("click", resetForm);
     els.brainFetchModelsBtn?.addEventListener("click", () => wrap(fetchBrainModels));
+    els.refreshLocalModelsBtn?.addEventListener("click", () => wrap(loadLocalModels));
+    els.useLocalModelBtn?.addEventListener("click", () => wrap(useSelectedLocalModel));
+    els.previewLocalModelBtn?.addEventListener("click", () => wrap(previewSelectedLocalModel));
+    els.localModelSelect?.addEventListener("change", live2dController.handleModelSelectChange);
+    els.modelPath?.addEventListener("input", live2dController.handleModelPathInput);
     els.brainPersonaPromptSelectBtn?.addEventListener("click", openPersonaPromptPicker);
     els.brainPersonaPromptClearBtn?.addEventListener("click", clearPersonaPrompt);
     els.brainPersonaPromptFile?.addEventListener("change", renderPersonaPromptState);
@@ -878,6 +999,7 @@
     ));
     els.opsPlaywrightProfile?.addEventListener("change", renderChromeProfileStatus);
     els.opsObserveFetchModelsBtn?.addEventListener("click", () => wrap(fetchObserveModels));
+    els.opsAxIndexRefresh?.addEventListener("click", () => wrap(refreshAccessibilityIndex));
     els.memoryRefreshBtn?.addEventListener("click", () => wrap(loadMemoryCatalog));
     els.environmentRefreshBtn?.addEventListener("click", () => wrap(loadEnvironmentStatus));
     els.environmentClearBtn?.addEventListener("click", () => wrap(clearEnvironmentStatus));

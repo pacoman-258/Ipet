@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from brain.decisions import BrainDecision
+from backend.task_control import TASK_CONTROL, TaskStopped
 from human_ops.approvals import ReviewableProposal
 from human_ops.approval_flow import (
     HumanOpsApprovalFlowDependencies,
@@ -98,9 +99,32 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
             payload={"path": "README.md"},
         )
         file_result = execution_verification(file_read, {"read": True, "path": "README.md", "content": "ok"})
+        semantic_click = ReviewableProposal.act(
+            action_type="click",
+            summary="点击发送",
+            payload={
+                "target_app": "WeChat",
+                "ax_ref": {
+                    "app_id": "wechat",
+                    "role": "AXButton",
+                    "path": [1],
+                    "fingerprint": "copied",
+                },
+            },
+        )
+        semantic_result = execution_verification(
+            semantic_click,
+            {
+                "clicked": True,
+                "focused": True,
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+            },
+        )
 
-        self.assertEqual(click_result["status"], "verified")
-        self.assertFalse(click_result["requires_visual"])
+        self.assertEqual(click_result["status"], "insufficient")
+        self.assertTrue(click_result["requires_visual"])
+        self.assertIn("post-action interface state", click_result["reason"])
         self.assertEqual(send_result["status"], "insufficient")
         self.assertTrue(send_result["requires_visual"])
         self.assertIn("expected message", send_result["reason"])
@@ -108,6 +132,9 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(playwright_result["requires_visual"])
         self.assertEqual(file_result["status"], "verified")
         self.assertFalse(file_result["requires_visual"])
+        self.assertEqual(semantic_result["status"], "insufficient")
+        self.assertTrue(semantic_result["requires_visual"])
+        self.assertEqual(semantic_result["method"], "macos_accessibility_action_and_native_state")
 
     def _dependencies(self, pending: dict[str, dict[str, Any]], **overrides: Any) -> HumanOpsApprovalFlowDependencies:
         async def perform_action(proposal: ReviewableProposal) -> dict[str, Any]:
@@ -170,7 +197,11 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "status": "pending",
             }
         }
-        deps = self._dependencies(pending)
+        refresh_calls: list[str] = []
+        deps = self._dependencies(
+            pending,
+            schedule_accessibility_index_refresh=lambda: refresh_calls.append("refresh") or True,
+        )
 
         events = await _collect_events(
             stream_human_ops_proposal_decision(
@@ -189,6 +220,8 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done["approved"], False)
         self.assertIsNone(done["execution"])
         self.assertIn("调整说明：先不要点", done["text"])
+        self.assertTrue(done["accessibility_index_refresh_scheduled"])
+        self.assertEqual(refresh_calls, ["refresh"])
 
     async def test_memory_approval_uses_memory_store_callback_without_body_action(self) -> None:
         proposal = ReviewableProposal.remember(
@@ -323,6 +356,186 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1][1]["proposal_id"], "next-proposal")
         self.assertEqual(events[-1][1]["action_type"], "key_press")
         self.assertNotIn("done", event_names)
+
+    async def test_full_authorization_notifies_and_executes_each_continuation_action(self) -> None:
+        first = ReviewableProposal.act(
+            action_type="type_text",
+            summary="Ipet 想输入到聊天框",
+            payload={
+                "target_app": "WeChat",
+                "text": "你好",
+                "label": "聊天框",
+                "continue_after_approval": True,
+            },
+        )
+        second = ReviewableProposal.act(
+            action_type="key_press",
+            summary="Ipet 想按下回车",
+            payload={"target_app": "WeChat", "key": "enter", "label": "发送"},
+        )
+        pending = {
+            "auto-first": {
+                "proposal": first,
+                "session_id": "auto-session",
+                "user_text": "回复消息",
+                "task_id": "auto-task",
+                "status": "pending",
+                "authorization_mode": "full",
+            }
+        }
+        calls: list[tuple[str, str]] = []
+
+        async def notify(proposal: ReviewableProposal, *, task_id: str) -> dict[str, Any]:
+            calls.append(("notify", str(proposal.payload.get("action_type"))))
+            self.assertEqual(task_id, "auto-task")
+            return {"notified": True, "method": "test"}
+
+        async def perform_action(proposal: ReviewableProposal) -> dict[str, Any]:
+            action_type = str(proposal.payload.get("action_type") or "")
+            calls.append(("action", action_type))
+            if action_type == "type_text":
+                return {"typed": True, "focused": True, "frontmost_app": "WeChat"}
+            return {"pressed": True, "focused": True, "frontmost_app": "WeChat"}
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any):
+            return SimpleNamespace(text=second.summary, decision=BrainDecision.propose_act(
+                "key_press",
+                {"target_app": "WeChat", "key": "enter", "label": "发送"},
+            ))
+
+        def create_next(_decision: BrainDecision, *, session_id: str, user_text: str):
+            pending["auto-second"] = {
+                "proposal": second,
+                "session_id": session_id,
+                "user_text": user_text,
+                "status": "pending",
+            }
+            return "auto-second", second
+
+        deps = self._dependencies(
+            pending,
+            notify_human_ops_action=notify,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda proposal: bool(
+                proposal.payload.get("arguments", {}).get("continue_after_approval")
+            ),
+            normalize_private_config=lambda: {
+                "brain": {},
+                "human_ops": {"authorization_mode": "full", "require_act_review": False},
+            },
+            run_brain_turn=run_brain_turn,
+            create_human_ops_act_proposal=create_next,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision("auto-first", {"approved": True}, deps)
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("notify", "type_text"),
+                ("action", "type_text"),
+                ("notify", "key_press"),
+                ("action", "key_press"),
+            ],
+        )
+        self.assertEqual(pending["auto-first"]["status"], "executed")
+        self.assertEqual(pending["auto-second"]["status"], "executed")
+        self.assertEqual(pending["auto-second"]["authorization_mode"], "full")
+        self.assertNotIn("approval_required", [name for name, _payload in events])
+        self.assertTrue(events[-1][1]["auto_authorized"])
+        self.assertEqual(events[-1][1]["authorization_mode"], "full")
+
+    async def test_full_authorization_fails_closed_when_action_notice_fails(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：确认",
+            payload={"target_app": "Finder", "x": 10, "y": 20, "label": "确认"},
+        )
+        pending = {
+            "auto-notice-failure": {
+                "proposal": proposal,
+                "session_id": "auto-session",
+                "user_text": "点击确认",
+                "task_id": "auto-notice-task",
+                "status": "pending",
+                "authorization_mode": "full",
+            }
+        }
+        action_calls = 0
+
+        async def notify(_proposal: ReviewableProposal, *, task_id: str) -> dict[str, Any]:
+            raise RuntimeError(f"notice unavailable:{task_id}")
+
+        async def perform_action(_proposal: ReviewableProposal) -> dict[str, Any]:
+            nonlocal action_calls
+            action_calls += 1
+            return {"clicked": True}
+
+        deps = self._dependencies(
+            pending,
+            notify_human_ops_action=notify,
+            perform_human_ops_action=perform_action,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "auto-notice-failure",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        self.assertEqual(action_calls, 0)
+        self.assertEqual(pending["auto-notice-failure"]["status"], "notification_failed")
+        self.assertEqual(events[-1][1]["execution"]["stage"], "action_notification")
+        self.assertIn("通知失败", events[-1][1]["text"])
+
+    async def test_full_authorization_stop_after_notice_prevents_action_dispatch(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：确认",
+            payload={"target_app": "Finder", "x": 10, "y": 20, "label": "确认"},
+        )
+        task_id = "auto-stop-after-notice"
+        pending = {
+            "auto-stop": {
+                "proposal": proposal,
+                "session_id": "auto-session",
+                "user_text": "点击确认",
+                "task_id": task_id,
+                "status": "pending",
+                "authorization_mode": "full",
+            }
+        }
+        TASK_CONTROL.start(task_id, "auto-session")
+        action_calls = 0
+
+        async def notify(_proposal: ReviewableProposal, *, task_id: str) -> dict[str, Any]:
+            task = TASK_CONTROL.get(task_id)
+            self.assertIsNotNone(task)
+            task.state = "stopped"
+            return {"notified": True, "method": "test"}
+
+        async def perform_action(_proposal: ReviewableProposal) -> dict[str, Any]:
+            nonlocal action_calls
+            action_calls += 1
+            return {"clicked": True}
+
+        deps = self._dependencies(
+            pending,
+            notify_human_ops_action=notify,
+            perform_human_ops_action=perform_action,
+        )
+
+        with self.assertRaises(TaskStopped):
+            await _collect_events(
+                stream_human_ops_proposal_decision("auto-stop", {"approved": True}, deps)
+            )
+
+        self.assertEqual(action_calls, 0)
+        self.assertEqual(pending["auto-stop"]["status"], "invalidated_by_stop")
 
     async def test_post_approval_capture_is_attached_to_brain_when_observe_model_is_disabled(self) -> None:
         proposal = ReviewableProposal.act(

@@ -28,6 +28,8 @@
         rate_pct: 0,
         tts_provider: "edge_tts",
         tts_provider_url: "",
+        tts_voice_id: "",
+        tts_model: "s2.1-pro-free",
         expression_mode: true,
         expression_output_format: "ndjson_v1",
         react_enabled: true,

@@ -55,6 +55,33 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertEqual(result, {"clicked": True, "x": 12, "y": 35, "label": "发送按钮", "method": "core_graphics"})
         self.assertEqual(calls, [("core_graphics", 12, 35)])
 
+    def test_click_uses_approved_ax_reference_without_coordinate_fallback(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        ax_ref = {"app_id": "wechat", "role": "AXButton", "path": [0], "fingerprint": "copied"}
+
+        def accessibility_actioner(target_app, reference, **kwargs):
+            calls.append((target_app, reference, kwargs))
+            return {
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+                "method": "macos_accessibility",
+            }
+
+        result = desktop_actions.execute_human_ops_click(
+            {"target_app": "WeChat", "ax_ref": ax_ref, "label": "发送"},
+            platform_name="darwin",
+            runner=lambda *_args, **_kwargs: self.fail("runner should not be used"),
+            event_clicker=lambda *_args: self.fail("coordinate click should not run"),
+            accessibility_actioner=accessibility_actioner,
+        )
+
+        self.assertEqual(calls[0][0:2], ("WeChat", ax_ref))
+        self.assertEqual(calls[0][2]["operation"], "press")
+        self.assertTrue(result["clicked"])
+        self.assertTrue(result["ax_target_verified"])
+        self.assertNotIn("x", result)
+
     def test_click_falls_back_to_system_events_after_core_graphics_error(self) -> None:
         desktop_actions = _desktop_actions_module()
         calls = []
@@ -124,6 +151,32 @@ class DesktopActionsModuleTests(unittest.TestCase):
             },
         )
 
+    def test_type_text_can_focus_an_approved_ax_input_before_typing(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        ax_ref = {"app_id": "qq", "role": "AXTextArea", "path": [2], "fingerprint": "copied"}
+
+        def accessibility_actioner(target_app, reference, **kwargs):
+            calls.append(("ax", target_app, reference, kwargs["operation"]))
+            return {
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+                "ax_action": "AXFocused",
+                "method": "macos_accessibility",
+            }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {"target_app": "QQ", "ax_ref": ax_ref, "text": "你好", "label": "消息输入框"},
+            platform_name="darwin",
+            event_typer=lambda text: calls.append(("type", text)),
+            accessibility_actioner=accessibility_actioner,
+        )
+
+        self.assertEqual(calls[0], ("ax", "QQ", ax_ref, "focus"))
+        self.assertEqual(calls[1], ("type", "你好"))
+        self.assertTrue(result["ax_target_verified"])
+        self.assertEqual(result["method"], "macos_accessibility_focus+core_graphics_unicode")
+
     def test_type_text_falls_back_to_system_events_after_core_graphics_error(self) -> None:
         desktop_actions = _desktop_actions_module()
         calls = []
@@ -169,6 +222,24 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertEqual(result["app"], "WeChat")
         self.assertEqual(result["application_count"], 1)
         self.assertEqual(result["method"], "launch_services")
+
+    def test_launch_app_normalizes_localized_ax_allowlist_name(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            stdout = "/System/Applications/Music.app\n" if args[0] == "/usr/bin/mdfind" else ""
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+        result = desktop_actions.execute_human_ops_launch_app(
+            {"app": "音乐"},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertEqual(calls[1], ["/usr/bin/open", "/System/Applications/Music.app"])
+        self.assertEqual(result["app"], "Music")
 
     def test_launch_app_resolves_netease_music_bundle_name(self) -> None:
         desktop_actions = _desktop_actions_module()
@@ -247,6 +318,25 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertEqual(result["frontmost_app"], "Google Chrome")
         self.assertTrue(result["focused"])
 
+    def test_focus_macos_application_normalizes_localized_allowlisted_name(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        result = desktop_actions.focus_macos_application(
+            {"target_app": "微信"},
+            platform_name="darwin",
+            runner=runner,
+            sleeper=lambda _seconds: None,
+            frontmost_provider=lambda: "WeChat",
+        )
+
+        self.assertEqual(calls, [["/usr/bin/open", "-a", "WeChat"]])
+        self.assertTrue(result["focused"])
+
     def test_native_approval_dialog_returns_rejection_without_guessing(self) -> None:
         desktop_actions = _desktop_actions_module()
 
@@ -267,6 +357,31 @@ class DesktopActionsModuleTests(unittest.TestCase):
 
         self.assertFalse(result["approved"])
         self.assertEqual(result["method"], "macos_dialog")
+
+    def test_full_authorization_notice_is_noninteractive(self) -> None:
+        desktop_actions = _desktop_actions_module()
+
+        def runner(args, **kwargs):
+            self.assertIn("display notification", args[-1])
+            self.assertIn("with title", args[-1])
+            self.assertNotIn("buttons", args[-1])
+            self.assertEqual(kwargs["timeout"], 5)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        result = desktop_actions.execute_human_ops_native_approval(
+            {
+                "notice_only": True,
+                "title": "Ipet 完全授权操作",
+                "message": "即将点击。",
+                "task_id": "task-notice",
+            },
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertTrue(result["notified"])
+        self.assertEqual(result["method"], "macos_notification")
+        self.assertEqual(result["task_id"], "task-notice")
 
     def test_hide_and_restore_window_use_injected_qapplication(self) -> None:
         desktop_actions = _desktop_actions_module()

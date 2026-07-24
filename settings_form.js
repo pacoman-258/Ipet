@@ -50,7 +50,7 @@
           max_output_tokens: 1024,
           persona_prompt_file: "",
           persona: "",
-          self_state: "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
+          self_state: "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。",
           response_style: "",
           decision_temperature: 0.4,
           reasoning_effort: "",
@@ -58,6 +58,7 @@
           web_search_enabled: false,
         },
         human_ops: {
+          authorization_mode: "review",
           playwright_profile: "",
           observe_screen: true,
           accessibility: true,
@@ -149,6 +150,8 @@
           chat: {
             voice: "zh-CN-XiaoxiaoNeural",
             tts_provider: "edge_tts",
+            tts_voice_id: "",
+            tts_model: "s2.1-pro-free",
             rate_pct: 0,
             model: "gpt-5.4",
             backend_url: "",
@@ -312,6 +315,35 @@
 
       const asrProvider = stringValue(els.chatAsrProvider, "funasr");
       const asrOnline = asrProvider === "groq";
+      const ttsProvider = stringValue(els.chatTtsProvider, "edge_tts");
+      const fishAudio = ttsProvider === "fish_audio";
+      if (els.chatTtsVoiceId) {
+        els.chatTtsVoiceId.disabled = !fishAudio;
+        els.chatTtsVoiceId.placeholder = fishAudio ? "创建 Fish 音色后填写 _id" : "仅 Fish Audio 使用";
+      }
+      if (els.chatTtsModel) {
+        els.chatTtsModel.disabled = !fishAudio;
+        els.chatTtsModel.placeholder = fishAudio ? "s2.1-pro-free" : "仅 Fish Audio 使用";
+      }
+      if (els.chatTtsApiKey) {
+        els.chatTtsApiKey.disabled = !fishAudio;
+        if (!fishAudio) {
+          els.chatTtsApiKey.value = "";
+          els.chatTtsApiKey.placeholder = "仅 Fish Audio 使用";
+        } else {
+          setSecretPlaceholder(
+            els.chatTtsApiKey,
+            getSettingsPayload()?.config?.chat?.tts_api_key_preview,
+            "Fish Audio API Key",
+          );
+        }
+      }
+      if (els.chatTtsApiKeyClear) {
+        els.chatTtsApiKeyClear.disabled = !fishAudio;
+        if (!fishAudio) {
+          els.chatTtsApiKeyClear.checked = false;
+        }
+      }
       if (els.chatAsrProviderUrl) {
         els.chatAsrProviderUrl.disabled = !asrOnline;
         els.chatAsrProviderUrl.placeholder = asrOnline
@@ -370,6 +402,11 @@
       setValue(els.modelPath, source.model_path || "");
       setValue(els.chatVoice, chat.voice || "zh-CN-XiaoxiaoNeural");
       setValue(els.chatTtsProvider, chat.tts_provider || "edge_tts");
+      setValue(els.chatTtsVoiceId, chat.tts_voice_id || "");
+      setValue(els.chatTtsModel, chat.tts_model || "s2.1-pro-free");
+      setValue(els.chatTtsApiKey, "");
+      setSecretPlaceholder(els.chatTtsApiKey, chat.tts_api_key_preview, "Fish Audio API Key");
+      setChecked(els.chatTtsApiKeyClear, false);
       setValue(els.chatRatePct, Number(chat.rate_pct || 0));
       setChecked(els.chatAsrEnabled, asr.enabled !== false);
       setValue(els.chatAsrPushToTalkKey, asr.push_to_talk_key || "Alt");
@@ -412,7 +449,12 @@
       setValue(els.opsPlaywrightProfile, neo.human_ops.playwright_profile || "");
       setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
       setChecked(els.opsAccessibility, neo.human_ops.accessibility);
-      setChecked(els.opsRequireActReview, neo.human_ops.require_act_review);
+      setValue(
+        els.opsAuthorizationMode,
+        neo.human_ops.authorization_mode === "full" || neo.human_ops.require_act_review === false
+          ? "full"
+          : "review",
+      );
       setChecked(els.opsRequireMemoryReview, true);
       setChecked(els.opsRequireSkillReview, neo.human_ops.require_skill_review);
       setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
@@ -480,6 +522,12 @@
       next.chat = { ...(next.chat || {}) };
       next.chat.voice = stringValue(els.chatVoice, "zh-CN-XiaoxiaoNeural");
       next.chat.tts_provider = stringValue(els.chatTtsProvider, "edge_tts");
+      next.chat.tts_voice_id = stringValue(els.chatTtsVoiceId);
+      next.chat.tts_model = stringValue(els.chatTtsModel, "s2.1-pro-free");
+      if (els.chatTtsApiKey?.value) {
+        next.chat.tts_api_key = els.chatTtsApiKey.value;
+      }
+      next.chat.tts_api_key_clear = !!els.chatTtsApiKeyClear?.checked;
       next.chat.rate_pct = intValue(els.chatRatePct, 0);
       next.chat.model = stringValue(els.brainModelName, "gpt-5.4");
       next.chat.asr = {
@@ -539,12 +587,15 @@
       next.brain.api_key_clear = !!els.brainApiKeyClear?.checked;
 
       const observeProvider = stringValue(els.opsObserveModelProvider, "openai_compatible");
+      const authorizationMode =
+        stringValue(els.opsAuthorizationMode, "review") === "full" ? "full" : "review";
       next.human_ops = {
         ...(next.human_ops || {}),
+        authorization_mode: authorizationMode,
         playwright_profile: stringValue(els.opsPlaywrightProfile),
         observe_screen: !!els.opsObserveScreen?.checked,
         accessibility: !!els.opsAccessibility?.checked,
-        require_act_review: !!els.opsRequireActReview?.checked,
+        require_act_review: authorizationMode !== "full",
         require_memory_review: true,
         require_skill_review: !!els.opsRequireSkillReview?.checked,
         clipboard_write_review: !!els.opsClipboardReview?.checked,

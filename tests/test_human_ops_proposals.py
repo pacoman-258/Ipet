@@ -72,6 +72,22 @@ class HumanOpsProposalTests(unittest.TestCase):
         self.assertEqual(payload["tools"][0]["summary"], "打开应用 WeChat")
         self.assertIsNone(payload["preview"])
 
+    def test_semantic_click_names_ax_target_without_coordinate_preview(self) -> None:
+        ax_ref = {"app_id": "music", "role": "AXButton", "path": [3], "fingerprint": "copied"}
+        proposal = build_human_ops_act_proposal(
+            BrainDecision.propose_act(
+                "click",
+                {"target_app": "Music", "ax_ref": ax_ref, "label": "播放"},
+            ),
+            user_text="播放音乐",
+        )
+
+        payload = proposal_event_payload("ax-click-1", proposal)
+
+        self.assertIsNone(payload["preview"])
+        self.assertEqual(payload["tools"][0]["summary"], "点击 播放（AXButton 语义目标） · Music")
+        self.assertIn("macOS Accessibility", proposal.summary)
+
     def test_playwright_proposal_names_operation_and_target(self) -> None:
         proposal = build_human_ops_act_proposal(
             BrainDecision.propose_act(

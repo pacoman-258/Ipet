@@ -48,6 +48,9 @@ class _LiveRouteDependencyContext:
         self.settings_model_picker_js_response = (
             lambda: self._read("_settings_asset_helpers").settings_model_picker_js_response()
         )
+        self.settings_live2d_js_response = (
+            lambda: self._read("_settings_asset_helpers").settings_live2d_js_response()
+        )
         self.settings_payload = lambda private_config=None: self._call("_settings_payload", private_config)
         self.normalize_private_config = lambda: self._call("_normalize_private_config")
         self.apply_settings_update = (
@@ -56,6 +59,10 @@ class _LiveRouteDependencyContext:
         self.save_config = lambda private_config: self._call("_save_config", private_config)
         self.list_persona_prompts = lambda: self._call("list_persona_prompts")
         self.list_chrome_profiles = lambda: self._call("list_chrome_profiles")
+        self.list_local_models = lambda: self._call("_list_local_models")
+        self.preview_action = lambda payload: self._call("_preview_settings_action", payload)
+        self.accessibility_index_status = lambda: self._call("_accessibility_index_status")
+        self.refresh_accessibility_index = lambda: self._call("_refresh_accessibility_index")
         self.normalize_provider = lambda value: self._call("normalize_provider", value)
         self.list_provider_models = lambda brain_config: self._call("list_provider_models", brain_config)
         self.sanitize_brain_error = lambda error, brain_config: self._call(
@@ -148,6 +155,11 @@ class _LiveRouteDependencyContext:
             execution=execution,
         )
         self.request_native_approval = lambda proposal: self._call("_request_native_human_ops_approval", proposal)
+        self.notify_human_ops_action = lambda proposal, *, task_id: self._call(
+            "_notify_human_ops_action",
+            proposal,
+            task_id=task_id,
+        )
         self.perform_memory_operation = lambda proposal: self._call("_perform_memory_operation", proposal)
         self.record_memory_review_exchange = lambda **kwargs: self._call("_record_memory_review_exchange", **kwargs)
         self.relationship_memory_context = lambda user_text, memory_config: self._call(
@@ -164,6 +176,9 @@ class _LiveRouteDependencyContext:
         self.consume_proactive_reply_context = lambda session_id: self._call(
             "_consume_proactive_reply_context",
             session_id,
+        )
+        self.schedule_accessibility_index_refresh = lambda: self._call(
+            "_schedule_accessibility_index_refresh"
         )
 
     @property

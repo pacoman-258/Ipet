@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from brain.decisions import BrainDecision, DecisionKind
 from brain.llm import ENDPOINTLESS_PROVIDERS, BrainLLMError
+from human_ops.authorization import AUTHORIZATION_MODE_FULL, full_authorization_enabled
+
 from .task_control import TASK_CONTROL
 
 
@@ -233,6 +235,8 @@ class ChatStreamFlowDependencies:
     mark_memory_recalled: Callable[[str, str], None] = lambda memory_id, assistant_text: None
     build_memory_candidates: Callable[..., list[dict[str, Any]]] = lambda **kwargs: []
     consume_proactive_reply_context: Callable[[str], str] = lambda session_id: ""
+    schedule_accessibility_index_refresh: Callable[[], bool] = lambda: False
+    stream_authorized_proposal: Callable[[str], AsyncIterator[str]] | None = None
 
 
 async def stream_chat_response(
@@ -531,6 +535,12 @@ async def stream_chat_response(
             )
             if proposal_id in deps.pending_proposals:
                 deps.pending_proposals[proposal_id]["task_id"] = turn_id
+            if full_authorization_enabled(human_ops_config) and deps.stream_authorized_proposal is not None:
+                if proposal_id in deps.pending_proposals:
+                    deps.pending_proposals[proposal_id]["authorization_mode"] = AUTHORIZATION_MODE_FULL
+                async for event in deps.stream_authorized_proposal(proposal_id):
+                    yield event
+                return
             yield deps.sse(
                 "phase",
                 {
@@ -833,6 +843,12 @@ async def stream_chat_response(
                         "transient": True,
                     },
                 )
+    accessibility_refresh_scheduled = False
+    if human_ops_config.get("accessibility", True) is not False:
+        try:
+            accessibility_refresh_scheduled = bool(deps.schedule_accessibility_index_refresh())
+        except Exception:
+            accessibility_refresh_scheduled = False
     done_payload = {
         "turn_id": turn_id,
         "session_id": session_id,
@@ -843,6 +859,7 @@ async def stream_chat_response(
         "retry_from_assistant_turn": retry_from_assistant_turn or None,
         "memory_mode": memory_mode,
         "memory_candidate_count": len(implicit_memory_candidates),
+        "accessibility_index_refresh_scheduled": accessibility_refresh_scheduled,
     }
     if last_observation is not None:
         done_payload["observation"] = last_observation

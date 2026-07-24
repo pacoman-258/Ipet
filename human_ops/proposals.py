@@ -44,11 +44,19 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
     target_suffix = f" · {target_app}" if target_app else ""
     if action_type == "click":
         label = str(args.get("label") or args.get("target") or "目标位置").strip() or "目标位置"
+        ax_ref = args.get("ax_ref") if isinstance(args.get("ax_ref"), dict) else {}
+        if ax_ref:
+            role = str(ax_ref.get("role") or "AXElement").strip() or "AXElement"
+            return f"点击 {label}（{role} 语义目标）{target_suffix}"
         return f"点击 {label} ({_coerce_int(args.get('x'))}, {_coerce_int(args.get('y'))}){target_suffix}"
     if action_type == "type_text":
         label = str(args.get("label") or args.get("target") or "输入位置").strip() or "输入位置"
         text = str(args.get("text") or "").strip()
         preview = text[:24] + ("..." if len(text) > 24 else "")
+        ax_ref = args.get("ax_ref") if isinstance(args.get("ax_ref"), dict) else {}
+        if ax_ref:
+            role = str(ax_ref.get("role") or "AXElement").strip() or "AXElement"
+            return f"输入到 {label}（{role} 语义目标）: {preview}{target_suffix}"
         return f"输入到 {label}: {preview}{target_suffix}"
     if action_type == "key_press":
         key = str(args.get("key") or "").strip().lower() or "enter"
@@ -194,13 +202,30 @@ def build_human_ops_act_proposal(
     preview = None
     if action_type == "click":
         label = str(arguments.get("label") or arguments.get("target") or "目标位置").strip() or "目标位置"
-        preview = red_dot_click_preview(x=_coerce_int(arguments.get("x")), y=_coerce_int(arguments.get("y")), label=label)
-        summary = f"Ipet 想点击：{label}"
+        ax_ref = arguments.get("ax_ref") if isinstance(arguments.get("ax_ref"), dict) else {}
+        if not ax_ref:
+            preview = red_dot_click_preview(
+                x=_coerce_int(arguments.get("x")),
+                y=_coerce_int(arguments.get("y")),
+                label=label,
+            )
+        role = str(ax_ref.get("role") or "AXElement").strip() or "AXElement"
+        summary = (
+            f"Ipet 想通过 macOS Accessibility 点击：{label}（{role}）"
+            if ax_ref
+            else f"Ipet 想点击：{label}"
+        )
     elif action_type == "type_text":
         label = str(arguments.get("label") or arguments.get("target") or "输入位置").strip() or "输入位置"
         text = str(arguments.get("text") or "").strip()
         preview_text = text[:40] + ("..." if len(text) > 40 else "")
-        summary = f"Ipet 想输入到 {label}：{preview_text}"
+        ax_ref = arguments.get("ax_ref") if isinstance(arguments.get("ax_ref"), dict) else {}
+        role = str(ax_ref.get("role") or "AXElement").strip() or "AXElement"
+        summary = (
+            f"Ipet 想通过 macOS Accessibility 输入到 {label}（{role}）：{preview_text}"
+            if ax_ref
+            else f"Ipet 想输入到 {label}：{preview_text}"
+        )
     elif action_type == "key_press":
         key = str(arguments.get("key") or "").strip().lower() or "enter"
         label = str(arguments.get("label") or arguments.get("target") or "当前焦点").strip() or "当前焦点"

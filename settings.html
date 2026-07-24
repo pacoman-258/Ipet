@@ -62,6 +62,20 @@
               <input id="model-path" type="text" />
             </label>
             <label class="field">
+              <span>项目内形象</span>
+              <select id="local-model-select" aria-label="项目内 Live2D 形象">
+                <option value="">正在读取形象列表...</option>
+              </select>
+            </label>
+            <div class="field inline-actions">
+              <span>形象操作</span>
+              <div class="button-row wrap">
+                <button id="refresh-local-models-btn" class="ghost-button" type="button">刷新形象列表</button>
+                <button id="use-local-model-btn" class="ghost-button" type="button">填入路径</button>
+                <button id="preview-local-model-btn" class="pill-button" type="button">立即切换预览</button>
+              </div>
+            </div>
+            <label class="field">
               <span>语音</span>
               <input id="chat-voice" type="text" />
             </label>
@@ -71,7 +85,24 @@
                 <option value="edge_tts">Edge TTS</option>
                 <option value="custom_http">自定义 HTTP</option>
                 <option value="qwen_tts_local">qwenTTS 本地（音色克隆）</option>
+                <option value="fish_audio">Fish Audio（音色克隆）</option>
               </select>
+            </label>
+            <label class="field">
+              <span>Fish 音色模型 ID</span>
+              <input id="chat-tts-voice-id" type="text" placeholder="创建 Fish 音色后填写 _id" />
+            </label>
+            <label class="field">
+              <span>Fish TTS 模型</span>
+              <input id="chat-tts-model" type="text" placeholder="s2.1-pro-free" />
+            </label>
+            <label class="field wide">
+              <span>Fish Audio API Key</span>
+              <input id="chat-tts-api-key" type="password" autocomplete="new-password" placeholder="留空表示保留已保存密钥" />
+            </label>
+            <label class="toggle-line">
+              <input id="chat-tts-api-key-clear" type="checkbox" />
+              <span>清除已保存的 Fish Audio Key</span>
             </label>
             <label class="field">
               <span>语速百分比</span>
@@ -101,6 +132,20 @@
               <span>背景图片路径</span>
               <input id="pet-background-image" type="text" />
             </label>
+          </div>
+
+          <p id="model-preview-status" class="inline-status" aria-live="polite">选择项目内形象后可直接预览。</p>
+          <div class="preview-grid live2d-preview-grid">
+            <div class="preview-card">
+              <h4>动作预览</h4>
+              <p class="preview-note">点击按钮后让当前桌宠直接播放对应动作。</p>
+              <div id="model-motion-list" class="chip-list empty-state">选择项目形象后显示动作</div>
+            </div>
+            <div class="preview-card">
+              <h4>表情预览</h4>
+              <p class="preview-note">点击按钮即可让桌宠切换表情，快速检查形象资源。</p>
+              <div id="model-expression-list" class="chip-list empty-state">选择项目形象后显示表情</div>
+            </div>
           </div>
 
           <div class="toggle-grid">
@@ -264,7 +309,7 @@
           <div class="section-head">
             <div>
               <h3>Human Ops</h3>
-              <p>看屏幕、点击、输入、快捷键、打开 App、等待和读取反馈。say / observe 可自由执行；act 需要批准。</p>
+              <p>看屏幕、点击、输入、快捷键、打开 App、等待和读取反馈。动作可逐项审批，也可显式开启完全授权。</p>
             </div>
           </div>
 
@@ -276,10 +321,6 @@
             <label class="toggle-card">
               <input id="ops-accessibility" type="checkbox" />
               <span>允许读取可访问性结构</span>
-            </label>
-            <label class="toggle-card">
-              <input id="ops-require-act-review" type="checkbox" />
-              <span>act 需要批准</span>
             </label>
             <label class="toggle-card">
               <input id="ops-require-memory-review" type="checkbox" checked disabled />
@@ -296,6 +337,22 @@
           </div>
 
           <div class="form-grid two-col">
+            <div class="field wide">
+              <span>AX 持久索引</span>
+              <div class="button-row wrap model-fetch-actions">
+                <button id="ops-ax-index-refresh" class="ghost-button" type="button">更新全部运行中的 GUI 应用</button>
+                <span id="ops-ax-index-status" class="inline-status" aria-live="polite">正在读取索引状态…</span>
+              </div>
+              <small>完整 AX 树按应用拆分保存在本地 <code>data/ax_trees/</code>；适用于系统能枚举并公开 AX 结构的普通 macOS GUI 应用，可能包含应用当前可见文字。安全输入值不会保存。每次聊天任务结束后也会自动更新当前运行中的 GUI 应用。</small>
+            </div>
+            <label class="field wide">
+              <span>行动授权模式</span>
+              <select id="ops-authorization-mode">
+                <option value="review">逐项审批（act 需要批准，默认）</option>
+                <option value="full">完全授权（动作免审批）</option>
+              </select>
+              <span class="inline-status">完全授权仍保留动作校验和记录；每步执行前通知，可在聊天窗口随时停止。长期记忆与技能保存不受此模式影响。</span>
+            </label>
             <div class="field wide">
               <span>Playwright Chrome 个人资料</span>
               <div class="button-row wrap model-fetch-actions">
@@ -557,7 +614,7 @@
           <div class="section-head">
             <div>
               <h3>Diagnostics</h3>
-              <p>只显示 Ipet 本体的健康状态、最近观察和最近批准动作。</p>
+              <p>只显示 Ipet 本体的健康状态、最近观察和最近授权动作。</p>
             </div>
           </div>
 
@@ -591,6 +648,7 @@
 
   <script src="/settings_form.js?v=2"></script>
   <script src="/settings_model_picker.js?v=1"></script>
+  <script src="/settings_live2d.js?v=1"></script>
   <script src="/settings.js?v=10"></script>
 </body>
 </html>

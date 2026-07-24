@@ -61,6 +61,9 @@ class _FakeStreamResponse:
 
 
 class QwenTTSLocalTests(unittest.TestCase):
+    def test_ipet_uses_the_high_quality_qwen_model_by_default(self) -> None:
+        self.assertEqual(tts.QWEN_TTS_MODEL, "qwen3-tts-1.7b-8bit")
+
     def test_qwen_provider_is_available_when_reference_audio_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             reference_audio = Path(tmp) / "ex.mp3"

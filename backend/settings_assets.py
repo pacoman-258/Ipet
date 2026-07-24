@@ -47,6 +47,11 @@ SETTINGS_MODEL_PICKER_JS_ASSET = SettingsAsset(
     media_type="application/javascript",
     missing_detail="settings_model_picker.js not found.",
 )
+SETTINGS_LIVE2D_JS_ASSET = SettingsAsset(
+    path=ROOT_DIR / "settings_live2d.js",
+    media_type="application/javascript",
+    missing_detail="settings_live2d.js not found.",
+)
 
 
 def settings_asset_response(asset: SettingsAsset) -> FileResponse:
@@ -77,3 +82,7 @@ def settings_form_js_response() -> FileResponse:
 
 def settings_model_picker_js_response() -> FileResponse:
     return settings_asset_response(SETTINGS_MODEL_PICKER_JS_ASSET)
+
+
+def settings_live2d_js_response() -> FileResponse:
+    return settings_asset_response(SETTINGS_LIVE2D_JS_ASSET)

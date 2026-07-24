@@ -14,6 +14,10 @@ _DESKTOP_ACTION_TERMS = (
     "切到",
     "选择",
     "按下",
+    "播放",
+    "暂停",
+    "下一首",
+    "上一首",
 )
 _DESKTOP_TARGET_TERMS = (
     "dock",
@@ -25,14 +29,22 @@ _DESKTOP_TARGET_TERMS = (
     "图标",
     "输入框",
     "设置",
+    "音乐",
+    "歌曲",
+    "歌单",
+    "访达",
+    "文件",
 )
 _DESKTOP_EXPLANATION_TERMS = ("怎么", "如何", "为什么", "原理", "介绍", "解释")
 _APP_LAUNCH_TERMS = ("打开", "启动", "切到", "open ", "launch ")
 _CHAT_REPLY_ACTION_TERMS = ("回复", "回消息", "发送", "发给", "输入", "键入", "打字")
-_CHAT_SURFACE_TERMS = ("微信", "wechat", "聊天", "联系人", "会话", "消息", "私信")
+_CHAT_SURFACE_TERMS = ("微信", "wechat", "qq", "聊天", "联系人", "会话", "消息", "私信")
 _COMMON_APP_LABELS = (
     "微信",
     "wechat",
+    "qq",
+    "音乐",
+    "music",
     "chrome",
     "safari",
     "系统设置",
@@ -43,6 +55,12 @@ _COMMON_APP_LABELS = (
 _APP_LAUNCH_ALIASES = {
     "微信": "WeChat",
     "wechat": "WeChat",
+    "qq": "QQ",
+    "腾讯qq": "QQ",
+    "音乐": "Music",
+    "苹果音乐": "Music",
+    "apple music": "Music",
+    "music": "Music",
     "网易云音乐": "NeteaseMusic",
     "网易云": "NeteaseMusic",
     "腾讯会议": "TencentMeeting",
@@ -242,6 +260,9 @@ def _infer_app_label(text: str, target_hint: str = "") -> str:
     labels = {
         "微信": "微信",
         "wechat": "微信",
+        "qq": "QQ",
+        "音乐": "音乐",
+        "music": "音乐",
         "chrome": "Chrome",
         "safari": "Safari",
         "系统设置": "系统设置",
@@ -302,6 +323,10 @@ def _label_aliases(label: str) -> set[str]:
         aliases.update({"微信", "wechat", "weixin"})
     if normalized in {"chrome", "google chrome", "谷歌浏览器"}:
         aliases.update({"chrome", "google chrome", "谷歌浏览器"})
+    if normalized in {"qq", "腾讯qq"}:
+        aliases.update({"qq", "腾讯qq"})
+    if normalized in {"音乐", "music", "apple music"}:
+        aliases.update({"音乐", "music", "apple music"})
     return {item for item in aliases if item}
 
 
@@ -399,9 +424,177 @@ def _infer_chat_context(text: str, target_hint: str = "", *, is_chat_surface: bo
     return context
 
 
+def _ax_affordance_kind(app_id: str, role: str, label: str, identifier: str) -> str:
+    combined = f"{label} {identifier}".lower()
+    if role in {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}:
+        if role == "AXSearchField" or any(term in combined for term in ("搜索", "search", "查找")):
+            return "search_field"
+        if app_id in {"wechat", "qq"}:
+            return "chat_input"
+        return "input"
+    if role in {"AXButton", "AXMenuButton", "AXPopUpButton"}:
+        return "button"
+    if role in {"AXCheckBox", "AXRadioButton"}:
+        return "toggle"
+    if role in {"AXRow", "AXCell", "AXOutlineRow", "AXListItem"}:
+        if app_id in {"wechat", "qq"}:
+            return "chat_thread"
+        if app_id == "music":
+            return "music_item"
+        if app_id == "finder":
+            return "file_item"
+        return "row"
+    if role == "AXLink":
+        return "link"
+    if role == "AXSlider":
+        return "slider"
+    return "control"
+
+
+def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]:
+    accessibility = frame.get("accessibility") if isinstance(frame.get("accessibility"), dict) else {}
+    if not bool(accessibility.get("usable")):
+        return {}
+    app = accessibility.get("app") if isinstance(accessibility.get("app"), dict) else {}
+    app_id = str(app.get("app_id") or "").strip()
+    app_name = str(app.get("name") or "").strip()
+    surface_kind = str(app.get("surface") or "desktop_gui").strip() or "desktop_gui"
+    elements = accessibility.get("elements") if isinstance(accessibility.get("elements"), list) else []
+    search = accessibility.get("search") if isinstance(accessibility.get("search"), dict) else {}
+    search_query = str(search.get("query") or "").strip().casefold()
+    requested_roles = (
+        search.get("requested_roles")
+        if isinstance(search.get("requested_roles"), list)
+        else []
+    )
+    allow_hidden_menu = (
+        "axmenuitem" in {str(item or "").casefold() for item in requested_roles}
+        or "菜单" in search_query
+        or "menu" in search_query
+    )
+    affordances: list[dict[str, Any]] = []
+    editable_elements: list[dict[str, Any]] = []
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        ax_ref = element.get("ax_ref") if isinstance(element.get("ax_ref"), dict) else {}
+        raw_supports = element.get("supports") if isinstance(element.get("supports"), list) else []
+        support_set = {str(item or "").strip() for item in raw_supports}
+        supports: list[str] = []
+        if support_set.intersection({"press", "focus", "select"}):
+            supports.append("click")
+        if "type_text" in support_set:
+            supports.append("type_text")
+        if element.get("focused") and "type_text" in support_set:
+            supports.append("key_press")
+        if not ax_ref or not supports:
+            continue
+        role = str(element.get("role") or "").strip()
+        bounds = element.get("bounds") if isinstance(element.get("bounds"), dict) else {}
+        if role == "AXMenuItem" and not bounds and not allow_hidden_menu:
+            continue
+        label = str(
+            element.get("label")
+            or element.get("title")
+            or element.get("description")
+            or element.get("identifier")
+            or role
+        ).strip()[:180]
+        identifier = str(element.get("identifier") or "").strip()
+        item: dict[str, Any] = {
+            "kind": _ax_affordance_kind(app_id, role, label, identifier),
+            "label": label,
+            "role": role,
+            "supports": supports,
+            "ax_ref": dict(ax_ref),
+            "evidence": ["macOS Accessibility hierarchy"],
+            "confidence": 1.0,
+        }
+        semantic_path = str(element.get("semantic_path") or "").strip()[:260]
+        if semantic_path and semantic_path != label:
+            item["semantic_path"] = semantic_path
+        relation = str(element.get("context_relation") or "").strip()[:60]
+        if relation:
+            item["context_relation"] = relation
+            anchor = str(element.get("context_anchor") or "").strip()[:100]
+            if anchor:
+                item["context_anchor"] = anchor
+        if element.get("focused"):
+            item["focused"] = True
+        if element.get("selected"):
+            item["selected"] = True
+        affordances.append(item)
+        if "type_text" in supports:
+            editable_elements.append(item)
+        if len(affordances) >= 16:
+            break
+    result: dict[str, Any] = {
+        "surface": {
+            "kind": surface_kind,
+            "app": app_name,
+            "app_id": app_id,
+            "bundle_id": str(app.get("bundle_id") or ""),
+            "source": "macos_accessibility",
+            "confidence": 1.0,
+        },
+        "affordances": affordances,
+    }
+    if search:
+        index = search.get("index") if isinstance(search.get("index"), dict) else {}
+        result["ax_search"] = {
+            "available": True,
+            "tool": "observe.ax_query",
+            "snapshot_id": str(accessibility.get("snapshot_id") or search.get("snapshot_id") or ""),
+            "query": str(search.get("query") or "").strip()[:240],
+            "cache_hit": bool(search.get("cache_hit")),
+            "persistent": bool(search.get("persistent")),
+            "source": str(search.get("source") or ""),
+            "stale": bool(search.get("stale")),
+            "stale_reason": str(search.get("stale_reason") or "")[:120],
+            "age_ms": max(0, int(search.get("age_ms") or 0)),
+            "total_element_count": max(0, int(accessibility.get("total_element_count") or 0)),
+            "returned_count": max(0, int(search.get("returned_count") or len(elements))),
+            "matched_count": max(0, int(search.get("matched_count") or 0)),
+            "actionable_match_count": max(0, int(search.get("actionable_match_count") or 0)),
+            "visible_match_count": max(0, int(search.get("visible_match_count") or 0)),
+            "requested_roles": [
+                str(item)[:80]
+                for item in (
+                    search.get("requested_roles")
+                    if isinstance(search.get("requested_roles"), list)
+                    else []
+                )
+            ][:8],
+            "role_match_count": max(0, int(search.get("role_match_count") or 0)),
+            "contextual_count": max(0, int(search.get("contextual_count") or 0)),
+            "sufficient": bool(search.get("sufficient", True)),
+            "insufficiency_reason": str(search.get("insufficiency_reason") or "")[:120],
+            "more_available": bool(search.get("search_truncated") or search.get("capture_truncated")),
+            "index": {
+                "roles": dict(index.get("roles") or {}) if isinstance(index.get("roles"), dict) else {},
+                "supports": dict(index.get("supports") or {}) if isinstance(index.get("supports"), dict) else {},
+                "actionable": max(0, int(index.get("actionable") or 0)),
+                "focused": max(0, int(index.get("focused") or 0)),
+                "selected": max(0, int(index.get("selected") or 0)),
+            },
+        }
+    if app_id in {"wechat", "qq"} and editable_elements:
+        focused = any(bool(item.get("focused")) for item in editable_elements)
+        result["chat_context"] = {
+            "input_ready": True,
+            "input_focused": focused,
+            "send_ready": any("发送" in str(item.get("label") or "") for item in affordances),
+            "confidence": 1.0,
+        }
+    return result
+
+
 def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | None = None, target_hint: str = "") -> dict[str, Any]:
     text = str(observation_text or "")
     frame_data = frame if isinstance(frame, dict) else {}
+    accessibility_context = _accessibility_computer_use_context(frame_data)
+    if accessibility_context:
+        return accessibility_context
     active = frame_data.get("active_observation") if isinstance(frame_data.get("active_observation"), dict) else {}
     raw_hint = str(target_hint or "").strip()
     active_hint = str(active.get("target_hint") or "").strip()
@@ -571,10 +764,16 @@ def _computer_use_context_text(observation: dict[str, Any] | None) -> str:
     surface = data.get("surface") if isinstance(data.get("surface"), dict) else {}
     affordances = data.get("affordances") if isinstance(data.get("affordances"), list) else []
     chat_context = data.get("chat_context") if isinstance(data.get("chat_context"), dict) else {}
-    if not surface and not affordances and not chat_context:
+    ax_search = data.get("ax_search") if isinstance(data.get("ax_search"), dict) else {}
+    if not surface and not affordances and not chat_context and not ax_search:
         return ""
     return "Structured computer-use context:\n" + json.dumps(
-        {"surface": surface, "affordances": affordances, "chat_context": chat_context},
+        {
+            "surface": surface,
+            "affordances": affordances,
+            "chat_context": chat_context,
+            "ax_search": ax_search,
+        },
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -600,8 +799,13 @@ def _observation_has_reviewable_click_affordance(observation: dict[str, Any]) ->
         location = item.get("location") if isinstance(item.get("location"), dict) else {}
         if (
             ("click" in support_set or "click_to_open" in support_set)
-            and _has_numeric_action_argument(location, "x")
-            and _has_numeric_action_argument(location, "y")
+            and (
+                (
+                    _has_numeric_action_argument(location, "x")
+                    and _has_numeric_action_argument(location, "y")
+                )
+                or isinstance(item.get("ax_ref"), dict)
+            )
         ):
             return True
     return False

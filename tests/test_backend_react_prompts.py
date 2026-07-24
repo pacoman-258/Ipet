@@ -214,6 +214,23 @@ class BackendReactPromptsTests(unittest.TestCase):
             (True, ""),
         )
         self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "click",
+                    {
+                        "target_app": "WeChat",
+                        "ax_ref": {
+                            "app_id": "wechat",
+                            "role": "AXButton",
+                            "path": [0, 2],
+                            "fingerprint": "copied",
+                        },
+                    },
+                )
+            ),
+            (True, ""),
+        )
+        self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"target_app": "Chrome", "x": 12})),
             (False, "click missing complete x/y"),
         )

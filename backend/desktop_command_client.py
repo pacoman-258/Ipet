@@ -84,12 +84,16 @@ async def perform_human_ops_click(
     target_app = str(args.get("target_app") or "").strip()
     if not target_app:
         raise RuntimeError("Human Ops click requires target_app.")
+    ax_ref = args.get("ax_ref") if isinstance(args.get("ax_ref"), dict) else {}
     payload = {
         "target_app": target_app,
-        "x": _coerce_int(args.get("x")),
-        "y": _coerce_int(args.get("y")),
         "label": str(args.get("label") or args.get("target") or "目标位置").strip() or "目标位置",
     }
+    if ax_ref:
+        payload["ax_ref"] = dict(ax_ref)
+    else:
+        payload["x"] = _coerce_int(args.get("x"))
+        payload["y"] = _coerce_int(args.get("y"))
     result = await send_command("human_ops_click", payload, timeout_sec=5)
     return {"clicked": True, **payload, **result}
 
@@ -111,12 +115,15 @@ async def perform_human_ops_action(
             raise RuntimeError("Human Ops text input requires target_app.")
         text = str(args.get("text") or "")
         label = str(args.get("label") or args.get("target") or "输入位置").strip() or "输入位置"
+        command_payload: dict[str, Any] = {"target_app": target_app, "text": text, "label": label}
+        if isinstance(args.get("ax_ref"), dict):
+            command_payload["ax_ref"] = dict(args["ax_ref"])
         result = await send_command(
             "human_ops_type_text",
-            {"target_app": target_app, "text": text, "label": label},
+            command_payload,
             timeout_sec=8,
         )
-        return {"typed": True, "target_app": target_app, "text": text, "label": label, **result}
+        return {"typed": True, **command_payload, **result}
     if action_type == "launch_app":
         app_name = str(args.get("app") or args.get("name") or args.get("label") or "").strip()
         if not app_name:

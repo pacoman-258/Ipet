@@ -57,6 +57,10 @@ def normalize_model_path(path_text: str, *, root_dir: Path) -> str:
         return ""
 
     root = Path(root_dir)
+    try:
+        root = root.resolve()
+    except Exception:
+        pass
     resolved = resolve_model_path(path_text, root_dir=root)
     try:
         return resolved.relative_to(root).as_posix()

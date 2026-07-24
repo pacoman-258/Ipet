@@ -51,12 +51,16 @@ async def perform_human_ops_click(
     target_app = str(args.get("target_app") or "").strip()
     if not target_app:
         raise RuntimeError("Human Ops click requires target_app.")
+    ax_ref = args.get("ax_ref") if isinstance(args.get("ax_ref"), dict) else {}
     payload = {
         "target_app": target_app,
-        "x": _desktop_command_client_helpers._coerce_int(args.get("x")),
-        "y": _desktop_command_client_helpers._coerce_int(args.get("y")),
         "label": str(args.get("label") or args.get("target") or "目标位置").strip() or "目标位置",
     }
+    if ax_ref:
+        payload["ax_ref"] = dict(ax_ref)
+    else:
+        payload["x"] = _desktop_command_client_helpers._coerce_int(args.get("x"))
+        payload["y"] = _desktop_command_client_helpers._coerce_int(args.get("y"))
     result = await send_desktop_command("human_ops_click", payload, deps=deps, timeout_sec=8)
     return {"clicked": True, **payload, **result}
 
@@ -151,3 +155,54 @@ async def request_native_human_ops_approval(
         deps=deps,
         timeout_sec=310,
     )
+
+
+async def notify_human_ops_action(
+    proposal: ReviewableProposal,
+    *,
+    task_id: str,
+    deps: AppActionAdapterDependencies,
+) -> dict[str, Any]:
+    if proposal.proposal_type != "act":
+        raise RuntimeError("Human Ops action notice requires an act proposal.")
+    action_type = str(proposal.payload.get("action_type") or "").strip()
+    args = proposal.payload.get("arguments") if isinstance(proposal.payload.get("arguments"), dict) else {}
+    action_label = {
+        "click": "点击",
+        "type_text": "输入文字",
+        "key_press": "按键",
+        "launch_app": "打开应用",
+        "playwright": "浏览器操作",
+        "file_list": "列出文件",
+        "file_read": "读取文件",
+        "file_write": "写入文件",
+        "file_mkdir": "创建文件夹",
+        "file_copy": "复制文件",
+        "file_move": "移动文件",
+        "file_delete": "删除文件",
+    }.get(action_type, "操作")
+    target_app = str(
+        args.get("target_app")
+        or (args.get("app") if action_type == "launch_app" else "")
+        or ""
+    ).strip()[:80]
+    target_text = f"，目标应用：{target_app}" if target_app else ""
+    result = await send_desktop_command(
+        "human_ops_native_approval",
+        {
+            "notice_only": True,
+            "title": "Ipet 完全授权操作",
+            "message": (
+                f"即将执行：{action_label}{target_text}。"
+                "你可以在 Ipet 聊天窗口随时停止；已经发出的原子动作可能完成。"
+            ),
+            "action_type": action_type,
+            "target_app": target_app,
+            "task_id": str(task_id or "").strip(),
+        },
+        deps=deps,
+        timeout_sec=8,
+    )
+    if result.get("notified") is not True:
+        raise RuntimeError("macOS action notification was not confirmed.")
+    return result

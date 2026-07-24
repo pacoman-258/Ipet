@@ -105,6 +105,82 @@ class BackendSettingsRoutesTests(unittest.TestCase):
         list_persona_prompts.assert_called_once_with()
         list_chrome_profiles.assert_called_once_with()
 
+    def test_settings_live2d_routes_list_models_and_wait_for_preview_result(self) -> None:
+        from backend import settings_routes
+
+        list_local_models = mock.Mock(return_value=[{"path": "model/pet/pet.model3.json"}])
+        preview_action = mock.AsyncMock(return_value={"model_path": "model/pet/pet.model3.json"})
+        deps = settings_routes.SettingsRouteDependencies(
+            settings_page_response=mock.Mock(return_value=Response(content="settings")),
+            settings_css_response=mock.Mock(return_value=Response(content="css")),
+            settings_js_response=mock.Mock(return_value=Response(content="js")),
+            settings_form_js_response=mock.Mock(return_value=Response(content="form")),
+            settings_model_picker_js_response=mock.Mock(return_value=Response(content="picker")),
+            settings_payload=mock.Mock(return_value={"config": {}}),
+            normalize_private_config=mock.Mock(return_value={}),
+            apply_settings_update=mock.Mock(return_value={}),
+            save_config=mock.Mock(),
+            list_local_models=list_local_models,
+            preview_action=preview_action,
+        )
+        app = FastAPI()
+        settings_routes.register_settings_routes(app, deps)
+
+        with TestClient(app) as client:
+            models_resp = client.get("/api/settings/models-local")
+            preview_resp = client.post(
+                "/api/settings/preview-action",
+                json={"type": "load_model", "model_path": "model/pet/pet.model3.json"},
+            )
+
+        self.assertEqual(models_resp.status_code, 200)
+        self.assertEqual(models_resp.json(), {"models": [{"path": "model/pet/pet.model3.json"}]})
+        self.assertEqual(preview_resp.status_code, 200)
+        self.assertEqual(
+            preview_resp.json(),
+            {"ok": True, "result": {"model_path": "model/pet/pet.model3.json"}},
+        )
+        list_local_models.assert_called_once_with()
+        preview_action.assert_awaited_once_with(
+            {"type": "load_model", "model_path": "model/pet/pet.model3.json"}
+        )
+
+    def test_accessibility_index_routes_expose_status_and_manual_refresh(self) -> None:
+        from backend import settings_routes
+
+        status = mock.AsyncMock(return_value={"app_count": 1, "element_count": 420})
+        refresh = mock.AsyncMock(return_value={"updated_count": 2, "app_count": 2})
+        deps = settings_routes.SettingsRouteDependencies(
+            settings_page_response=mock.Mock(return_value=Response(content="settings")),
+            settings_css_response=mock.Mock(return_value=Response(content="css")),
+            settings_js_response=mock.Mock(return_value=Response(content="js")),
+            settings_form_js_response=mock.Mock(return_value=Response(content="form")),
+            settings_model_picker_js_response=mock.Mock(return_value=Response(content="picker")),
+            settings_payload=mock.Mock(return_value={"config": {}}),
+            normalize_private_config=mock.Mock(return_value={}),
+            apply_settings_update=mock.Mock(return_value={}),
+            save_config=mock.Mock(),
+            accessibility_index_status=status,
+            refresh_accessibility_index=refresh,
+        )
+        app = FastAPI()
+        settings_routes.register_settings_routes(app, deps)
+
+        with TestClient(app) as client:
+            status_response = client.get("/api/settings/accessibility-index")
+            refresh_response = client.post("/api/settings/accessibility-index/refresh")
+
+        self.assertEqual(
+            status_response.json(),
+            {"ok": True, "app_count": 1, "element_count": 420},
+        )
+        self.assertEqual(
+            refresh_response.json(),
+            {"ok": True, "updated_count": 2, "app_count": 2},
+        )
+        status.assert_awaited_once_with()
+        refresh.assert_awaited_once_with()
+
     def test_app_source_registers_settings_router_instead_of_inline_decorators(self) -> None:
         source = Path(backend_app.__file__).read_text(encoding="utf-8")
 

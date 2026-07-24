@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -35,6 +36,10 @@ def _not_configured_action(_payload):
     raise RuntimeError("desktop command action is not configured")
 
 
+def _default_background_runner(task: Callable[[], None]) -> None:
+    threading.Thread(target=task, name="ipet-ax-index-refresh", daemon=True).start()
+
+
 class DesktopCommandRouter:
     def __init__(
         self,
@@ -59,6 +64,9 @@ class DesktopCommandRouter:
         hide_window_for_desktop_click: Callable[[object], bool] = lambda _host: False,
         restore_window_after_desktop_click: Callable[[object, bool], None] = lambda _host, _was_hidden: None,
         capture_active_vision_frame_payload: Callable[..., dict] = _not_configured_action,
+        accessibility_index_status: Callable[[], dict] = lambda: {},
+        refresh_accessibility_index: Callable[[], dict] = lambda: {},
+        background_runner: Callable[[Callable[[], None]], None] = _default_background_runner,
         sleep: Callable[[float], None] = time.sleep,
         write_response_func: Callable[[dict, str, dict[str, object] | None], None] | None = None,
         heartbeat_func: Callable[[], None] | None = None,
@@ -87,6 +95,9 @@ class DesktopCommandRouter:
         self.hide_window_for_desktop_click = hide_window_for_desktop_click
         self.restore_window_after_desktop_click = restore_window_after_desktop_click
         self.capture_active_vision_frame_payload = capture_active_vision_frame_payload
+        self.accessibility_index_status = accessibility_index_status
+        self.refresh_accessibility_index = refresh_accessibility_index
+        self.background_runner = background_runner
         self.sleep = sleep
         self._write_response_func = write_response_func
         self._heartbeat_func = heartbeat_func
@@ -276,6 +287,14 @@ class DesktopCommandRouter:
             self._process_active_vision_capture(command, payload, config)
             return
 
+        if command_type == "accessibility_index_status":
+            self._process_accessibility_index_status(command)
+            return
+
+        if command_type == "accessibility_index_refresh":
+            self._process_accessibility_index_refresh(command)
+            return
+
         self.write_desktop_command_response(command, "error", {"error": f"unsupported command: {command_type}"})
         self.write_desktop_host_heartbeat()
 
@@ -377,7 +396,7 @@ class DesktopCommandRouter:
     def _process_human_ops_native_approval(self, command: dict, payload: dict) -> None:
         try:
             result = self.execute_human_ops_native_approval(payload)
-            if not bool(result.get("approved")):
+            if payload.get("notice_only") is not True and not bool(result.get("approved")):
                 if hasattr(self.host, "show"):
                     self.host.show()
                 if hasattr(self.host, "raise_"):
@@ -413,3 +432,24 @@ class DesktopCommandRouter:
                 },
             )
         self.write_desktop_host_heartbeat()
+
+    def _process_accessibility_index_status(self, command: dict) -> None:
+        try:
+            self.write_desktop_command_response(command, "success", self.accessibility_index_status())
+        except Exception as exc:
+            self.write_desktop_command_response(command, "error", {"error": str(exc)})
+        self.write_desktop_host_heartbeat()
+
+    def _process_accessibility_index_refresh(self, command: dict) -> None:
+        def refresh() -> None:
+            try:
+                self.write_desktop_command_response(command, "success", self.refresh_accessibility_index())
+            except Exception as exc:
+                self.write_desktop_command_response(command, "error", {"error": str(exc)})
+            self.write_desktop_host_heartbeat()
+
+        try:
+            self.background_runner(refresh)
+        except Exception as exc:
+            self.write_desktop_command_response(command, "error", {"error": str(exc)})
+            self.write_desktop_host_heartbeat()

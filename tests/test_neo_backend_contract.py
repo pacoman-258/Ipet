@@ -2333,8 +2333,13 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 approved_body = resp.read().decode("utf-8")
 
-        command_mock.assert_awaited_once()
-        args, _kwargs = command_mock.await_args
+        action_calls = [
+            awaited
+            for awaited in command_mock.await_args_list
+            if awaited.args and awaited.args[0] == "human_ops_type_text"
+        ]
+        self.assertEqual(len(action_calls), 1)
+        args, _kwargs = action_calls[0]
         self.assertEqual(args[0], "human_ops_type_text")
         self.assertEqual(args[1]["text"], "收到，我马上处理。")
         done = [data for name, data in _sse_events(approved_body) if name == "done"][-1]

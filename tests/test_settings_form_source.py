@@ -67,6 +67,8 @@ class SettingsFormSourceTests(unittest.TestCase):
             "reasoning_effort: stringValue(els.brainReasoningEffort)",
             "streaming_enabled: !!els.brainStreamingEnabled?.checked",
             "web_search_enabled: !!els.brainWebSearchEnabled?.checked",
+            'authorization_mode: "review"',
+            'stringValue(els.opsAuthorizationMode, "review")',
             "playwright_profile: stringValue(els.opsPlaywrightProfile)",
             "model_endpoint: isEndpointlessProvider(observeProvider) ? \"\" : stringValue(els.opsObserveModelEndpoint)",
             "follow_up_enabled: !!els.memoryFollowUpEnabled?.checked",
@@ -93,6 +95,8 @@ class SettingsFormSourceTests(unittest.TestCase):
         self.assertIn('/api/settings/chrome-profiles', self.settings_js)
         self.assertIn('opsPlaywrightProfile: $("ops-playwright-profile")', self.settings_js)
         self.assertIn('setValue(els.opsPlaywrightProfile, neo.human_ops.playwright_profile || "")', self.form_js)
+        self.assertIn('opsAuthorizationMode: $("ops-authorization-mode")', self.settings_js)
+        self.assertIn('id="ops-authorization-mode"', self.html)
 
     def test_form_module_does_not_query_unrelated_globals(self) -> None:
         for forbidden in ("document.", "document[", "querySelector", "getElementById", "fetch("):

@@ -526,6 +526,7 @@ def parse_brain_reply(raw_text: str) -> BrainDecision:
             str(data.get("target") or payload.get("target") or "screen"),
             observe_prompt=observe_prompt,
             target_app=str(data.get("target_app") or payload.get("target_app") or ""),
+            ax_query=str(data.get("ax_query") or payload.get("ax_query") or ""),
             goal=_goal_from_data(data, payload),
         )
     if kind in {"act", "propose_act"}:

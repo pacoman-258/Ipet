@@ -176,6 +176,45 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(launch_result, {"launched": True, "app": "WeChat", "source": "desktop"})
         self.assertEqual(key_result, {"pressed": True, "target_app": "WeChat", "key": "enter", "label": "发送", "source": "desktop"})
 
+    async def test_semantic_click_and_type_forward_ax_reference_without_coordinates(self) -> None:
+        client = self._import_client()
+        calls = []
+        ax_ref = {"app_id": "wechat", "role": "AXTextArea", "path": [1], "fingerprint": "copied"}
+
+        async def send_command(command_type, payload, *, timeout_sec):
+            calls.append((command_type, payload, timeout_sec))
+            return {"source": "desktop"}
+
+        click = ReviewableProposal.act(
+            action_type="click",
+            summary="点击输入框",
+            payload={"target_app": "WeChat", "ax_ref": ax_ref, "label": "输入框"},
+        )
+        typed = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入消息",
+            payload={"target_app": "WeChat", "ax_ref": ax_ref, "text": "你好", "label": "输入框"},
+        )
+
+        await client.perform_human_ops_action(click, send_command=send_command)
+        await client.perform_human_ops_action(typed, send_command=send_command)
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "human_ops_click",
+                    {"target_app": "WeChat", "label": "输入框", "ax_ref": ax_ref},
+                    5,
+                ),
+                (
+                    "human_ops_type_text",
+                    {"target_app": "WeChat", "text": "你好", "label": "输入框", "ax_ref": ax_ref},
+                    8,
+                ),
+            ],
+        )
+
     async def test_backend_app_no_longer_inlines_desktop_response_polling(self) -> None:
         source = (ROOT_DIR / "backend" / "app.py").read_text(encoding="utf-8")
 

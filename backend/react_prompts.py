@@ -143,7 +143,8 @@ def _react_followup_prompt(
             f"{computer_use_block}\n"
             f"{decision_instruction}"
             "如果用户只是问屏幕内容，请用 say 直接回答。"
-            "如果用户要求点击且没有直接附图，请确保 propose_act 的 x/y 是 macOS screen coordinates，"
+            "如果 Structured computer-use context 的目标带 ax_ref，请把该 ax_ref 原样复制到 click 或 type_text arguments，"
+            "不要自行改写字段，也不要同时猜坐标；若没有可用 ax_ref，click 才使用 macOS screen coordinates 的 x/y，"
             '并写 coordinate_space="macos_screen_points"。'
             "Structured computer-use context 里的 surface 和 affordance 是当前证据，请与用户目标和观察结果一起判断。"
             "如果观察结果说看不到或不确定，请用 goal.status=blocked 或 need_user 的 say 如实告诉用户。"
@@ -166,11 +167,17 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
         target_app = str(arguments.get("target_app") or "").strip()
         if not target_app:
             return False, "click missing target_app"
+        if _has_ax_action_ref(arguments):
+            return True, ""
         if _has_numeric_action_argument(arguments, "x") and _has_numeric_action_argument(arguments, "y"):
             return True, ""
         return False, "click missing complete x/y"
     if action_type == "type_text":
-        return (True, "") if str(arguments.get("target_app") or "").strip() else (False, "type_text missing target_app")
+        if not str(arguments.get("target_app") or "").strip():
+            return False, "type_text missing target_app"
+        if "ax_ref" in arguments and not _has_ax_action_ref(arguments):
+            return False, "type_text invalid ax_ref"
+        return True, ""
     if action_type == "key_press":
         if not str(arguments.get("target_app") or "").strip():
             return False, "key_press missing target_app"
@@ -202,6 +209,18 @@ def _has_numeric_action_argument(arguments: dict[str, Any], key: str) -> bool:
         return False
 
 
+def _has_ax_action_ref(arguments: dict[str, Any]) -> bool:
+    ax_ref = arguments.get("ax_ref") if isinstance(arguments.get("ax_ref"), dict) else {}
+    path = ax_ref.get("path")
+    return bool(
+        str(ax_ref.get("app_id") or "").strip()
+        and str(ax_ref.get("role") or "").strip()
+        and str(ax_ref.get("fingerprint") or "").strip()
+        and isinstance(path, list)
+        and all(isinstance(item, int) and item >= 0 for item in path)
+    )
+
+
 def _unsupported_simple_action_prompt(
     *,
     user_text: str,
@@ -227,7 +246,9 @@ def _unsupported_simple_action_prompt(
         "用户选择人类操作后，再使用桌面观察、点击、输入或回车；当前任务内不要重复询问已经明确的选择。"
         "launch_app 只用于 Brain 已判断目标是本地应用并明确给出 arguments.app 的情况；"
         "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
-        "聚焦输入框也用 click；输入文本用 type_text；发送/确认用 key_press enter。"
+        "普通 macOS GUI 应用会优先尝试返回 Accessibility affordance；目标带 ax_ref 时必须原样复制，"
+        "click 不再需要 x/y，type_text 可携带输入元素的 ax_ref 并由执行器先聚焦；没有 ax_ref 时才使用坐标点击。"
+        "发送/确认可使用 key_press enter。"
         "文件动作只能使用相对项目根目录或允许根目录内的路径；file_read 和 file_list 也要审批，file_delete 不递归，file_copy/file_move 不覆盖已有目标，file_write 覆盖已有文件时必须显式写 overwrite=true。"
         "请重新选择一个下一步 JSON：observe、propose_act playwright、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter、propose_act 文件动作，"
         "或带 terminal goal.status 的 say/stop。"

@@ -5,6 +5,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
+from human_ops.authorization import normalize_authorization_mode
+
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
@@ -48,12 +50,20 @@ def normalize_private_config(
         brain["api_key"] = str(raw_brain.get("api_key") or "")
     chat = config.setdefault("chat", {})
     raw_chat = source.get("chat") if isinstance(source.get("chat"), dict) else {}
+    if raw_chat.get("tts_api_key"):
+        chat["tts_api_key"] = str(raw_chat.get("tts_api_key") or "")
     asr = chat.setdefault("asr", {})
     raw_asr = raw_chat.get("asr") if isinstance(raw_chat.get("asr"), dict) else {}
     if raw_asr.get("api_key"):
         asr["api_key"] = str(raw_asr.get("api_key") or "")
     human_ops = config.setdefault("human_ops", {})
     raw_human_ops = source.get("human_ops") if isinstance(source.get("human_ops"), dict) else {}
+    authorization_mode = normalize_authorization_mode(
+        raw_human_ops.get("authorization_mode"),
+        require_act_review=raw_human_ops.get("require_act_review", True),
+    )
+    human_ops["authorization_mode"] = authorization_mode
+    human_ops["require_act_review"] = authorization_mode != "full"
     observe_model = human_ops.setdefault("observe_model", {})
     raw_observe_model = raw_human_ops.get("observe_model") if isinstance(raw_human_ops.get("observe_model"), dict) else {}
     if raw_observe_model.get("api_key"):
@@ -98,6 +108,10 @@ def public_config(private_config: dict[str, Any]) -> dict[str, Any]:
     asr.pop("api_key_clear", None)
     asr["api_key_set"] = bool(asr_secret)
     asr["api_key_preview"] = secret_preview(asr_secret)
+    tts_secret = str(chat.pop("tts_api_key", "") or "")
+    chat.pop("tts_api_key_clear", None)
+    chat["tts_api_key_set"] = bool(tts_secret)
+    chat["tts_api_key_preview"] = secret_preview(tts_secret)
     human_ops = public.get("human_ops")
     if not isinstance(human_ops, dict):
         human_ops = {}
@@ -151,17 +165,24 @@ def settings_payload(
     }
 
 
-def _apply_optional_secret_update(target: dict[str, Any], incoming: dict[str, Any], *, existing_secret: str = "") -> None:
-    retained_secret = str(existing_secret or target.get("api_key") or "")
-    if incoming.get("api_key_clear"):
-        target.pop("api_key", None)
-    elif "api_key" in incoming:
-        secret = str(incoming.get("api_key") or "")
+def _apply_optional_secret_update(
+    target: dict[str, Any],
+    incoming: dict[str, Any],
+    *,
+    existing_secret: str = "",
+    secret_key: str = "api_key",
+) -> None:
+    clear_key = f"{secret_key}_clear"
+    retained_secret = str(existing_secret or target.get(secret_key) or "")
+    if incoming.get(clear_key):
+        target.pop(secret_key, None)
+    elif secret_key in incoming:
+        secret = str(incoming.get(secret_key) or "")
         if secret:
-            target["api_key"] = secret
+            target[secret_key] = secret
         elif retained_secret:
-            target["api_key"] = retained_secret
-    target.pop("api_key_clear", None)
+            target[secret_key] = retained_secret
+    target.pop(clear_key, None)
 
 
 def apply_settings_update(
@@ -181,6 +202,7 @@ def apply_settings_update(
     current_brain = current_config.get("brain") if isinstance(current_config.get("brain"), dict) else {}
     current_brain_secret = str(current_brain.get("api_key") or "")
     current_chat = current_config.get("chat") if isinstance(current_config.get("chat"), dict) else {}
+    current_tts_secret = str(current_chat.get("tts_api_key") or "")
     current_asr = current_chat.get("asr") if isinstance(current_chat.get("asr"), dict) else {}
     current_asr_secret = str(current_asr.get("api_key") or "")
     current_human_ops = current_config.get("human_ops") if isinstance(current_config.get("human_ops"), dict) else {}
@@ -200,6 +222,7 @@ def apply_settings_update(
     incoming_chat = incoming.get("chat") if isinstance(incoming.get("chat"), dict) else {}
     incoming_asr = incoming_chat.get("asr") if isinstance(incoming_chat.get("asr"), dict) else {}
     chat = next_config.setdefault("chat", {})
+    _apply_optional_secret_update(chat, incoming_chat, existing_secret=current_tts_secret, secret_key="tts_api_key")
     asr = chat.setdefault("asr", {})
     _apply_optional_secret_update(asr, incoming_asr, existing_secret=current_asr_secret)
 

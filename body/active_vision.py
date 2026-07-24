@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from backend.active_vision import normalize_active_observation_config
 from backend.vision import normalize_vision_config
 from body import active_vision_macos as _active_macos
 from body import active_vision_targets as _active_targets
+from body import macos_accessibility as _macos_accessibility
 from body import screen_capture as _screen_capture
 
 
@@ -601,6 +603,80 @@ def _primary_screen():
     return _screen_capture.load_qt_screen_capture_dependencies().q_gui_application.primaryScreen()
 
 
+def _accessibility_frame_payload(
+    accessibility: dict[str, Any],
+    *,
+    target_app: str,
+    target_hint: str,
+) -> dict[str, Any]:
+    captured_at = time.time()
+    canonical = json.dumps(accessibility, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    app = accessibility.get("app") if isinstance(accessibility.get("app"), dict) else {}
+    observations = (
+        accessibility.get("observations")
+        if isinstance(accessibility.get("observations"), list)
+        else []
+    )
+    search = accessibility.get("search") if isinstance(accessibility.get("search"), dict) else {}
+    trace = {
+        "enabled": True,
+        "status": "success",
+        "mode": ACTIVE_VISION_SURVEY_MODE,
+        "target_id": ACTIVE_VISION_SURVEY_MODE,
+        "target_hint": target_hint,
+        "target_app": target_app,
+        "capture_scope": "application",
+        "click_policy": ACTIVE_VISION_CLICK_POLICY,
+        "desktop_targets": [],
+        "target_candidates": [],
+        "discovery_errors": [],
+        "focused_target": {},
+        "selected_candidate": {},
+        "action_trace": [],
+        "click_point": {},
+        "actions": [],
+        "blocked_actions": [],
+        "unknowns": [],
+        "focus_result": {},
+        "verify_result": {
+            "status": "observed",
+            "method": "macos_accessibility",
+            "element_count": int(accessibility.get("element_count") or 0),
+            "total_element_count": int(accessibility.get("total_element_count") or 0),
+            "snapshot_id": str(accessibility.get("snapshot_id") or ""),
+        },
+        "detail_frames_count": 0,
+        "accessibility_attempt": {
+            "status": str(accessibility.get("status") or ""),
+            "supported": bool(accessibility.get("supported")),
+            "usable": bool(accessibility.get("usable")),
+            "cache_hit": bool(search.get("cache_hit")),
+        },
+    }
+    return {
+        "frame_id": f"ax-{int(captured_at * 1000)}-{digest[:12]}",
+        "frame_hash": f"sha256:{digest}",
+        "captured_at": captured_at,
+        "capture_backend": "macos_accessibility",
+        "capture_scope": "application",
+        "target_app": target_app,
+        "foreground_app": {
+            "name": str(app.get("name") or target_app),
+            "bundle_id": str(app.get("bundle_id") or ""),
+        },
+        "desktop_context": {
+            "foreground_app": str(app.get("name") or target_app),
+            "frontmost_process": str(app.get("name") or target_app),
+        },
+        "accessibility": accessibility,
+        "observe_answer": str(accessibility.get("text") or "").strip(),
+        "observations": [dict(item) for item in observations if isinstance(item, dict)],
+        "unknowns": [],
+        "active_observation": trace,
+    }
+
+
 def capture_active_vision_frame_payload(
     window,
     command_payload: dict,
@@ -619,6 +695,7 @@ def capture_active_vision_frame_payload(
     default_frame_encoder=None,
     vision_config_normalizer=normalize_vision_config,
     active_observation_config_normalizer=normalize_active_observation_config,
+    accessibility_provider=_macos_accessibility.capture_macos_accessibility,
 ) -> dict:
     del observation_provider
     vision_cfg = vision_config_normalizer(config or {})
@@ -631,6 +708,20 @@ def capture_active_vision_frame_payload(
     target_id = _clean_vision_text(payload.get("target_id"), max_length=120)
     target_hint = _clean_vision_text(payload.get("target_hint"), max_length=80)
     target_app = _clean_vision_text(payload.get("target_app"), max_length=120)
+    accessibility_query = _clean_vision_text(
+        payload.get("accessibility_query") or target_hint,
+        max_length=240,
+    )
+    accessibility_cache_mode = (
+        "prefer_cache"
+        if str(payload.get("accessibility_cache_mode") or "").strip().lower() == "prefer_cache"
+        else "refresh"
+    )
+    try:
+        accessibility_result_limit = int(payload.get("accessibility_result_limit") or 10)
+    except (TypeError, ValueError):
+        accessibility_result_limit = 10
+    accessibility_result_limit = max(1, min(16, accessibility_result_limit))
     capture_scope = "application" if target_app else "desktop"
     requested_actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
     if mode == ACTIVE_VISION_FOCUS_MODE and not requested_actions:
@@ -641,6 +732,42 @@ def capture_active_vision_frame_payload(
         requested_actions = []
     click_policy = _clean_vision_text(payload.get("click_policy") or ACTIVE_VISION_CLICK_POLICY, max_length=80)
     settle_ms = int(payload.get("settle_ms") or active_cfg["settle_ms"])
+    accessibility_attempt: dict[str, Any] = {}
+    settled_before_capture = False
+    if (
+        mode == ACTIVE_VISION_SURVEY_MODE
+        and target_app
+        and _is_macos(platform_name)
+        and bool(payload.get("accessibility_enabled", True))
+        and accessibility_provider is not None
+    ):
+        try:
+            sleeper(max(0.0, min(2.0, settle_ms / 1000.0)))
+            settled_before_capture = True
+        except Exception:
+            pass
+        try:
+            candidate = accessibility_provider(
+                target_app,
+                platform_name=platform_name or sys.platform,
+                query=accessibility_query,
+                cache_mode=accessibility_cache_mode,
+                result_limit=accessibility_result_limit,
+            )
+            accessibility_attempt = candidate if isinstance(candidate, dict) else {}
+        except Exception as exc:
+            accessibility_attempt = {
+                "status": "error",
+                "supported": True,
+                "usable": False,
+                "reason": _clean_vision_text(exc, max_length=240),
+            }
+        if bool(accessibility_attempt.get("usable")):
+            return _accessibility_frame_payload(
+                accessibility_attempt,
+                target_app=target_app,
+                target_hint=target_hint,
+            )
     desktop_targets = payload.get("desktop_targets") if isinstance(payload.get("desktop_targets"), list) else []
     target_candidates = payload.get("target_candidates") if isinstance(payload.get("target_candidates"), list) else []
     discovery = discover_active_vision_target_candidates(
@@ -682,6 +809,14 @@ def capture_active_vision_frame_payload(
         "focus_result": {},
         "verify_result": {},
         "detail_frames_count": 0,
+        "accessibility_attempt": {
+            "status": str(accessibility_attempt.get("status") or ""),
+            "supported": bool(accessibility_attempt.get("supported")),
+            "usable": False,
+            "reason": _clean_vision_text(accessibility_attempt.get("reason"), max_length=240),
+        }
+        if accessibility_attempt
+        else {},
     }
     try:
         hidden_for_desktop_capture = capture_scope == "desktop" and was_visible and hasattr(window, "hide")
@@ -700,10 +835,11 @@ def capture_active_vision_frame_payload(
             )
             if isinstance(interaction_trace, dict):
                 trace.update({key: value for key, value in interaction_trace.items() if key != "data_url"})
-        try:
-            sleeper(max(0.0, min(2.0, settle_ms / 1000.0)))
-        except Exception:
-            pass
+        if not settled_before_capture:
+            try:
+                sleeper(max(0.0, min(2.0, settle_ms / 1000.0)))
+            except Exception:
+                pass
         provider = screen_provider or _primary_screen
         screen = provider()
         if screen is None:

@@ -228,6 +228,42 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0]["status"], "success")
         self.assertEqual(responses[0]["result"], {"frame": frame, "trace": frame["active_observation"]})
 
+    def test_accessibility_index_status_and_refresh_do_not_focus_an_app(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses: list[tuple[str, str, dict[str, object] | None]] = []
+        calls: list[str] = []
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            accessibility_index_status=lambda: calls.append("status") or {"app_count": 2},
+            refresh_accessibility_index=lambda: calls.append("refresh") or {"updated_count": 2},
+            background_runner=lambda task: task(),
+            focus_target_application=lambda _payload: self.fail("AX index maintenance must not focus an app"),
+            write_response_func=lambda command, status, result=None: responses.append(
+                (command["type"], status, result)
+            ),
+        )
+
+        router.process_desktop_command(
+            {"nonce": "ax-status", "type": "accessibility_index_status", "payload": {}}
+        )
+        router.process_desktop_command(
+            {"nonce": "ax-refresh", "type": "accessibility_index_refresh", "payload": {}}
+        )
+
+        self.assertEqual(calls, ["status", "refresh"])
+        self.assertEqual(
+            responses,
+            [
+                ("accessibility_index_status", "success", {"app_count": 2}),
+                ("accessibility_index_refresh", "success", {"updated_count": 2}),
+            ],
+        )
+
     def test_native_approval_only_focuses_ipet_after_rejection(self) -> None:
         module = _router_module()
         for approved, expected_focus_count in ((True, 0), (False, 1)):
@@ -251,6 +287,32 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
                 self.assertEqual(responses[0][0], "success")
                 self.assertEqual(host.raised, expected_focus_count)
                 self.assertEqual(host.activated, expected_focus_count)
+
+    def test_action_notice_does_not_raise_ipet_window(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            execute_human_ops_native_approval=lambda payload: {"notified": payload["notice_only"]},
+            write_response_func=lambda command, status, result=None: responses.append((status, result)),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "notice-1",
+                "type": "human_ops_native_approval",
+                "payload": {"notice_only": True, "message": "即将执行"},
+            }
+        )
+
+        self.assertEqual(responses[0], ("success", {"notified": True}))
+        self.assertEqual(host.raised, 0)
+        self.assertEqual(host.activated, 0)
 
     def test_human_ops_launch_app_routes_without_hiding_pet_window(self) -> None:
         module = _router_module()

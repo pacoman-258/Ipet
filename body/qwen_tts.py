@@ -11,7 +11,9 @@ QWEN_TTS_PROJECT_DIR = Path(
 QWEN_TTS_API_BASE_URL = str(
     os.environ.get("IPET_QWEN_TTS_API_BASE_URL", "http://127.0.0.1:8000")
 ).rstrip("/")
-QWEN_TTS_MODEL = "qwen3-tts-0.6b-bf16"
+# Qwen3-TTS currently provides 0.6B and 1.7B releases; use the higher-quality
+# 1.7B MLX alias as Ipet's default voice-cloning model.
+QWEN_TTS_MODEL = "qwen3-tts-1.7b-8bit"
 QWEN_TTS_REFERENCE_AUDIO = QWEN_TTS_PROJECT_DIR / "ex.mp3"
 QWEN_TTS_REFERENCE_TEXT = "就按照小昭审美就没有比较帅的"
 QWEN_TTS_REFERENCE_ID = "ipet_xiaozhao"

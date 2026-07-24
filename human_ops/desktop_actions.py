@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from body import macos_accessibility as _macos_accessibility
+
 
 def _platform_name(platform_name: str | None = None) -> str:
     return str(platform_name or sys.platform).strip().lower()
@@ -79,16 +81,19 @@ def execute_human_ops_launch_app(
     app_name = str(data.get("app") or data.get("name") or data.get("label") or "").strip()
     if not app_name:
         raise RuntimeError("Human Ops app launch requires an application name.")
+    ax_profile = _macos_accessibility.resolve_macos_ax_app(app_name)
+    launch_name = str(ax_profile.get("launch_name") or ax_profile.get("display_name") or app_name).strip()
     applications = _installed_macos_applications(runner=runner)
-    resolved = _resolve_installed_application(app_name, applications)
-    command = ["/usr/bin/open", resolved["path"]] if resolved else ["/usr/bin/open", "-a", app_name]
+    resolved = _resolve_installed_application(launch_name, applications)
+    command = ["/usr/bin/open", resolved["path"]] if resolved else ["/usr/bin/open", "-a", launch_name]
     result = runner(command, capture_output=True, text=True, timeout=5, check=False)
     if getattr(result, "returncode", 1) != 0:
         detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "open failed").strip()
         raise RuntimeError(f"macOS could not open {app_name}: {detail}")
+    _macos_accessibility.invalidate_macos_accessibility_cache(app_name)
     return {
         "launched": True,
-        "app": str(resolved.get("name") or app_name),
+        "app": str(resolved.get("name") or launch_name),
         "application_path": str(resolved.get("path") or ""),
         "application_count": len(applications),
         "method": "launch_services",
@@ -137,17 +142,33 @@ def execute_human_ops_click(
     platform_name: str | None = None,
     runner=subprocess.run,
     event_clicker=_post_core_graphics_click,
+    accessibility_actioner=_macos_accessibility.perform_macos_accessibility_action,
 ) -> dict[str, object]:
     if not _is_macos(platform_name):
         raise RuntimeError("Human Ops click is currently implemented through macOS desktop event APIs.")
     data = payload if isinstance(payload, dict) else {}
+    ax_ref = data.get("ax_ref") if isinstance(data.get("ax_ref"), dict) else {}
+    target_app = str(data.get("target_app") or "").strip()
+    label = str(data.get("label") or data.get("target") or "目标位置").strip() or "目标位置"
+    if ax_ref:
+        if not target_app:
+            raise RuntimeError("Human Ops semantic click requires target_app.")
+        result = accessibility_actioner(
+            target_app,
+            ax_ref,
+            operation="press",
+            platform_name=platform_name,
+            runner=runner,
+        )
+        _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
+        return {"clicked": True, "label": label, **result}
     x = _screen_coordinate(data.get("x"))
     y = _screen_coordinate(data.get("y"))
-    label = str(data.get("label") or data.get("target") or "目标位置").strip() or "目标位置"
     event_error = ""
     if event_clicker is not None:
         try:
             event_clicker(x, y)
+            _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
             return {"clicked": True, "x": x, "y": y, "label": label, "method": "core_graphics"}
         except Exception as exc:
             event_error = str(exc).strip()
@@ -165,6 +186,7 @@ def execute_human_ops_click(
         if event_error:
             detail = f"CoreGraphics click failed: {event_error}; System Events click failed: {detail}"
         raise RuntimeError(detail)
+    _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
     return {"clicked": True, "x": x, "y": y, "label": label, "method": "system_events"}
 
 
@@ -220,16 +242,38 @@ def execute_human_ops_type_text(
     platform_name: str | None = None,
     runner=subprocess.run,
     event_typer=None,
+    accessibility_actioner=_macos_accessibility.perform_macos_accessibility_action,
 ) -> dict[str, object]:
     if not _is_macos(platform_name):
         raise RuntimeError("Human Ops text input is currently implemented through macOS desktop event APIs.")
     data = payload if isinstance(payload, dict) else {}
     text = str(data.get("text") or "")
     label = str(data.get("label") or data.get("target") or "输入位置").strip() or "输入位置"
+    ax_ref = data.get("ax_ref") if isinstance(data.get("ax_ref"), dict) else {}
+    target_app = str(data.get("target_app") or "").strip()
+    accessibility_result: dict[str, object] = {}
+    if ax_ref:
+        if not target_app:
+            raise RuntimeError("Human Ops semantic text input requires target_app.")
+        accessibility_result = accessibility_actioner(
+            target_app,
+            ax_ref,
+            operation="focus",
+            platform_name=platform_name,
+            runner=runner,
+        )
     native_typer = event_typer or _post_core_graphics_text
     try:
         native_typer(text)
-        return {"typed": True, "text": text, "label": label, "method": "core_graphics_unicode"}
+        method = "macos_accessibility_focus+core_graphics_unicode" if accessibility_result else "core_graphics_unicode"
+        _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
+        return {
+            "typed": True,
+            "text": text,
+            "label": label,
+            **accessibility_result,
+            "method": method,
+        }
     except Exception as exc:
         event_error = str(exc).strip()
     script = f'tell application "System Events" to keystroke {_applescript_string(text)}'
@@ -245,7 +289,15 @@ def execute_human_ops_type_text(
         if event_error:
             detail = f"CoreGraphics text input failed: {event_error}; System Events input failed: {detail}"
         raise RuntimeError(detail)
-    return {"typed": True, "text": text, "label": label, "method": "system_events"}
+    method = "macos_accessibility_focus+system_events" if accessibility_result else "system_events"
+    _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
+    return {
+        "typed": True,
+        "text": text,
+        "label": label,
+        **accessibility_result,
+        "method": method,
+    }
 
 
 def execute_human_ops_key_press(
@@ -259,6 +311,7 @@ def execute_human_ops_key_press(
     data = payload if isinstance(payload, dict) else {}
     raw_key = str(data.get("key") or "enter").strip().lower() or "enter"
     label = str(data.get("label") or data.get("target") or "当前焦点").strip() or "当前焦点"
+    target_app = str(data.get("target_app") or "").strip()
     key_codes = {
         "enter": 36,
         "return": 36,
@@ -277,6 +330,7 @@ def execute_human_ops_key_press(
         detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "osascript failed").strip()
         raise RuntimeError(detail)
     normalized_key = "enter" if raw_key == "return" else raw_key
+    _macos_accessibility.invalidate_macos_accessibility_cache(target_app)
     return {"pressed": True, "key": normalized_key, "label": label, "method": "system_events"}
 
 
@@ -309,8 +363,10 @@ def focus_macos_application(
     target_app = str(data.get("target_app") or data.get("app") or data.get("name") or "").strip()
     if not target_app:
         raise RuntimeError("Human Ops action requires target_app before changing application focus.")
+    ax_profile = _macos_accessibility.resolve_macos_ax_app(target_app)
+    launch_name = str(ax_profile.get("launch_name") or ax_profile.get("display_name") or target_app).strip()
     result = runner(
-        ["/usr/bin/open", "-a", target_app],
+        ["/usr/bin/open", "-a", launch_name],
         capture_output=True,
         text=True,
         timeout=3,
@@ -321,12 +377,24 @@ def focus_macos_application(
         raise RuntimeError(f"macOS could not focus {target_app}: {detail}")
     get_frontmost = frontmost_provider or (lambda: frontmost_macos_application(runner=runner))
     deadline = time.monotonic() + max(0.2, float(timeout_sec))
-    target_key = _application_name_key(target_app)
+    target_keys = {
+        _application_name_key(value)
+        for value in (
+            target_app,
+            launch_name,
+            ax_profile.get("display_name"),
+            *(ax_profile.get("aliases") or ()),
+        )
+        if _application_name_key(value)
+    }
     last_frontmost = ""
     while time.monotonic() < deadline:
         last_frontmost = str(get_frontmost() or "").strip()
         frontmost_key = _application_name_key(last_frontmost)
-        if target_key and frontmost_key and (target_key == frontmost_key or target_key in frontmost_key or frontmost_key in target_key):
+        if frontmost_key and any(
+            target_key == frontmost_key or target_key in frontmost_key or frontmost_key in target_key
+            for target_key in target_keys
+        ):
             return {
                 "focused": True,
                 "target_app": target_app,
@@ -350,6 +418,27 @@ def execute_human_ops_native_approval(
     data = payload if isinstance(payload, dict) else {}
     title = str(data.get("title") or "Ipet 需要你的批准").strip()[:120]
     message = str(data.get("message") or data.get("summary") or "是否批准这一步操作？").strip()[:800]
+    if data.get("notice_only") is True:
+        script = (
+            f"display notification {_applescript_string(message)} "
+            f"with title {_applescript_string(title)} sound name \"default\""
+        )
+        result = runner(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        output = str(getattr(result, "stdout", "") or "").strip()
+        error = str(getattr(result, "stderr", "") or "").strip()
+        if getattr(result, "returncode", 1) != 0:
+            raise RuntimeError(error or output or "macOS action notification failed")
+        return {
+            "notified": True,
+            "method": "macos_notification",
+            "task_id": str(data.get("task_id") or "").strip(),
+        }
     timeout_sec = max(30, min(600, _screen_coordinate(data.get("timeout_sec"), fallback=300)))
     script = (
         f"display dialog {_applescript_string(message)} "

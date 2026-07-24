@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,8 @@ from .tts import (
     cleanup_old_audio,
     stream_qwen_tts_local,
     synthesize_to_audio,
-    tts_available,
+    tts_available as _tts_available,
+    is_fish_audio_provider,
 )
 from .vision_analyzer import VisionAnalyzer
 from .vision import VisionService
@@ -55,6 +57,7 @@ from . import proactive_context as _proactive_context_helpers
 from . import app_proposal_adapters as _human_ops_proposal_flow_helpers
 from . import settings_assets as _settings_asset_helpers
 from . import app_settings_adapters as _settings_adapter_helpers
+from . import settings_live2d as _settings_live2d_helpers
 from . import settings_routes as _settings_route_helpers
 from .settings_defaults import ALLOWED_CONFIG_KEYS, NEO_DEFAULTS
 
@@ -82,6 +85,7 @@ MEMORY_STORE = IpetMemoryStore(IPET_MEMORY_ROOT)
 ENVIRONMENT_SERVICE = EnvironmentService(NEO_DEFAULTS.get("environment", {}))
 VISION_SERVICE = VisionService(NEO_DEFAULTS.get("vision", {}))
 HUMAN_OPS_PENDING_PROPOSALS: dict[str, dict[str, Any]] = {}
+_AX_INDEX_REFRESH_TASK: asyncio.Task[Any] | None = None
 
 
 def _human_ops_proposal_flow_deps() -> _human_ops_proposal_flow_helpers.ProposalFlowDependencies:
@@ -171,6 +175,14 @@ async def _request_native_human_ops_approval(proposal: ReviewableProposal) -> di
     )
 
 
+async def _notify_human_ops_action(proposal: ReviewableProposal, *, task_id: str) -> dict[str, Any]:
+    return await _app_action_adapter_helpers.notify_human_ops_action(
+        proposal,
+        task_id=task_id,
+        deps=_app_action_adapter_deps(send_desktop_command=_send_desktop_command),
+    )
+
+
 def _route_dependency_context() -> _app_route_dependency_helpers.AppRouteDependencyContext:
     return _app_route_context_helpers.create_route_dependency_context(
         app=app,
@@ -200,6 +212,24 @@ def _normalize_private_config(raw: dict[str, Any] | None = None) -> dict[str, An
     return _settings_adapter_helpers.normalize_private_config(raw, deps=_settings_adapter_deps())
 
 
+def _chat_tts_config() -> dict[str, Any]:
+    private_config = _normalize_private_config()
+    chat_config = private_config.get("chat") if isinstance(private_config.get("chat"), dict) else {}
+    return chat_config
+
+
+def tts_available(provider: str | None = None, provider_url: str | None = None) -> bool:
+    if not is_fish_audio_provider(provider):
+        return _tts_available(provider, provider_url)
+    chat_config = _chat_tts_config()
+    return _tts_available(
+        provider,
+        provider_url,
+        api_key=str(chat_config.get("tts_api_key") or ""),
+        reference_id=str(chat_config.get("tts_voice_id") or ""),
+    )
+
+
 def _secret_preview(value: str) -> str:
     return _settings_adapter_helpers.secret_preview(value)
 
@@ -218,6 +248,58 @@ def _apply_settings_update(incoming: dict[str, Any], *, current: dict[str, Any] 
 
 def _save_config(private_config: dict[str, Any]) -> None:
     _settings_adapter_helpers.save_config(private_config, deps=_settings_adapter_deps())
+
+
+def _list_local_models() -> list[dict[str, Any]]:
+    return _settings_live2d_helpers.list_local_models(root_dir=ROOT_DIR)
+
+
+async def _preview_settings_action(payload: dict[str, Any]) -> dict[str, Any]:
+    command = _settings_live2d_helpers.preview_command(payload, root_dir=ROOT_DIR)
+    return await _send_desktop_command(
+        command["type"],
+        command["payload"],
+        timeout_sec=8,
+    )
+
+
+async def _accessibility_index_status() -> dict[str, Any]:
+    return await _send_desktop_command(
+        "accessibility_index_status",
+        {},
+        timeout_sec=8,
+    )
+
+
+async def _refresh_accessibility_index() -> dict[str, Any]:
+    private_config = _normalize_private_config()
+    human_ops = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
+    if human_ops.get("accessibility", True) is False:
+        raise ValueError("请先开启“允许读取可访问性结构”")
+    return await _send_desktop_command(
+        "accessibility_index_refresh",
+        {},
+        timeout_sec=600,
+    )
+
+
+def _schedule_accessibility_index_refresh() -> bool:
+    global _AX_INDEX_REFRESH_TASK
+    private_config = _normalize_private_config()
+    human_ops = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
+    if human_ops.get("accessibility", True) is False:
+        return False
+    if _AX_INDEX_REFRESH_TASK is not None and not _AX_INDEX_REFRESH_TASK.done():
+        return False
+
+    async def refresh() -> None:
+        try:
+            await _refresh_accessibility_index()
+        except Exception:
+            return
+
+    _AX_INDEX_REFRESH_TASK = asyncio.create_task(refresh())
+    return True
 
 
 def _settings_adapter_deps() -> _settings_adapter_helpers.SettingsAdapterDependencies:
@@ -259,6 +341,14 @@ async def _list_provider_models_for_route(brain_config: dict[str, Any]) -> Any:
 
 
 async def _synthesize_to_audio_for_route(**kwargs: Any) -> Any:
+    if is_fish_audio_provider(kwargs.get("provider")):
+        chat_config = _chat_tts_config()
+        kwargs = {
+            **kwargs,
+            "api_key": str(chat_config.get("tts_api_key") or ""),
+            "reference_id": str(chat_config.get("tts_voice_id") or ""),
+            "model": str(chat_config.get("tts_model") or ""),
+        }
     return await synthesize_to_audio(**kwargs)
 
 

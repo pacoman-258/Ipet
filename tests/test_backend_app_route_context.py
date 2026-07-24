@@ -88,6 +88,21 @@ class BackendAppRouteContextTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         action_mock.assert_awaited_once_with(mock.sentinel.proposal)
 
+        with mock.patch.object(
+            backend_app,
+            "_notify_human_ops_action",
+            new=mock.AsyncMock(return_value={"notified": True}),
+        ) as notice_mock:
+            human_ops_deps = app_route_dependencies.create_human_ops_decision_route_deps(context)
+            result = asyncio.run(
+                human_ops_deps.notify_human_ops_action(
+                    mock.sentinel.proposal,
+                    task_id="task-notice",
+                )
+            )
+        self.assertEqual(result, {"notified": True})
+        notice_mock.assert_awaited_once_with(mock.sentinel.proposal, task_id="task-notice")
+
 
 if __name__ == "__main__":
     unittest.main()

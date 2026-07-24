@@ -194,6 +194,7 @@ class ControlPanel(QWidget):
         self.chat_tts_provider_combo.addItem("edge_tts")
         self.chat_tts_provider_combo.addItem("custom_http")
         self.chat_tts_provider_combo.addItem("qwen_tts_local")
+        self.chat_tts_provider_combo.addItem("fish_audio")
         self.chat_tts_preset_combo = QComboBox()
         self.chat_tts_preset_combo.addItem("选择预设...", "")
         for preset_key, preset in CUSTOM_HTTP_TTS_PRESETS.items():
@@ -426,13 +427,18 @@ class ControlPanel(QWidget):
 
         self.model_path_input.setText(config.get("model_path", ""))
         self.chat_model_input.setText(config.get("chat", {}).get("model", DEFAULT_BRAIN_MODEL))
-        voice_text = str(config.get("chat", {}).get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
+        chat_config = config.get("chat", {}) if isinstance(config.get("chat", {}), dict) else {}
+        provider = str(chat_config.get("tts_provider", "edge_tts")).strip() or "edge_tts"
+        provider = provider if provider in ("edge_tts", "custom_http", "qwen_tts_local", "fish_audio") else "edge_tts"
+        voice_fallback = "Fish 音色模型 ID" if provider == "fish_audio" else "zh-CN-XiaoxiaoNeural"
+        voice_text = str(
+            chat_config.get("tts_voice_id") if provider == "fish_audio" else chat_config.get("voice", voice_fallback)
+        ).strip() or voice_fallback
         self.chat_voice_input.setText(voice_text)
-        provider = str(config.get("chat", {}).get("tts_provider", "edge_tts")).strip() or "edge_tts"
-        provider = provider if provider in ("edge_tts", "custom_http", "qwen_tts_local") else "edge_tts"
+        self.chat_voice_input.setPlaceholderText(voice_fallback)
         self.chat_tts_provider_combo.setCurrentText(provider)
         self.chat_tts_preset_combo.setCurrentIndex(0)
-        self.chat_tts_provider_url_input.setText(str(config.get("chat", {}).get("tts_provider_url", "")).strip())
+        self.chat_tts_provider_url_input.setText(str(chat_config.get("tts_provider_url", "")).strip())
         try:
             rate_pct = int(config.get("chat", {}).get("rate_pct", 0))
         except Exception:

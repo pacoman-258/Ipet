@@ -89,6 +89,8 @@ class DesktopCommandWiringTests(unittest.TestCase):
         self.assertIs(kwargs["hide_window_for_desktop_click"], deps.hide_window_for_desktop_click)
         self.assertIs(kwargs["restore_window_after_desktop_click"], deps.restore_window_after_desktop_click)
         self.assertIs(kwargs["capture_active_vision_frame_payload"], deps.capture_active_vision_frame_payload)
+        self.assertIs(kwargs["accessibility_index_status"], deps.accessibility_index_status)
+        self.assertIs(kwargs["refresh_accessibility_index"], deps.refresh_accessibility_index)
         self.assertIs(kwargs["sleep"], deps.sleep)
         self.assertIs(kwargs["time_module"], deps.time_module)
         self.assertIs(kwargs["os_module"], deps.os_module)

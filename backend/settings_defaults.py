@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from .environment import DEFAULT_ENVIRONMENT_CONFIG
-from .tts import DEFAULT_PROVIDER as DEFAULT_TTS_PROVIDER
+from .tts import DEFAULT_PROVIDER as DEFAULT_TTS_PROVIDER, FISH_AUDIO_DEFAULT_MODEL
 from .vision import DEFAULT_VISION_CONFIG
 
 
@@ -20,6 +20,8 @@ NEO_DEFAULTS: dict[str, Any] = {
         "rate_pct": 0,
         "tts_provider": DEFAULT_TTS_PROVIDER,
         "tts_provider_url": "",
+        "tts_voice_id": "",
+        "tts_model": FISH_AUDIO_DEFAULT_MODEL,
         "expression_mode": True,
         "expression_output_format": "ndjson_v1",
         "system_prompt": "",
@@ -60,7 +62,7 @@ NEO_DEFAULTS: dict[str, Any] = {
         "max_output_tokens": 1024,
         "persona_prompt_file": "",
         "persona": "",
-        "self_state": "等待用户目标，并在 act / remember / learn_skill 前请求批准。",
+        "self_state": "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。",
         "response_style": "",
         "decision_temperature": 0.4,
         "reasoning_effort": "",
@@ -68,6 +70,7 @@ NEO_DEFAULTS: dict[str, Any] = {
         "web_search_enabled": False,
     },
     "human_ops": {
+        "authorization_mode": "review",
         "playwright_profile": "",
         "observe_screen": True,
         "accessibility": True,

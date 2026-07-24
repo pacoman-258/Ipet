@@ -71,6 +71,28 @@ class BackendAppActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"clicked": True})
         click_mock.assert_awaited_once_with(proposal)
 
+    async def test_click_adapter_forwards_ax_reference_without_fake_zero_coordinates(self) -> None:
+        adapters = self._import_adapters()
+        ax_ref = {"app_id": "finder", "role": "AXRow", "path": [2], "fingerprint": "copied"}
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="选择文件",
+            payload={"target_app": "Finder", "ax_ref": ax_ref, "label": "报告.pdf"},
+        )
+        send_mock = mock.AsyncMock(return_value={"ax_target_verified": True})
+        deps = adapters.AppActionAdapterDependencies(
+            command_path=ROOT_DIR / ".pet_desktop_command.json",
+            send_desktop_command=send_mock,
+        )
+
+        result = await adapters.perform_human_ops_click(proposal, deps=deps)
+
+        payload = send_mock.await_args.args[1]
+        self.assertEqual(payload["ax_ref"], ax_ref)
+        self.assertNotIn("x", payload)
+        self.assertNotIn("y", payload)
+        self.assertTrue(result["ax_target_verified"])
+
     async def test_non_click_action_delegates_to_desktop_command_client_helper(self) -> None:
         adapters = self._import_adapters()
         proposal = ReviewableProposal.act(
@@ -154,6 +176,39 @@ class BackendAppActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只读复制 cookies 与网页存储到 Ipet 私有持久快照", calls[0][1]["message"])
         self.assertIn("绝不写回原 Chrome 资料", calls[0][1]["message"])
         self.assertIn("attach 只连接唯一活跃且允许远程调试的所选资料", calls[0][1]["message"])
+
+    async def test_full_authorization_notice_omits_typed_content_and_needs_delivery_ack(self) -> None:
+        adapters = self._import_adapters()
+        proposal = ReviewableProposal.act(
+            action_type="type_text",
+            summary="Ipet 想输入：绝密内容",
+            payload={"target_app": "WeChat", "text": "绝密内容", "label": "聊天框"},
+        )
+        calls: list[tuple[str, dict[str, object], float]] = []
+
+        async def send_command(command_type, payload, *, command_path, timeout_sec):
+            calls.append((command_type, payload, timeout_sec))
+            return {"notified": True, "method": "macos_notification"}
+
+        deps = adapters.AppActionAdapterDependencies(
+            command_path=ROOT_DIR / ".pet_desktop_command.json",
+            send_desktop_command=send_command,
+        )
+
+        result = await adapters.notify_human_ops_action(
+            proposal,
+            task_id="task-full",
+            deps=deps,
+        )
+
+        self.assertTrue(result["notified"])
+        self.assertEqual(calls[0][0], "human_ops_native_approval")
+        self.assertTrue(calls[0][1]["notice_only"])
+        self.assertEqual(calls[0][1]["task_id"], "task-full")
+        self.assertIn("输入文字", calls[0][1]["message"])
+        self.assertIn("WeChat", calls[0][1]["message"])
+        self.assertNotIn("绝密内容", calls[0][1]["message"])
+        self.assertEqual(calls[0][2], 8)
 
     async def test_filesystem_action_uses_configured_root_without_desktop_command(self) -> None:
         adapters = self._import_adapters()

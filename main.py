@@ -40,6 +40,7 @@ from app.settings_window import SettingsWindowController
 from backend.environment import DEFAULT_ENVIRONMENT_CONFIG, normalize_environment_config
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
 from body import live2d_assets as _live2d_assets
+from body import macos_accessibility as _macos_accessibility
 from body.environment_controller import EnvironmentController
 from body.screen_vision_controller import ScreenVisionController
 
@@ -652,6 +653,8 @@ def _build_desktop_command_router_dependencies() -> DesktopCommandRouterWiringDe
         hide_window_for_desktop_click=_hide_window_for_desktop_click,
         restore_window_after_desktop_click=_restore_window_after_desktop_click,
         capture_active_vision_frame_payload=capture_active_vision_frame_payload,
+        accessibility_index_status=_macos_accessibility.macos_accessibility_index_status,
+        refresh_accessibility_index=_macos_accessibility.refresh_macos_accessibility_index,
         sleep=time.sleep,
         time_module=time,
         os_module=os,

@@ -40,6 +40,15 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
     def test_body_tts_provider_offers_local_qwen_clone(self) -> None:
         self.assertIn('<option value="qwen_tts_local">qwenTTS 本地（音色克隆）</option>', self.html)
 
+    def test_body_tts_provider_offers_fish_audio_clone_settings(self) -> None:
+        self.assertIn('<option value="fish_audio">Fish Audio（音色克隆）</option>', self.html)
+        for element_id in ("chat-tts-voice-id", "chat-tts-model", "chat-tts-api-key", "chat-tts-api-key-clear"):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', self.html)
+        self.assertIn("tts_voice_id", self.form_js)
+        self.assertIn("tts_model", self.form_js)
+        self.assertIn("tts_api_key_preview", self.form_js)
+
     def test_dock_uses_the_requested_section_icons(self) -> None:
         expected_glyphs = {
             "overview": "⚙",
@@ -72,6 +81,25 @@ class NeoAspectSettingsPageTests(unittest.TestCase):
         self.assertIn('id="ops-playwright-profile-status"', self.html)
         self.assertIn('/api/settings/chrome-profiles', self.js)
         self.assertIn('playwright_profile: stringValue(els.opsPlaywrightProfile)', self.form_js)
+
+    def test_human_ops_exposes_explicit_full_authorization_mode(self) -> None:
+        self.assertIn('id="ops-authorization-mode"', self.html)
+        self.assertIn('<option value="review">', self.html)
+        self.assertIn('<option value="full">完全授权（动作免审批）</option>', self.html)
+        self.assertIn("每步执行前通知", self.html)
+        self.assertIn('authorization_mode: "review"', self.form_js)
+        self.assertIn("require_act_review: authorizationMode !== \"full\"", self.form_js)
+
+    def test_human_ops_exposes_persistent_ax_index_refresh(self) -> None:
+        self.assertIn('id="ops-ax-index-refresh"', self.html)
+        self.assertIn('id="ops-ax-index-status"', self.html)
+        self.assertIn("data/ax_trees/", self.html)
+        self.assertIn("全部运行中的 GUI 应用", self.html)
+        self.assertIn("普通 macOS GUI 应用", self.html)
+        self.assertIn("/api/settings/accessibility-index", self.js)
+        self.assertIn("/api/settings/accessibility-index/refresh", self.js)
+        self.assertIn("refreshAccessibilityIndex", self.js)
+        self.assertIn("安全跳过 Ipet 自身", self.js)
 
     def test_brain_provider_selector_supports_api_formats_including_google_aistudio(self) -> None:
         self.assertIn('id="brain-provider"', self.html)

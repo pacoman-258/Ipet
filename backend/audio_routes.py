@@ -10,7 +10,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .models import TTSRequest
-from .tts import is_qwen_tts_local_provider
+from .tts import is_fish_audio_provider, is_qwen_tts_local_provider
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,8 @@ async def synthesize_tts_response(request: TTSRequest, *, deps: AudioRouteDepend
     if not deps.tts_available(request.provider, request.provider_url):
         if is_qwen_tts_local_provider(request.provider):
             raise HTTPException(status_code=503, detail="TTS异常")
+        if is_fish_audio_provider(request.provider):
+            raise HTTPException(status_code=503, detail="Fish Audio API Key 或音色模型 ID 未配置")
         raise HTTPException(status_code=503, detail=f"TTS provider is unavailable: {request.provider}")
     try:
         deps.cleanup_old_audio(deps.audio_cache_dir)

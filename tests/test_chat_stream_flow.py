@@ -186,6 +186,21 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("display_segment", [name for name, _data in events])
         self.assertEqual(events[-1][1]["usage"], {"input_tokens": 21, "output_tokens": 2, "total_tokens": 23})
 
+    async def test_terminal_chat_schedules_accessibility_index_refresh(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls: list[str] = []
+        deps = self._dependencies(
+            topic_store,
+            schedule_accessibility_index_refresh=lambda: calls.append("refresh") or True,
+        )
+
+        events = await _collect_events(
+            stream_chat_response({"text": "你好", "session_id": "ax-refresh"}, deps)
+        )
+
+        self.assertEqual(calls, ["refresh"])
+        self.assertTrue(events[-1][1]["accessibility_index_refresh_scheduled"])
+
     async def test_cancelling_stream_cleans_up_reply_task(self) -> None:
         topic_store = TopicStoreSpy()
         brain_started = asyncio.Event()
@@ -484,6 +499,68 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(arguments["coordinate_space"], "macos_screen_points")
         self.assertEqual(events[-1], ("approval_required", {"proposal_id": "coordinate-proposal"}))
 
+    async def test_full_authorization_streams_same_proposal_into_execution_without_approval_event(self) -> None:
+        topic_store = TopicStoreSpy()
+        pending: dict[str, dict[str, Any]] = {}
+        streamed: list[str] = []
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            decision = BrainDecision.propose_act(
+                "click",
+                {"target_app": "Finder", "x": 30, "y": 40, "label": "文件"},
+            )
+            return SimpleNamespace(text=decision.summary, decision=decision, provider="test", model="brain")
+
+        def create_proposal(_decision: BrainDecision, *, session_id: str, user_text: str):
+            proposal_id = "full-proposal"
+            pending[proposal_id] = {
+                "proposal": object(),
+                "session_id": session_id,
+                "user_text": user_text,
+                "status": "pending",
+            }
+            return proposal_id, pending[proposal_id]["proposal"]
+
+        async def stream_authorized(proposal_id: str):
+            streamed.append(proposal_id)
+            self.assertEqual(pending[proposal_id]["authorization_mode"], "full")
+            yield _sse(
+                "done",
+                {
+                    "turn_id": proposal_id,
+                    "proposal_id": proposal_id,
+                    "text": "已执行",
+                    "approved": True,
+                    "auto_authorized": True,
+                    "execution": {"clicked": True},
+                },
+            )
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {"model_endpoint": "https://llm.example", "model_name": "brain"},
+                "human_ops": {"authorization_mode": "full", "require_act_review": False},
+            },
+            run_brain_turn=run_brain_turn,
+            looks_like_desktop_action_request=lambda _text: True,
+            create_human_ops_act_proposal=create_proposal,
+            pending_proposals=pending,
+            stream_authorized_proposal=stream_authorized,
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {"text": "点击文件", "session_id": "full-auth", "task_id": "task-full-auth"},
+                deps,
+            )
+        )
+
+        self.assertEqual(streamed, ["full-proposal"])
+        self.assertEqual(pending["full-proposal"]["task_id"], "task-full-auth")
+        self.assertNotIn("approval_required", [name for name, _payload in events])
+        self.assertTrue(events[-1][1]["auto_authorized"])
+
     async def test_direct_brain_image_failure_is_blocked_with_actionable_model_guidance(self) -> None:
         topic_store = TopicStoreSpy()
         calls = 0
@@ -633,7 +710,7 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             topic_store,
             normalize_private_config=lambda: {
                 "brain": {"provider": "codex", "model_name": "test"},
-                "human_ops": {},
+                "human_ops": {"authorization_mode": "full", "require_act_review": False},
                 "memory": {"conversation_saving": True, "long_term_enabled": True},
             },
             normalize_provider=lambda _value: "codex",

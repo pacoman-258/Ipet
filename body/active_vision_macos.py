@@ -360,7 +360,13 @@ def _running_app_candidate_score(name: str, *, frontmost: bool = False, from_pro
     return 65.0 if from_process_path else 70.0
 
 
-def _parse_system_events_running_app_candidates(output: str, *, start_index: int = 0) -> list[dict]:
+def _parse_system_events_running_app_candidates(
+    output: str,
+    *,
+    start_index: int = 0,
+    limit: int = ACTIVE_VISION_MAX_CANDIDATES,
+) -> list[dict]:
+    result_limit = max(1, min(256, int(limit)))
     candidates: list[dict] = []
     for line in str(output or "").splitlines():
         parts = line.split("\t")
@@ -384,12 +390,16 @@ def _parse_system_events_running_app_candidates(output: str, *, start_index: int
         if pid:
             candidate["pid"] = pid
         candidates.append(_sanitize_active_candidate(candidate, index=start_index + len(candidates), source="running_app"))
-        if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+        if len(candidates) >= result_limit:
             break
     return candidates
 
 
-def _system_events_running_app_candidates(*, runner=subprocess.run) -> tuple[list[dict], list[str]]:
+def _system_events_running_app_candidates(
+    *,
+    runner=subprocess.run,
+    limit: int = ACTIVE_VISION_MAX_CANDIDATES,
+) -> tuple[list[dict], list[str]]:
     script = r"""
 tell application "System Events"
     set appRows to {}
@@ -428,7 +438,10 @@ end tell
     if getattr(result, "returncode", 1) != 0:
         detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=180)
         return [], [f"System Events running app fallback failed: {detail or 'osascript failed'}"]
-    return _parse_system_events_running_app_candidates(str(getattr(result, "stdout", "") or "")), []
+    return _parse_system_events_running_app_candidates(
+        str(getattr(result, "stdout", "") or ""),
+        limit=limit,
+    ), []
 
 
 def enumerate_active_vision_running_app_candidates(
@@ -436,9 +449,12 @@ def enumerate_active_vision_running_app_candidates(
     platform_name: str | None = None,
     runner=subprocess.run,
     include_errors: bool = False,
+    limit: int = ACTIVE_VISION_MAX_CANDIDATES,
+    include_hidden: bool = False,
 ) -> list[dict] | tuple[list[dict], list[str]]:
     if not _is_macos(platform_name):
         return ([], []) if include_errors else []
+    result_limit = max(1, min(256, int(limit)))
     candidates: list[dict] = []
     errors: list[str] = []
     try:
@@ -455,7 +471,7 @@ def enumerate_active_vision_running_app_candidates(
                 activation_policy = int(app.activationPolicy())
             except Exception:
                 continue
-            if not name or hidden or activation_policy != 0:
+            if not name or (hidden and not include_hidden) or activation_policy != 0:
                 continue
             candidates.append(
                 _sanitize_active_candidate(
@@ -474,25 +490,28 @@ def enumerate_active_vision_running_app_candidates(
                     source="running_app",
                 )
             )
-            if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+            if len(candidates) >= result_limit:
                 return (candidates, errors) if include_errors else candidates
     except Exception as exc:
         errors.append(f"AppKit running app enumeration unavailable: {exc}")
     if not candidates:
-        system_events_candidates, system_events_errors = _system_events_running_app_candidates(runner=runner)
+        system_events_candidates, system_events_errors = _system_events_running_app_candidates(
+            runner=runner,
+            limit=result_limit,
+        )
         errors.extend(system_events_errors)
         if system_events_candidates:
-            capped = system_events_candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+            capped = system_events_candidates[:result_limit]
             return (capped, errors) if include_errors else capped
     try:
         result = runner(["/bin/ps", "-axo", "comm="], capture_output=True, text=True, timeout=0.8, check=False)
     except Exception:
-        capped = candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+        capped = candidates[:result_limit]
         return (capped, errors) if include_errors else capped
     if getattr(result, "returncode", 1) != 0:
         detail = _clean_vision_text(getattr(result, "stderr", "") or getattr(result, "stdout", ""), max_length=180)
         errors.append(f"running process fallback failed: {detail or 'ps failed'}")
-        capped = candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+        capped = candidates[:result_limit]
         return (capped, errors) if include_errors else capped
     seen: set[str] = {_active_vision_name_key(str(item.get("app") or "")) for item in candidates}
     ps_lines = str(getattr(result, "stdout", "") or "").splitlines()
@@ -519,14 +538,14 @@ def enumerate_active_vision_running_app_candidates(
                 source="running_app",
             )
         )
-        if len(app_bundle_candidates) >= 80:
+        if len(app_bundle_candidates) >= max(80, result_limit):
             break
     if app_bundle_candidates:
         combined = sorted(
             candidates + app_bundle_candidates,
             key=lambda value: float(value.get("score") or 0.0),
             reverse=True,
-        )[:ACTIVE_VISION_MAX_CANDIDATES]
+        )[:result_limit]
         return (combined, errors) if include_errors else combined
     for line in str(getattr(result, "stdout", "") or "").splitlines():
         name = Path(line.strip()).name
@@ -549,7 +568,7 @@ def enumerate_active_vision_running_app_candidates(
                 source="running_process",
             )
         )
-        if len(candidates) >= ACTIVE_VISION_MAX_CANDIDATES:
+        if len(candidates) >= result_limit:
             break
-    capped = candidates[:ACTIVE_VISION_MAX_CANDIDATES]
+    capped = candidates[:result_limit]
     return (capped, errors) if include_errors else capped

@@ -159,5 +159,46 @@ class BackendAppRouteDependenciesTests(unittest.TestCase):
         self.assertTrue(callable(human_ops_deps.proposal_event_payload))
 
 
+class BackendAccessibilityIndexSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self) -> None:
+        task = backend_app._AX_INDEX_REFRESH_TASK
+        if task is not None and not task.done():
+            await task
+        backend_app._AX_INDEX_REFRESH_TASK = None
+
+    async def test_terminal_refresh_scheduler_deduplicates_an_active_update(self) -> None:
+        release = asyncio.Event()
+
+        async def refresh() -> dict[str, int]:
+            await release.wait()
+            return {"updated_count": 1}
+
+        backend_app._AX_INDEX_REFRESH_TASK = None
+        with (
+            mock.patch.object(
+                backend_app,
+                "_normalize_private_config",
+                return_value={"human_ops": {"accessibility": True}},
+            ),
+            mock.patch.object(backend_app, "_refresh_accessibility_index", side_effect=refresh) as refresh_mock,
+        ):
+            self.assertTrue(backend_app._schedule_accessibility_index_refresh())
+            self.assertFalse(backend_app._schedule_accessibility_index_refresh())
+            release.set()
+            await backend_app._AX_INDEX_REFRESH_TASK
+
+        refresh_mock.assert_awaited_once_with()
+
+    async def test_terminal_refresh_scheduler_respects_disabled_accessibility(self) -> None:
+        backend_app._AX_INDEX_REFRESH_TASK = None
+        with mock.patch.object(
+            backend_app,
+            "_normalize_private_config",
+            return_value={"human_ops": {"accessibility": False}},
+        ):
+            self.assertFalse(backend_app._schedule_accessibility_index_refresh())
+        self.assertIsNone(backend_app._AX_INDEX_REFRESH_TASK)
+
+
 if __name__ == "__main__":
     unittest.main()

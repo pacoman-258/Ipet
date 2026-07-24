@@ -13,6 +13,7 @@ from backend.settings_assets import (
     SETTINGS_FORM_JS_ASSET,
     SETTINGS_HTML_ASSET,
     SETTINGS_JS_ASSET,
+    SETTINGS_LIVE2D_JS_ASSET,
     SETTINGS_MODEL_PICKER_JS_ASSET,
     SettingsAsset,
     settings_asset_response,
@@ -62,6 +63,12 @@ class BackendSettingsAssetsTests(unittest.TestCase):
                 "settings_model_picker.js",
                 "application/javascript",
                 "settings_model_picker.js not found.",
+            ),
+            (
+                SETTINGS_LIVE2D_JS_ASSET,
+                "settings_live2d.js",
+                "application/javascript",
+                "settings_live2d.js not found.",
             ),
         )
         for asset, name, media_type, missing_detail in expected:

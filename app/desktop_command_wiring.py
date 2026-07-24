@@ -31,6 +31,8 @@ class DesktopCommandRouterWiringDependencies:
     time_module: object
     os_module: object
     print_func: Callable[[str], None]
+    accessibility_index_status: Callable[[], dict] = lambda: {}
+    refresh_accessibility_index: Callable[[], dict] = lambda: {}
     pick_directory_func: Callable[..., str] | None = None
     pick_image_file_func: Callable[..., object] | None = None
 
@@ -78,6 +80,8 @@ def create_desktop_command_router(
         hide_window_for_desktop_click=deps.hide_window_for_desktop_click,
         restore_window_after_desktop_click=deps.restore_window_after_desktop_click,
         capture_active_vision_frame_payload=deps.capture_active_vision_frame_payload,
+        accessibility_index_status=deps.accessibility_index_status,
+        refresh_accessibility_index=deps.refresh_accessibility_index,
         sleep=deps.sleep,
         write_response_func=write_response_func,
         heartbeat_func=heartbeat_func,
