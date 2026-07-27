@@ -649,6 +649,7 @@ def _build_desktop_command_router_dependencies() -> DesktopCommandRouterWiringDe
         execute_human_ops_launch_app=execute_human_ops_launch_app,
         execute_human_ops_key_press=execute_human_ops_key_press,
         focus_macos_application=focus_macos_application,
+        restore_macos_application_focus=restore_macos_application_focus,
         execute_human_ops_native_approval=execute_human_ops_native_approval,
         hide_window_for_desktop_click=_hide_window_for_desktop_click,
         restore_window_after_desktop_click=_restore_window_after_desktop_click,

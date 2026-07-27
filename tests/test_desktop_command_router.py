@@ -228,6 +228,38 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0]["status"], "success")
         self.assertEqual(responses[0]["result"], {"frame": frame, "trace": frame["active_observation"]})
 
+    def test_active_vision_restores_previous_foreground_application(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        restorations = []
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "target_app": payload["target_app"],
+                "previous_frontmost_app": "Ipet",
+            },
+            restore_target_application=lambda result: restorations.append(result) or {},
+            capture_active_vision_frame_payload=lambda *_args: {
+                "active_observation": {"status": "ok", "actions": []}
+            },
+            write_response_func=lambda *_args: None,
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-restore",
+                "type": "active_vision_capture",
+                "payload": {"target_app": "Music"},
+            }
+        )
+
+        self.assertEqual(restorations[0]["previous_frontmost_app"], "Ipet")
+
     def test_accessibility_index_status_and_refresh_do_not_focus_an_app(self) -> None:
         module = _router_module()
         host = _FakeHost()
@@ -264,9 +296,9 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             ],
         )
 
-    def test_native_approval_only_focuses_ipet_after_rejection(self) -> None:
+    def test_native_approval_never_changes_ipet_window_focus(self) -> None:
         module = _router_module()
-        for approved, expected_focus_count in ((True, 0), (False, 1)):
+        for approved in (True, False):
             with self.subTest(approved=approved):
                 host = _FakeHost()
                 responses = []
@@ -285,8 +317,8 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
                 )
 
                 self.assertEqual(responses[0][0], "success")
-                self.assertEqual(host.raised, expected_focus_count)
-                self.assertEqual(host.activated, expected_focus_count)
+                self.assertEqual(host.raised, 0)
+                self.assertEqual(host.activated, 0)
 
     def test_action_notice_does_not_raise_ipet_window(self) -> None:
         module = _router_module()
@@ -386,8 +418,10 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
                 (queue_dir / f"{index:03d}.json").write_text(
                     json.dumps(
                         {
+                            "protocol": "ipet.desktop-command.v1",
                             "nonce": f"queued-{index}",
                             "type": "play_expression",
+                            "deadline_ns": 9_999_999_999_999_999_999,
                             "payload": {"name": f"face-{index}"},
                         }
                     ),
@@ -436,8 +470,10 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             (queue_dir / "001.json").write_text(
                 json.dumps(
                     {
+                        "protocol": "ipet.desktop-command.v1",
                         "nonce": "queued-status",
                         "type": "accessibility_index_status",
+                        "deadline_ns": 9_999_999_999_999_999_999,
                         "payload": {},
                     }
                 ),
@@ -478,6 +514,7 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             queued_path.write_text(
                 json.dumps(
                     {
+                        "protocol": "ipet.desktop-command.v1",
                         "nonce": "expired-1",
                         "type": "human_ops_click",
                         "deadline_ns": 100,
@@ -510,6 +547,173 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             responses,
             [("error", {"error": "desktop command expired before dispatch"})],
         )
+
+    def test_action_rechecks_deadline_after_focus_before_click(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        now = {"value": 100}
+        clicks = []
+        restorations = []
+        responses = []
+
+        def focus(payload):
+            now["value"] = 250
+            return {
+                "focused": True,
+                "target_app": payload["target_app"],
+                "previous_frontmost_app": "Ipet",
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=focus,
+            restore_target_application=lambda result: restorations.append(result) or {},
+            execute_human_ops_click=lambda payload: clicks.append(payload) or {},
+            write_response_func=lambda _command, status, result=None: responses.append(
+                (status, result)
+            ),
+            time_module=SimpleNamespace(time_ns=lambda: now["value"]),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "expires-during-focus",
+                "type": "human_ops_click",
+                "deadline_ns": 200,
+                "payload": {"target_app": "QQ", "x": 10, "y": 20},
+            }
+        )
+
+        self.assertEqual(clicks, [])
+        self.assertEqual(restorations[0]["previous_frontmost_app"], "Ipet")
+        self.assertEqual(responses[0][0], "error")
+        self.assertIn("expired before click", responses[0][1]["error"])
+
+    def test_poll_serializes_blocking_commands_off_poller(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        runners = []
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            for index in (1, 2):
+                (queue_dir / f"{index:03d}.json").write_text(
+                    json.dumps(
+                        {
+                            "protocol": "ipet.desktop-command.v1",
+                            "nonce": f"async-{index}",
+                            "type": "human_ops_click",
+                            "deadline_ns": 9_999_999_999_999_999_999,
+                            "payload": {
+                                "target_app": "QQ",
+                                "x": index,
+                                "y": index,
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                background_runner=lambda task: runners.append(task),
+                focus_target_application=lambda payload: {
+                    "focused": True,
+                    "target_app": payload["target_app"],
+                },
+                execute_human_ops_click=lambda payload: calls.append(payload["x"]) or {},
+                write_response_func=lambda *_args: None,
+            )
+            host._desktop_command_mtime = None
+
+            router.on_desktop_command_poll()
+
+            self.assertEqual(calls, [])
+            self.assertEqual(len(runners), 1)
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
+            runners[0]()
+
+        self.assertEqual(calls, [1, 2])
+
+    def test_poll_rejects_unversioned_queue_command(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            (queue_dir / "001.json").write_text(
+                json.dumps(
+                    {
+                        "nonce": "unversioned",
+                        "type": "human_ops_click",
+                        "payload": {"target_app": "Music"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                write_response_func=lambda _command, _status, result=None: responses.append(
+                    (result or {}).get("error")
+                ),
+            )
+            host._desktop_command_mtime = None
+            router.on_desktop_command_poll()
+
+        self.assertEqual(
+            responses,
+            ["unsupported or missing desktop command protocol"],
+        )
+
+    def test_seen_nonce_window_rejects_nonconsecutive_replay(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        dispatched = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                dispatch_func=lambda command: dispatched.append(command["nonce"]),
+            )
+            for nonce in ("A", "B", "A"):
+                command_path.write_text(
+                    json.dumps(
+                        {
+                            "nonce": nonce,
+                            "type": "play_expression",
+                            "payload": {"name": "smile"},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                router._process_desktop_command_path(
+                    command_path,
+                    remove_after=False,
+                )
+
+        self.assertEqual(dispatched, ["A", "B"])
 
     def test_response_writer_preserves_shape_and_custom_path(self) -> None:
         module = _router_module()

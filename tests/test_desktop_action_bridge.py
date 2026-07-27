@@ -54,6 +54,11 @@ class DesktopActionBridgeTests(unittest.TestCase):
         type_result = bridge.execute_human_ops_type_text({"text": "hi"}, platform_name="darwin", runner=runner)
         launch_result = bridge.execute_human_ops_launch_app({"app": "WeChat"}, platform_name="darwin", runner=runner)
         key_result = bridge.execute_human_ops_key_press({"key": "enter"}, platform_name="darwin", runner=runner)
+        bridge.restore_macos_application_focus(
+            {"target_app": "WeChat"},
+            platform_name="darwin",
+            runner=runner,
+        )
 
         self.assertEqual(click_result, {"clicked": True})
         self.assertEqual(type_result, {"typed": True})
@@ -79,6 +84,11 @@ class DesktopActionBridgeTests(unittest.TestCase):
         )
         desktop_actions.execute_human_ops_key_press.assert_called_once_with(
             {"key": "enter"},
+            platform_name="darwin",
+            runner=runner,
+        )
+        desktop_actions.restore_macos_application_focus.assert_called_once_with(
+            {"target_app": "WeChat"},
             platform_name="darwin",
             runner=runner,
         )

@@ -97,6 +97,19 @@ class DesktopActionBridge:
             runner=runner,
         )
 
+    def restore_macos_application_focus(
+        self,
+        focus_result: dict | None,
+        *,
+        platform_name: str | None = None,
+        runner=subprocess.run,
+    ) -> dict[str, object]:
+        return self.desktop_actions_module.restore_macos_application_focus(
+            focus_result,
+            platform_name=platform_name,
+            runner=runner,
+        )
+
     def execute_human_ops_native_approval(
         self,
         payload: dict | None,

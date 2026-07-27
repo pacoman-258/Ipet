@@ -348,6 +348,20 @@ def frontmost_macos_application(*, runner=subprocess.run) -> str:
     return str(getattr(result, "stdout", "") or "").strip()
 
 
+def _application_names_match(left: object, right: object) -> bool:
+    left_key = _application_name_key(left)
+    right_key = _application_name_key(right)
+    return bool(
+        left_key
+        and right_key
+        and (
+            left_key == right_key
+            or left_key in right_key
+            or right_key in left_key
+        )
+    )
+
+
 def focus_macos_application(
     payload: dict | None,
     *,
@@ -365,6 +379,8 @@ def focus_macos_application(
         raise RuntimeError("Human Ops action requires target_app before changing application focus.")
     ax_profile = _macos_accessibility.resolve_macos_ax_app(target_app)
     launch_name = str(ax_profile.get("launch_name") or ax_profile.get("display_name") or target_app).strip()
+    get_frontmost = frontmost_provider or (lambda: frontmost_macos_application(runner=runner))
+    previous_frontmost = str(get_frontmost() or "").strip()
     result = runner(
         ["/usr/bin/open", "-a", launch_name],
         capture_output=True,
@@ -375,7 +391,6 @@ def focus_macos_application(
     if getattr(result, "returncode", 1) != 0:
         detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "open failed").strip()
         raise RuntimeError(f"macOS could not focus {target_app}: {detail}")
-    get_frontmost = frontmost_provider or (lambda: frontmost_macos_application(runner=runner))
     deadline = time.monotonic() + max(0.2, float(timeout_sec))
     target_keys = {
         _application_name_key(value)
@@ -395,16 +410,71 @@ def focus_macos_application(
             target_key == frontmost_key or target_key in frontmost_key or frontmost_key in target_key
             for target_key in target_keys
         ):
-            return {
+            result = {
                 "focused": True,
                 "target_app": target_app,
                 "frontmost_app": last_frontmost,
                 "method": "launch_services",
             }
+            if (
+                previous_frontmost
+                and not _application_names_match(
+                    previous_frontmost,
+                    target_app,
+                )
+            ):
+                result["previous_frontmost_app"] = previous_frontmost
+            return result
         sleeper(0.08)
     raise RuntimeError(
         f"macOS foreground verification failed: expected {target_app}, got {last_frontmost or 'unknown'}"
     )
+
+
+def restore_macos_application_focus(
+    focus_result: dict | None,
+    *,
+    platform_name: str | None = None,
+    runner=subprocess.run,
+    frontmost_provider=None,
+) -> dict[str, object]:
+    if not _is_macos(platform_name):
+        return {"restored": False, "reason": "unsupported_platform"}
+    data = focus_result if isinstance(focus_result, dict) else {}
+    target_app = str(data.get("target_app") or "").strip()
+    previous_app = str(data.get("previous_frontmost_app") or "").strip()
+    if not target_app or not previous_app:
+        return {"restored": False, "reason": "no_previous_application"}
+    get_frontmost = frontmost_provider or (
+        lambda: frontmost_macos_application(runner=runner)
+    )
+    current_app = str(get_frontmost() or "").strip()
+    if not _application_names_match(current_app, target_app):
+        return {
+            "restored": False,
+            "reason": "foreground_changed_by_user",
+            "frontmost_app": current_app,
+        }
+    profile = _macos_accessibility.resolve_macos_ax_app(previous_app)
+    launch_name = str(
+        profile.get("launch_name")
+        or profile.get("display_name")
+        or previous_app
+    ).strip()
+    result = runner(
+        ["/usr/bin/open", "-a", launch_name],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    restored = getattr(result, "returncode", 1) == 0
+    return {
+        "restored": restored,
+        "reason": "restored" if restored else "activation_failed",
+        "target_app": previous_app,
+        "method": "launch_services" if restored else "",
+    }
 
 
 def execute_human_ops_native_approval(

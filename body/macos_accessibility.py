@@ -27,6 +27,8 @@ AX_FULL_TREE_MAX_ELEMENTS = 20_000
 AX_FULL_TREE_MAX_DEPTH = 64
 AX_FULL_TREE_TIMEOUT_SEC = 15.0
 AX_BACKGROUND_REFRESH_TIMEOUT_SEC = 5.0
+AX_NATIVE_FOREGROUND_WAIT_TIMEOUT_SEC = 16.0
+AX_NATIVE_BACKGROUND_WAIT_TIMEOUT_SEC = 5.0
 AX_REFRESH_MAX_APPS = 128
 AX_SELF_PROCESS_REASON = "Ipet refuses to inspect or modify its own Accessibility process tree"
 _AX_INDEX_REFRESH_LOCK = Lock()
@@ -41,11 +43,23 @@ def _ax_native_operation(*, foreground: bool):
     with _AX_NATIVE_OPERATION_CONDITION:
         if foreground:
             _AX_NATIVE_FOREGROUND_WAITERS += 1
+        wait_timeout = (
+            AX_NATIVE_FOREGROUND_WAIT_TIMEOUT_SEC
+            if foreground
+            else AX_NATIVE_BACKGROUND_WAIT_TIMEOUT_SEC
+        )
+        wait_deadline = time.monotonic() + wait_timeout
         try:
             while _AX_NATIVE_OPERATION_ACTIVE or (
                 not foreground and _AX_NATIVE_FOREGROUND_WAITERS
             ):
-                _AX_NATIVE_OPERATION_CONDITION.wait()
+                remaining = wait_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "timed out waiting for serialized macOS "
+                        "Accessibility access"
+                    )
+                _AX_NATIVE_OPERATION_CONDITION.wait(timeout=remaining)
             _AX_NATIVE_OPERATION_ACTIVE = True
         except Exception:
             if foreground:

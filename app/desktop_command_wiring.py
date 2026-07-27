@@ -23,6 +23,7 @@ class DesktopCommandRouterWiringDependencies:
     execute_human_ops_launch_app: Callable[[dict | None], dict[str, object]]
     execute_human_ops_key_press: Callable[[dict | None], dict[str, object]]
     focus_macos_application: Callable[[dict | None], dict[str, object]]
+    restore_macos_application_focus: Callable[[dict | None], dict[str, object]]
     execute_human_ops_native_approval: Callable[[dict | None], dict[str, object]]
     hide_window_for_desktop_click: Callable[[object], bool]
     restore_window_after_desktop_click: Callable[[object, bool], None]
@@ -76,6 +77,7 @@ def create_desktop_command_router(
         execute_human_ops_launch_app=deps.execute_human_ops_launch_app,
         execute_human_ops_key_press=deps.execute_human_ops_key_press,
         focus_target_application=deps.focus_macos_application,
+        restore_target_application=deps.restore_macos_application_focus,
         execute_human_ops_native_approval=deps.execute_human_ops_native_approval,
         hide_window_for_desktop_click=deps.hide_window_for_desktop_click,
         restore_window_after_desktop_click=deps.restore_window_after_desktop_click,

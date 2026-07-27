@@ -44,6 +44,7 @@ class DesktopCommandWiringTests(unittest.TestCase):
             execute_human_ops_launch_app=lambda payload: {"launch": payload},
             execute_human_ops_key_press=lambda payload: {"key": payload},
             focus_macos_application=lambda payload: {"focus": payload},
+            restore_macos_application_focus=lambda focus: {"restore": focus},
             execute_human_ops_native_approval=lambda payload: {"approval": payload},
             hide_window_for_desktop_click=lambda host: True,
             restore_window_after_desktop_click=lambda host, was_hidden: None,
@@ -85,6 +86,10 @@ class DesktopCommandWiringTests(unittest.TestCase):
         self.assertIs(kwargs["execute_human_ops_launch_app"], deps.execute_human_ops_launch_app)
         self.assertIs(kwargs["execute_human_ops_key_press"], deps.execute_human_ops_key_press)
         self.assertIs(kwargs["focus_target_application"], deps.focus_macos_application)
+        self.assertIs(
+            kwargs["restore_target_application"],
+            deps.restore_macos_application_focus,
+        )
         self.assertIs(kwargs["execute_human_ops_native_approval"], deps.execute_human_ops_native_approval)
         self.assertIs(kwargs["hide_window_for_desktop_click"], deps.hide_window_for_desktop_click)
         self.assertIs(kwargs["restore_window_after_desktop_click"], deps.restore_window_after_desktop_click)
@@ -130,6 +135,7 @@ class DesktopCommandWiringTests(unittest.TestCase):
             execute_human_ops_launch_app=lambda payload: payload,
             execute_human_ops_key_press=lambda payload: payload,
             focus_macos_application=lambda payload: payload,
+            restore_macos_application_focus=lambda focus: focus,
             execute_human_ops_native_approval=lambda payload: payload,
             hide_window_for_desktop_click=lambda host: False,
             restore_window_after_desktop_click=lambda host, was_hidden: None,

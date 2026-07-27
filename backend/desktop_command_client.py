@@ -13,6 +13,7 @@ from human_ops import ReviewableProposal
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
+DESKTOP_COMMAND_PROTOCOL = "ipet.desktop-command.v1"
 
 
 def _desktop_command_queue_path(command_path: str | Path) -> Path:
@@ -39,6 +40,7 @@ async def send_desktop_command(
     command_payload = dict(payload or {})
     command_payload["response_path"] = str(response_path)
     command = {
+        "protocol": DESKTOP_COMMAND_PROTOCOL,
         "nonce": nonce,
         "type": str(command_type or "").strip(),
         "payload": command_payload,

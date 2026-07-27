@@ -203,7 +203,7 @@ class BackendRouteSplitTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json(), {"detail": "missing proposal"})
 
-    def test_native_human_ops_decision_uses_system_prompt_result(self) -> None:
+    def test_native_human_ops_decision_is_retired_without_prompting(self) -> None:
         proposal_id = "native-route-proposal"
         proposal = ReviewableProposal.act(
             action_type="click",
@@ -222,18 +222,16 @@ class BackendRouteSplitTests(unittest.TestCase):
                 "_request_native_human_ops_approval",
                 new=mock.AsyncMock(return_value={"approved": False, "method": "macos_dialog"}),
             ) as native_prompt:
-                with self.client.stream(
-                    "POST",
+                resp = self.client.post(
                     f"/api/human-ops/proposals/{proposal_id}/native-decision",
                     json={},
-                ) as resp:
-                    body = resp.read().decode("utf-8")
+                )
         finally:
             backend_app.HUMAN_OPS_PENDING_PROPOSALS.pop(proposal_id, None)
 
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn('"approved": false', body)
-        native_prompt.assert_awaited_once_with(proposal)
+        self.assertEqual(resp.status_code, 410)
+        self.assertIn("Native approval is retired", resp.json()["detail"])
+        native_prompt.assert_not_awaited()
 
     def test_final_split_routes_resolve_app_dependencies_per_request(self) -> None:
         with (

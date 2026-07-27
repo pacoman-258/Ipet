@@ -8,6 +8,24 @@ from pathlib import Path
 from typing import Callable
 
 
+DESKTOP_COMMAND_PROTOCOL = "ipet.desktop-command.v1"
+_BACKGROUND_COMMAND_TYPES = frozenset(
+    {
+        "active_vision_capture",
+        "human_ops_click",
+        "human_ops_key_press",
+        "human_ops_launch_app",
+        "human_ops_native_approval",
+        "human_ops_type_text",
+    }
+)
+_SEEN_NONCE_LIMIT = 256
+
+
+class DesktopCommandExpired(RuntimeError):
+    pass
+
+
 def _identity_model_path(value: str) -> str:
     return value
 
@@ -60,6 +78,7 @@ class DesktopCommandRouter:
         execute_human_ops_launch_app: Callable[[dict], dict[str, object]] = _not_configured_action,
         execute_human_ops_key_press: Callable[[dict], dict[str, object]] = _not_configured_action,
         focus_target_application: Callable[[dict], dict[str, object]] = _not_configured_action,
+        restore_target_application: Callable[[dict], dict[str, object]] = lambda _focus: {},
         execute_human_ops_native_approval: Callable[[dict], dict[str, object]] = _not_configured_action,
         hide_window_for_desktop_click: Callable[[object], bool] = lambda _host: False,
         restore_window_after_desktop_click: Callable[[object, bool], None] = lambda _host, _was_hidden: None,
@@ -91,6 +110,7 @@ class DesktopCommandRouter:
         self.execute_human_ops_launch_app = execute_human_ops_launch_app
         self.execute_human_ops_key_press = execute_human_ops_key_press
         self.focus_target_application = focus_target_application
+        self.restore_target_application = restore_target_application
         self.execute_human_ops_native_approval = execute_human_ops_native_approval
         self.hide_window_for_desktop_click = hide_window_for_desktop_click
         self.restore_window_after_desktop_click = restore_window_after_desktop_click
@@ -105,6 +125,9 @@ class DesktopCommandRouter:
         self.time_module = time_module
         self.os_module = os_module
         self.print_func = print_func
+        self._background_command_lock = threading.Lock()
+        self._background_commands: list[dict] = []
+        self._background_command_running = False
 
     def desktop_command_mtime_token(self):
         command_token = None
@@ -220,10 +243,11 @@ class DesktopCommandRouter:
         except Exception:
             queued_paths = []
         if queued_paths:
-            self._process_desktop_command_path(
-                queued_paths[0],
-                remove_after=True,
-            )
+            for queued_path in queued_paths:
+                self._process_desktop_command_path(
+                    queued_path,
+                    remove_after=True,
+                )
             return
         if queue_enabled:
             return
@@ -262,19 +286,52 @@ class DesktopCommandRouter:
                 except Exception:
                     pass
             return
-        if nonce == getattr(self.host, "_last_desktop_command_nonce", ""):
+        seen_nonces = getattr(self.host, "_desktop_command_seen_nonces", None)
+        if not isinstance(seen_nonces, list):
+            seen_nonces = []
+            previous_nonce = str(
+                getattr(self.host, "_last_desktop_command_nonce", "") or ""
+            ).strip()
+            if previous_nonce:
+                seen_nonces.append(previous_nonce)
+            setattr(self.host, "_desktop_command_seen_nonces", seen_nonces)
+        if nonce in seen_nonces:
             if remove_after:
                 try:
                     path.unlink()
                 except Exception:
                     pass
             return
-        setattr(self.host, "_last_desktop_command_nonce", nonce)
-        self.write_desktop_host_heartbeat()
+        if remove_after and command.get("protocol") != DESKTOP_COMMAND_PROTOCOL:
+            self.write_desktop_command_response(
+                command,
+                "error",
+                {"error": "unsupported or missing desktop command protocol"},
+            )
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            return
         try:
             deadline_ns = int(command.get("deadline_ns") or 0)
         except (TypeError, ValueError):
             deadline_ns = 0
+        if remove_after and deadline_ns <= 0:
+            self.write_desktop_command_response(
+                command,
+                "error",
+                {"error": "queued desktop command requires a valid deadline_ns"},
+            )
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            return
+        seen_nonces.append(nonce)
+        del seen_nonces[:-_SEEN_NONCE_LIMIT]
+        setattr(self.host, "_last_desktop_command_nonce", nonce)
+        self.write_desktop_host_heartbeat()
         try:
             if deadline_ns and self.time_module.time_ns() > deadline_ns:
                 self.write_desktop_command_response(
@@ -286,7 +343,23 @@ class DesktopCommandRouter:
             if self._dispatch_func is not None:
                 self._dispatch_func(command)
                 return
-            self.process_desktop_command(command)
+            command_type = str(command.get("type") or "").strip()
+            payload = (
+                command.get("payload")
+                if isinstance(command.get("payload"), dict)
+                else {}
+            )
+            should_run_in_background = (
+                command_type in _BACKGROUND_COMMAND_TYPES
+                and (
+                    command_type != "active_vision_capture"
+                    or bool(str(payload.get("target_app") or "").strip())
+                )
+            )
+            if should_run_in_background:
+                self._queue_background_command(command)
+            else:
+                self.process_desktop_command(command)
         finally:
             if remove_after:
                 try:
@@ -294,7 +367,74 @@ class DesktopCommandRouter:
                 except Exception:
                     pass
 
+    def _queue_background_command(self, command: dict) -> None:
+        should_start = False
+        with self._background_command_lock:
+            self._background_commands.append(command)
+            if not self._background_command_running:
+                self._background_command_running = True
+                should_start = True
+        if should_start:
+            try:
+                self.background_runner(self._drain_background_commands)
+            except Exception as exc:
+                with self._background_command_lock:
+                    failed_commands = list(self._background_commands)
+                    self._background_commands.clear()
+                    self._background_command_running = False
+                for failed_command in failed_commands:
+                    self.write_desktop_command_response(
+                        failed_command,
+                        "error",
+                        {
+                            "error": (
+                                "desktop command worker could not start: "
+                                f"{exc}"
+                            )
+                        },
+                    )
+
+    def _drain_background_commands(self) -> None:
+        while True:
+            with self._background_command_lock:
+                if not self._background_commands:
+                    self._background_command_running = False
+                    return
+                command = self._background_commands.pop(0)
+            try:
+                self.process_desktop_command(command)
+            except Exception as exc:
+                self.write_desktop_command_response(
+                    command,
+                    "error",
+                    {"error": f"desktop command worker failed: {exc}"},
+                )
+
+    def _require_fresh_command(
+        self,
+        command: dict,
+        *,
+        stage: str = "action",
+    ) -> None:
+        try:
+            deadline_ns = int(command.get("deadline_ns") or 0)
+        except (TypeError, ValueError):
+            deadline_ns = 0
+        if deadline_ns and self.time_module.time_ns() > deadline_ns:
+            raise DesktopCommandExpired(
+                f"desktop command expired before {stage}"
+            )
+
     def process_desktop_command(self, command: dict) -> None:
+        try:
+            self._require_fresh_command(command, stage="dispatch")
+        except DesktopCommandExpired as exc:
+            self.write_desktop_command_response(
+                command,
+                "error",
+                {"error": str(exc)},
+            )
+            return
         command_type = str(command.get("type") or "").strip()
         payload = command.get("payload", {})
         if not isinstance(payload, dict):
@@ -393,6 +533,7 @@ class DesktopCommandRouter:
     def _process_pick_directory(self, command: dict, payload: dict) -> None:
         start_dir = self.resolve_desktop_directory_seed(str(payload.get("start_dir") or ""))
         try:
+            self._require_fresh_command(command, stage="directory picker")
             self.host.raise_()
             self.host.activateWindow()
             selected = self.pick_directory_func(self.host, "选择目录", start_dir)
@@ -421,6 +562,7 @@ class DesktopCommandRouter:
         seed_path = self.resolve_background_image_path(start_path) if start_path else self.root_dir
         start_dir = str(seed_path.parent if seed_path.exists() and seed_path.is_file() else seed_path)
         try:
+            self._require_fresh_command(command, stage="image picker")
             self.host.raise_()
             self.host.activateWindow()
             selected, _ = self.pick_image_file_func(
@@ -450,26 +592,38 @@ class DesktopCommandRouter:
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_click(self, command: dict, payload: dict) -> None:
+        focus: dict[str, object] = {}
         try:
+            self._require_fresh_command(command, stage="application focus")
             focus = self.focus_target_application(payload)
+            self._require_fresh_command(command, stage="click")
             result = self.execute_human_ops_click(payload)
             self.write_desktop_command_response(command, "success", {**focus, **result})
         except Exception as exc:
+            if isinstance(exc, DesktopCommandExpired) and focus.get("focused") is True:
+                self._restore_focus_after_abort(focus)
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_type_text(self, command: dict, payload: dict) -> None:
+        focus: dict[str, object] = {}
         try:
+            self._require_fresh_command(command, stage="application focus")
             focus = self.focus_target_application(payload)
+            self._require_fresh_command(command, stage="text input")
             result = self.execute_human_ops_type_text(payload)
             self.write_desktop_command_response(command, "success", {**focus, **result})
         except Exception as exc:
+            if isinstance(exc, DesktopCommandExpired) and focus.get("focused") is True:
+                self._restore_focus_after_abort(focus)
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_launch_app(self, command: dict, payload: dict) -> None:
         try:
+            self._require_fresh_command(command, stage="application launch")
             result = self.execute_human_ops_launch_app(payload)
+            self._require_fresh_command(command, stage="application focus")
             focus = self.focus_target_application({**payload, "target_app": result.get("app") or payload.get("app")})
             self.write_desktop_command_response(command, "success", {**result, **focus})
         except Exception as exc:
@@ -477,33 +631,48 @@ class DesktopCommandRouter:
         self.write_desktop_host_heartbeat()
 
     def _process_human_ops_key_press(self, command: dict, payload: dict) -> None:
+        focus: dict[str, object] = {}
         try:
+            self._require_fresh_command(command, stage="application focus")
             focus = self.focus_target_application(payload)
+            self._require_fresh_command(command, stage="key press")
             result = self.execute_human_ops_key_press(payload)
             self.write_desktop_command_response(command, "success", {**focus, **result})
         except Exception as exc:
+            if isinstance(exc, DesktopCommandExpired) and focus.get("focused") is True:
+                self._restore_focus_after_abort(focus)
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
 
+    def _restore_focus_after_abort(self, focus: dict) -> None:
+        try:
+            self.restore_target_application(focus)
+        except Exception as exc:
+            self.print_func(f"恢复过期操作前台应用失败: {exc}")
+
     def _process_human_ops_native_approval(self, command: dict, payload: dict) -> None:
         try:
+            self._require_fresh_command(command, stage="native notification")
             result = self.execute_human_ops_native_approval(payload)
-            if payload.get("notice_only") is not True and not bool(result.get("approved")):
-                if hasattr(self.host, "show"):
-                    self.host.show()
-                if hasattr(self.host, "raise_"):
-                    self.host.raise_()
-                if hasattr(self.host, "activateWindow"):
-                    self.host.activateWindow()
             self.write_desktop_command_response(command, "success", result)
         except Exception as exc:
             self.write_desktop_command_response(command, "error", {"error": str(exc)})
         self.write_desktop_host_heartbeat()
 
     def _process_active_vision_capture(self, command: dict, payload: dict, config: dict) -> None:
+        focus: dict[str, object] = {}
         try:
             target_app = str(payload.get("target_app") or "").strip()
-            focus = self.focus_target_application(payload) if target_app else {}
+            if target_app:
+                self._require_fresh_command(
+                    command,
+                    stage="observation focus",
+                )
+                focus = self.focus_target_application(payload)
+            self._require_fresh_command(
+                command,
+                stage="screen observation",
+            )
             frame = self.capture_active_vision_frame_payload(self.host, payload, config.get("vision", {}))
             if focus and isinstance(frame, dict):
                 frame["focus_verification"] = focus
@@ -523,6 +692,12 @@ class DesktopCommandRouter:
                     },
                 },
             )
+        finally:
+            if focus.get("focused") is True:
+                try:
+                    self.restore_target_application(focus)
+                except Exception as exc:
+                    self.print_func(f"恢复观察前台应用失败: {exc}")
         self.write_desktop_host_heartbeat()
 
     def _process_accessibility_index_status(self, command: dict) -> None:

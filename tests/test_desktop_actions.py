@@ -316,7 +316,55 @@ class DesktopActionsModuleTests(unittest.TestCase):
 
         self.assertEqual(calls, [["/usr/bin/open", "-a", "Google Chrome"]])
         self.assertEqual(result["frontmost_app"], "Google Chrome")
+        self.assertEqual(result["previous_frontmost_app"], "Ipet")
         self.assertTrue(result["focused"])
+
+    def test_restore_focus_only_when_observed_target_is_still_frontmost(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        result = desktop_actions.restore_macos_application_focus(
+            {
+                "target_app": "WeChat",
+                "previous_frontmost_app": "Google Chrome",
+            },
+            platform_name="darwin",
+            runner=runner,
+            frontmost_provider=lambda: "WeChat",
+        )
+
+        self.assertTrue(result["restored"])
+        self.assertEqual(
+            calls,
+            [["/usr/bin/open", "-a", "Google Chrome"]],
+        )
+
+    def test_restore_focus_preserves_user_foreground_change(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        runner = mock.Mock()
+
+        result = desktop_actions.restore_macos_application_focus(
+            {
+                "target_app": "WeChat",
+                "previous_frontmost_app": "Google Chrome",
+            },
+            platform_name="darwin",
+            runner=runner,
+            frontmost_provider=lambda: "Finder",
+        )
+
+        self.assertFalse(result["restored"])
+        self.assertEqual(result["reason"], "foreground_changed_by_user")
+        runner.assert_not_called()
 
     def test_focus_macos_application_normalizes_localized_allowlisted_name(self) -> None:
         desktop_actions = _desktop_actions_module()

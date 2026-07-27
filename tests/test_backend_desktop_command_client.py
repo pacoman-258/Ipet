@@ -73,6 +73,10 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             await responder
 
             command = captured
+            self.assertEqual(
+                command["protocol"],
+                "ipet.desktop-command.v1",
+            )
             self.assertEqual(command["type"], "active_vision_capture")
             self.assertEqual(command["payload"]["mode"], "desktop_survey")
             self.assertEqual(command["payload"]["target"], "screen")
