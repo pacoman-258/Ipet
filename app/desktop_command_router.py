@@ -107,11 +107,34 @@ class DesktopCommandRouter:
         self.print_func = print_func
 
     def desktop_command_mtime_token(self):
+        command_token = None
         try:
             stat = self.command_path.stat()
         except Exception:
+            pass
+        else:
+            command_token = (stat.st_mtime_ns, stat.st_size)
+        queue_dir = self.command_path.with_name(
+            f"{self.command_path.stem}.queue"
+        )
+        queue_token = None
+        try:
+            queue_stat = queue_dir.stat()
+            queue_count = sum(
+                1
+                for path in queue_dir.iterdir()
+                if path.is_file() and path.suffix == ".json"
+            )
+            queue_token = (
+                queue_stat.st_mtime_ns,
+                queue_stat.st_size,
+                queue_count,
+            )
+        except Exception:
+            pass
+        if command_token is None and queue_token is None:
             return None
-        return (stat.st_mtime_ns, stat.st_size)
+        return (command_token, queue_token)
 
     def write_desktop_host_heartbeat(self) -> None:
         if self._heartbeat_func is not None:
@@ -184,23 +207,92 @@ class DesktopCommandRouter:
         if token is None or token == getattr(self.host, "_desktop_command_mtime", None):
             return
         setattr(self.host, "_desktop_command_mtime", token)
+        queue_dir = self.command_path.with_name(
+            f"{self.command_path.stem}.queue"
+        )
+        queue_enabled = queue_dir.is_dir()
         try:
-            command = json.loads(self.command_path.read_text(encoding="utf-8"))
+            queued_paths = sorted(
+                path
+                for path in queue_dir.iterdir()
+                if path.is_file() and path.suffix == ".json"
+            )
         except Exception:
+            queued_paths = []
+        if queued_paths:
+            self._process_desktop_command_path(
+                queued_paths[0],
+                remove_after=True,
+            )
+            return
+        if queue_enabled:
+            return
+        self._process_desktop_command_path(
+            self.command_path,
+            remove_after=False,
+        )
+
+    def _process_desktop_command_path(
+        self,
+        path: Path,
+        *,
+        remove_after: bool,
+    ) -> None:
+        try:
+            command = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            if remove_after:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
             return
         if not isinstance(command, dict):
+            if remove_after:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
             return
         nonce = str(command.get("nonce") or "").strip()
         if not nonce:
+            if remove_after:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
             return
         if nonce == getattr(self.host, "_last_desktop_command_nonce", ""):
+            if remove_after:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
             return
         setattr(self.host, "_last_desktop_command_nonce", nonce)
         self.write_desktop_host_heartbeat()
-        if self._dispatch_func is not None:
-            self._dispatch_func(command)
-            return
-        self.process_desktop_command(command)
+        try:
+            deadline_ns = int(command.get("deadline_ns") or 0)
+        except (TypeError, ValueError):
+            deadline_ns = 0
+        try:
+            if deadline_ns and self.time_module.time_ns() > deadline_ns:
+                self.write_desktop_command_response(
+                    command,
+                    "error",
+                    {"error": "desktop command expired before dispatch"},
+                )
+                return
+            if self._dispatch_func is not None:
+                self._dispatch_func(command)
+                return
+            self.process_desktop_command(command)
+        finally:
+            if remove_after:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
 
     def process_desktop_command(self, command: dict) -> None:
         command_type = str(command.get("type") or "").strip()

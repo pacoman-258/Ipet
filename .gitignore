@@ -32,6 +32,7 @@ data/skills/imported/
 # Local config and personal workspace files
 pet_config.json
 .pet_desktop_command.json
+.pet_desktop_command.queue/
 .pet_desktop_command.response.json
 .pet_desktop_command.response.*.json
 .pet_desktop_host.heartbeat.json

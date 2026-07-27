@@ -15,6 +15,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
 
 
+def _desktop_command_queue_path(command_path: str | Path) -> Path:
+    path = Path(command_path)
+    return path.with_name(f"{path.stem}.queue")
+
+
 def _coerce_int(value: Any, fallback: int = 0) -> int:
     try:
         return int(round(float(value)))
@@ -38,6 +43,8 @@ async def send_desktop_command(
         "type": str(command_type or "").strip(),
         "payload": command_payload,
         "timestamp_ns": time.time_ns(),
+        "deadline_ns": time.time_ns()
+        + int(max(0.2, float(timeout_sec)) * 1_000_000_000),
     }
     try:
         if response_path.exists():
@@ -45,32 +52,45 @@ async def send_desktop_command(
     except Exception:
         pass
     command_file = Path(command_path)
-    tmp_path = command_file.with_name(f"{command_file.name}.{nonce}.tmp")
+    queue_dir = _desktop_command_queue_path(command_file)
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    queue_file = queue_dir / (
+        f"{int(command['timestamp_ns']):020d}-{nonce}.json"
+    )
+    tmp_path = queue_file.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(command, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(command_file)
+    tmp_path.replace(queue_file)
 
     deadline = time.monotonic() + max(0.2, float(timeout_sec))
-    while time.monotonic() < deadline:
-        if response_path.exists():
-            try:
-                response = json.loads(response_path.read_text(encoding="utf-8"))
-            except Exception:
-                await asyncio.sleep(0.05)
-                continue
-            try:
-                response_path.unlink()
-            except Exception:
-                pass
-            if str(response.get("nonce") or "") != nonce:
-                await asyncio.sleep(0.05)
-                continue
-            result = response.get("result") if isinstance(response.get("result"), dict) else {}
-            if response.get("ok") or response.get("status") == "success":
-                return result
-            detail = str(result.get("error") or response.get("status") or "desktop command failed")
-            raise RuntimeError(detail)
-        await asyncio.sleep(0.05)
-    raise TimeoutError(f"desktop command timed out: {command_type}")
+    try:
+        while time.monotonic() < deadline:
+            if response_path.exists():
+                try:
+                    response = json.loads(response_path.read_text(encoding="utf-8"))
+                except Exception:
+                    await asyncio.sleep(0.05)
+                    continue
+                try:
+                    response_path.unlink()
+                except Exception:
+                    pass
+                if str(response.get("nonce") or "") != nonce:
+                    await asyncio.sleep(0.05)
+                    continue
+                result = response.get("result") if isinstance(response.get("result"), dict) else {}
+                if response.get("ok") or response.get("status") == "success":
+                    return result
+                detail = str(result.get("error") or response.get("status") or "desktop command failed")
+                raise RuntimeError(detail)
+            await asyncio.sleep(0.05)
+        raise TimeoutError(f"desktop command timed out: {command_type}")
+    finally:
+        try:
+            queue_file.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
 
 async def perform_human_ops_click(

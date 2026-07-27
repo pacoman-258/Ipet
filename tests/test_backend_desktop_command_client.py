@@ -38,13 +38,17 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
         client = self._import_client()
         with tempfile.TemporaryDirectory() as temp_dir:
             command_path = Path(temp_dir) / ".pet_desktop_command.json"
+            queue_dir = client._desktop_command_queue_path(command_path)
+            captured: dict[str, Any] = {}
 
             async def respond() -> None:
                 for _ in range(50):
-                    if command_path.exists():
+                    queued = sorted(queue_dir.glob("*.json"))
+                    if queued:
                         break
                     await asyncio.sleep(0.01)
-                command = json.loads(command_path.read_text(encoding="utf-8"))
+                command = json.loads(queued[0].read_text(encoding="utf-8"))
+                captured.update(command)
                 response_path = Path(command["payload"]["response_path"])
                 response_path.write_text(
                     json.dumps(
@@ -68,25 +72,29 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             )
             await responder
 
-            command = json.loads(command_path.read_text(encoding="utf-8"))
+            command = captured
             self.assertEqual(command["type"], "active_vision_capture")
             self.assertEqual(command["payload"]["mode"], "desktop_survey")
             self.assertEqual(command["payload"]["target"], "screen")
             self.assertTrue(command["payload"]["response_path"].endswith(".response.json"))
             self.assertIsInstance(command["timestamp_ns"], int)
+            self.assertGreater(command["deadline_ns"], command["timestamp_ns"])
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
             self.assertEqual(result, {"frame": {"capture_backend": "test"}})
 
     async def test_send_desktop_command_ignores_nonce_mismatch_until_matching_response(self) -> None:
         client = self._import_client()
         with tempfile.TemporaryDirectory() as temp_dir:
             command_path = Path(temp_dir) / ".pet_desktop_command.json"
+            queue_dir = client._desktop_command_queue_path(command_path)
 
             async def respond() -> None:
                 for _ in range(50):
-                    if command_path.exists():
+                    queued = sorted(queue_dir.glob("*.json"))
+                    if queued:
                         break
                     await asyncio.sleep(0.01)
-                command = json.loads(command_path.read_text(encoding="utf-8"))
+                command = json.loads(queued[0].read_text(encoding="utf-8"))
                 response_path = Path(command["payload"]["response_path"])
                 response_path.write_text(
                     json.dumps(
@@ -127,6 +135,63 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             await responder
 
             self.assertEqual(result, {"matched": True})
+
+    async def test_concurrent_commands_use_distinct_queue_files_and_responses(self) -> None:
+        client = self._import_client()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            command_path = Path(temp_dir) / ".pet_desktop_command.json"
+            queue_dir = client._desktop_command_queue_path(command_path)
+            captured: list[dict[str, Any]] = []
+
+            async def respond() -> None:
+                for _ in range(100):
+                    queued = sorted(queue_dir.glob("*.json"))
+                    if len(queued) == 2:
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertEqual(len(queued), 2)
+                for queued_path in queued:
+                    command = json.loads(queued_path.read_text(encoding="utf-8"))
+                    captured.append(command)
+                    response_path = Path(command["payload"]["response_path"])
+                    response_path.write_text(
+                        json.dumps(
+                            {
+                                "nonce": command["nonce"],
+                                "status": "success",
+                                "ok": True,
+                                "result": {"command_type": command["type"]},
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+
+            responder = asyncio.create_task(respond())
+            first, second = await asyncio.gather(
+                client.send_desktop_command(
+                    "active_vision_capture",
+                    {"target": "QQ"},
+                    command_path=command_path,
+                    timeout_sec=2,
+                ),
+                client.send_desktop_command(
+                    "accessibility_query",
+                    {"target_app": "Music"},
+                    command_path=command_path,
+                    timeout_sec=2,
+                ),
+            )
+            await responder
+
+            self.assertEqual(
+                {item["type"] for item in captured},
+                {"active_vision_capture", "accessibility_query"},
+            )
+            self.assertEqual(len({item["nonce"] for item in captured}), 2)
+            self.assertEqual(first, {"command_type": "active_vision_capture"})
+            self.assertEqual(second, {"command_type": "accessibility_query"})
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
 
     async def test_perform_human_ops_action_preserves_click_type_and_key_shapes(self) -> None:
         client = self._import_client()

@@ -373,6 +373,144 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(host._last_desktop_command_nonce, "poll-1")
         self.assertIsNotNone(host._desktop_command_mtime)
 
+    def test_poll_drains_atomic_command_queue_without_overwrite(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        dispatched: list[dict] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            for index in (1, 2):
+                (queue_dir / f"{index:03d}.json").write_text(
+                    json.dumps(
+                        {
+                            "nonce": f"queued-{index}",
+                            "type": "play_expression",
+                            "payload": {"name": f"face-{index}"},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                dispatch_func=lambda command: dispatched.append(command),
+            )
+            host._desktop_command_mtime = None
+            host._last_desktop_command_nonce = ""
+
+            router.on_desktop_command_poll()
+            router.on_desktop_command_poll()
+
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
+
+        self.assertEqual(
+            [item["nonce"] for item in dispatched],
+            ["queued-1", "queued-2"],
+        )
+
+    def test_poll_does_not_replay_legacy_command_after_queue_drains(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        dispatched: list[dict] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            command_path.write_text(
+                json.dumps(
+                    {
+                        "nonce": "legacy-music",
+                        "type": "active_vision_capture",
+                        "payload": {"target_app": "音乐"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            (queue_dir / "001.json").write_text(
+                json.dumps(
+                    {
+                        "nonce": "queued-status",
+                        "type": "accessibility_index_status",
+                        "payload": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                dispatch_func=lambda command: dispatched.append(command),
+            )
+            host._desktop_command_mtime = None
+            host._last_desktop_command_nonce = ""
+
+            router.on_desktop_command_poll()
+            router.on_desktop_command_poll()
+
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
+
+        self.assertEqual(
+            [item["nonce"] for item in dispatched],
+            ["queued-status"],
+        )
+
+    def test_poll_rejects_expired_queue_command_before_dispatch(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        dispatched: list[dict] = []
+        responses: list[tuple[str, dict[str, object] | None]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            queued_path = queue_dir / "001.json"
+            queued_path.write_text(
+                json.dumps(
+                    {
+                        "nonce": "expired-1",
+                        "type": "human_ops_click",
+                        "deadline_ns": 100,
+                        "payload": {"target_app": "QQ"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                dispatch_func=lambda command: dispatched.append(command),
+                write_response_func=lambda _command, status, result=None: responses.append(
+                    (status, result)
+                ),
+                time_module=SimpleNamespace(time_ns=lambda: 200),
+            )
+            host._desktop_command_mtime = None
+            host._last_desktop_command_nonce = ""
+
+            router.on_desktop_command_poll()
+
+            self.assertFalse(queued_path.exists())
+
+        self.assertEqual(dispatched, [])
+        self.assertEqual(
+            responses,
+            [("error", {"error": "desktop command expired before dispatch"})],
+        )
+
     def test_response_writer_preserves_shape_and_custom_path(self) -> None:
         module = _router_module()
         host = _FakeHost()
