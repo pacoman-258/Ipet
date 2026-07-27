@@ -38,6 +38,7 @@ class DesktopServiceLifecycle:
         sys_module: ModuleType = sys,
         print_func: Callable[..., None] = print,
         is_backend_healthy: Callable[[str], bool] | None = None,
+        is_backend_authorized: Callable[[str], bool] | None = None,
         is_backend_live: Callable[[str], bool] | None = None,
         is_asr_healthy: Callable[[str], bool] | None = None,
         is_local_service_url: Callable[[str], bool] | None = None,
@@ -63,6 +64,7 @@ class DesktopServiceLifecycle:
         self.sys = sys_module
         self.print = print_func
         self.is_backend_healthy = is_backend_healthy or _desktop_runtime.is_backend_healthy
+        self.is_backend_authorized = is_backend_authorized or self._backend_accepts_local_token
         self.is_backend_live = is_backend_live or _desktop_runtime.is_backend_live
         self.is_asr_healthy = is_asr_healthy or _desktop_runtime.is_asr_healthy
         self.is_local_service_url = is_local_service_url or _desktop_runtime.is_local_service_url
@@ -113,12 +115,16 @@ class DesktopServiceLifecycle:
                     lock_file.seek(0)
                     lock_file.write("0")
                     lock_file.flush()
+                    start_time = self.time.monotonic() if hasattr(self.time, "monotonic") else self.time.time()
                     while True:
                         try:
                             msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                             lock_kind = "msvcrt"
                             break
                         except OSError:
+                            now = self.time.monotonic() if hasattr(self.time, "monotonic") else self.time.time()
+                            if now - start_time >= 5.0:
+                                break
                             self.time.sleep(0.05)
                 except ImportError:
                     pass
@@ -163,11 +169,29 @@ class DesktopServiceLifecycle:
         with self._service_start_guard("backend"):
             self._ensure_backend_service()
 
+    def _backend_accepts_local_token(self, backend_url: str) -> bool:
+        """Return whether a local backend belongs to this desktop process."""
+        try:
+            response = self.requests.get(
+                f"{str(backend_url).rstrip('/')}/api/vision/context",
+                params={"include_image": "false", "lane": "active"},
+                headers={"X-Ipet-Local-Token": self.local_api_token},
+                timeout=0.75,
+            )
+        except Exception:
+            return False
+        return 200 <= int(getattr(response, "status_code", 0) or 0) < 300
+
+    def _backend_can_be_reused(self, backend_url: str) -> bool:
+        if not self.is_local_service_url(backend_url):
+            return True
+        return bool(self.is_backend_authorized(backend_url))
+
     def _ensure_backend_service(self) -> None:
         chat_cfg = self.config.get("chat", {})
         backend_url = str(chat_cfg.get("backend_url", self.default_backend_url)).strip() or self.default_backend_url
         self.config.setdefault("chat", {})["backend_url"] = backend_url
-        if self.is_backend_healthy(backend_url):
+        if self.is_backend_healthy(backend_url) and self._backend_can_be_reused(backend_url):
             return
 
         if self.is_local_service_url(backend_url):
@@ -175,7 +199,7 @@ class DesktopServiceLifecycle:
             if launch_url != backend_url:
                 self.config.setdefault("chat", {})["backend_url"] = launch_url
                 backend_url = launch_url
-            if self.is_backend_healthy(backend_url):
+            if self.is_backend_healthy(backend_url) and self._backend_can_be_reused(backend_url):
                 return
 
         host, port = self.parse_service_host_port(backend_url, default_port=8008)

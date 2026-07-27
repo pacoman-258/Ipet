@@ -458,7 +458,7 @@ class IpetMemoryStore:
                 "created_at": updated_at,
                 "updated_at": updated_at,
             }
-            path.write_text(self._memory_markdown(record), encoding="utf-8")
+            self._write_file_atomic(path, self._memory_markdown(record))
             superseded_id = record["supersedes_id"]
             if superseded_id and superseded_id != memory_id and self.get_memory(superseded_id) is not None:
                 self.update_memory(superseded_id, status="superseded")
@@ -525,7 +525,7 @@ class IpetMemoryStore:
             except (TypeError, ValueError):
                 updated["retention_days"] = int(record.get("retention_days") or 365)
             updated["updated_at"] = now_text()
-            Path(record["path"]).write_text(self._memory_markdown(updated), encoding="utf-8")
+            self._write_file_atomic(Path(record["path"]), self._memory_markdown(updated))
             self._write_index()
             return updated
 
@@ -734,6 +734,14 @@ class IpetMemoryStore:
             "updated_at": updated_at,
         }
 
+    @staticmethod
+    def _write_file_atomic(path: Path, content: str) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{hashlib.md5(content.encode('utf-8')).hexdigest()[:8]}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(target)
+
     def _write_index(self) -> None:
         self.root_dir.mkdir(parents=True, exist_ok=True)
         records = self._records()
@@ -748,7 +756,7 @@ class IpetMemoryStore:
             status_suffix = "" if status == "active" else f" ({status})"
             lines.append(f"- [{record['title']}]({rel_path.as_posix()}){suffix}{status_suffix}")
             lines.append(f"  - {record['summary']}")
-        self.index_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        self._write_file_atomic(self.index_path, "\n".join(lines).rstrip() + "\n")
 
     def _records(self) -> list[dict[str, Any]]:
         if not self.memories_dir.exists():

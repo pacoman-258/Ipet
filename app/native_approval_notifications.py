@@ -139,14 +139,25 @@ class NativeApprovalNotificationController:
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:
+        def close_streams() -> None:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
         if process.poll() is not None:
+            close_streams()
             return
         try:
             process.terminate()
         except OSError:
+            close_streams()
             return
         try:
             process.wait(timeout=2)
+            close_streams()
             return
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -155,6 +166,8 @@ class NativeApprovalNotificationController:
             process.wait(timeout=2)
         except (OSError, subprocess.TimeoutExpired):
             pass
+        finally:
+            close_streams()
 
     def stop_all(self) -> None:
         with self._state_lock:

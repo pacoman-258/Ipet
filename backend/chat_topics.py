@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -152,22 +152,28 @@ class TopicStore:
         path = self.meta_path(topic_id)
         if not path.exists():
             return None
-        try:
-            data = json.loads(_read_utf8_text(path))
-        except Exception:
-            return None
-        if not isinstance(data, dict):
-            return None
-        for key, value in TOPIC_META_DEFAULTS.items():
-            data.setdefault(key, value)
-        return data
+        with self._lock:
+            try:
+                data = json.loads(_read_utf8_text(path))
+            except Exception:
+                return None
+            if not isinstance(data, dict):
+                return None
+            for key, value in TOPIC_META_DEFAULTS.items():
+                data.setdefault(key, value)
+            return data
 
     def load_full_messages(self, topic_id: str) -> list[dict[str, Any]]:
         path = self.full_path(topic_id)
         if not path.exists():
             return []
+        with self._lock:
+            try:
+                raw_text = _read_utf8_text(path)
+            except Exception:
+                return []
         messages: list[dict[str, Any]] = []
-        for raw_line in _read_utf8_text(path).splitlines():
+        for raw_line in raw_text.splitlines():
             if not raw_line.strip():
                 continue
             try:
@@ -198,14 +204,15 @@ class TopicStore:
                 "updated_at": _now_text(),
                 "blocks": [],
             }
-        try:
-            data = json.loads(_read_utf8_text(path))
-        except Exception:
-            return {
-                "topic_id": normalize_topic_id(topic_id),
-                "updated_at": _now_text(),
-                "blocks": [],
-            }
+        with self._lock:
+            try:
+                data = json.loads(_read_utf8_text(path))
+            except Exception:
+                return {
+                    "topic_id": normalize_topic_id(topic_id),
+                    "updated_at": _now_text(),
+                    "blocks": [],
+                }
         if not isinstance(data, dict):
             return {
                 "topic_id": normalize_topic_id(topic_id),
@@ -229,8 +236,10 @@ class TopicStore:
     def list_topics(self) -> list[dict[str, Any]]:
         if not self.root_dir.exists():
             return []
+        with self._lock:
+            topic_dirs = tuple(self.root_dir.iterdir())
         topics: list[dict[str, Any]] = []
-        for topic_dir in self.root_dir.iterdir():
+        for topic_dir in topic_dirs:
             if not topic_dir.is_dir():
                 continue
             meta = self.load_meta(topic_dir.name)
@@ -670,11 +679,16 @@ class TopicStore:
     def _write_jsonl(self, path: Path, payloads: list[dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         content = "".join(json.dumps(payload, ensure_ascii=False) + "\n" for payload in payloads)
-        path.write_text(content, encoding="utf-8")
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
 
     def _invalidate_context_snapshot_cache(self, topic_id: str) -> None:
         self._context_snapshot_cache.pop(normalize_topic_id(topic_id), None)
