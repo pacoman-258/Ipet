@@ -37,12 +37,20 @@ def load_qt_screen_capture_dependencies() -> QtScreenCaptureDependencies:
     if _QT_DEPS is not None:
         return _QT_DEPS
 
-    try:
-        from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
-        from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
-    except ImportError:
-        from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt
-        from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+    if _desktop_runtime.prefer_pyqt_bindings(sys_platform=sys.platform):
+        try:
+            from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+            from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+        except ImportError:
+            from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+            from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+    else:
+        try:
+            from PySide6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+            from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+        except ImportError:
+            from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+            from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
 
     _QT_DEPS = QtScreenCaptureDependencies(
         q_byte_array=QByteArray,

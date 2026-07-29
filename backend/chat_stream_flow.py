@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from brain.decisions import BrainDecision, DecisionKind
 from brain.llm import ENDPOINTLESS_PROVIDERS, BrainLLMError
+from human_ops.approval_flow import near_match_confirmation_decision
 from human_ops.authorization import AUTHORIZATION_MODE_FULL, full_authorization_enabled
 
 from .task_control import TASK_CONTROL
@@ -432,7 +433,11 @@ async def stream_chat_response(
                 deps.mark_memory_recalled(memory_id, str(reply or decision.summary))
             except Exception:
                 continue
-    react_budget = 3
+    try:
+        configured_react_budget = int(request_payload.get("max_reasoning_steps", 3))
+    except (TypeError, ValueError):
+        configured_react_budget = 3
+    react_budget = max(1, min(20, configured_react_budget))
     correction_used = False
     react_trace: list[dict[str, Any]] = []
     last_observation: dict[str, Any] | None = None
@@ -535,6 +540,7 @@ async def stream_chat_response(
             )
             if proposal_id in deps.pending_proposals:
                 deps.pending_proposals[proposal_id]["task_id"] = turn_id
+                deps.pending_proposals[proposal_id]["react_budget_remaining"] = react_budget
             if full_authorization_enabled(human_ops_config) and deps.stream_authorized_proposal is not None:
                 if proposal_id in deps.pending_proposals:
                     deps.pending_proposals[proposal_id]["authorization_mode"] = AUTHORIZATION_MODE_FULL
@@ -620,6 +626,14 @@ async def stream_chat_response(
                     "unknowns": [str(exc)],
                 }
             last_observation = observation
+            confirmation = near_match_confirmation_decision(
+                observation,
+                text,
+            )
+            if confirmation is not None:
+                decision = confirmation
+                reply = confirmation.summary
+                break
             observation_frame = observation.get("frame") if isinstance(observation.get("frame"), dict) else {}
             brain_observed_image = str(observation.get("analysis_route") or "") == "brain"
             brain_image_data_url = (

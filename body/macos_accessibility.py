@@ -1153,6 +1153,18 @@ class _AXRuntime:
         if error != 0:
             raise RuntimeError(f"macOS Accessibility could not set {name}; AXError {error}.")
 
+    def set_string_attribute(self, element: object, name: str, value: str) -> None:
+        attribute = self._pointer(self._cf_string(name))
+        if not self.attribute_settable(element, name):
+            raise RuntimeError(f"macOS Accessibility attribute {name} is not settable.")
+        error = self.ax.AXUIElementSetAttributeValue(
+            self._pointer(element),
+            attribute,
+            self._pointer(self._cf_string(str(value))),
+        )
+        if error != 0:
+            raise RuntimeError(f"macOS Accessibility could not set {name}; AXError {error}.")
+
     def enable_manual_accessibility(self, application: object) -> bool:
         """Ask Chromium/Electron apps to expose their web accessibility tree."""
         boolean = ctypes.c_void_p.in_dll(self.core, "kCFBooleanTrue").value
@@ -1519,22 +1531,36 @@ def _capture_tree(
     queue: deque[tuple[int, tuple[int, ...], tuple[dict[str, Any], ...]]] = deque(
         [(root, (), ())]
     )
+    deferred_menu_queue: deque[
+        tuple[int, tuple[int, ...], tuple[dict[str, Any], ...]]
+    ] = deque()
     elements: list[dict[str, Any]] = []
     visited = 0
     truncated = False
     deadline = time.monotonic() + max(0.25, float(timeout_sec))
     try:
-        while queue and visited < max_elements and time.monotonic() < deadline:
+        while (
+            (queue or deferred_menu_queue)
+            and visited < max_elements
+            and time.monotonic() < deadline
+        ):
+            if not queue:
+                queue, deferred_menu_queue = deferred_menu_queue, queue
             element, path, ancestors = queue.popleft()
             node = _read_node(runtime, element, profile, path=path, ancestors=ancestors)
             visited += 1
-            if _should_include_node(node):
-                elements.append(_serializable_node(node))
             if len(path) >= max_depth:
                 depth_children, depth_truncated = runtime.children(
                     element,
                     limit=1,
                 )
+                node["children_count"] = len(depth_children)
+                node["children_complete"] = not (
+                    depth_children or depth_truncated
+                )
+                node["enqueued_child_count"] = 0
+                if _should_include_node(node):
+                    elements.append(_serializable_node(node))
                 if depth_children or depth_truncated:
                     truncated = True
                 for child in depth_children:
@@ -1550,10 +1576,25 @@ def _capture_tree(
                 and node.get("bounds")
             ):
                 signature["bounds"] = dict(node["bounds"])
-            remaining = max(0, max_elements - visited - len(queue))
+            remaining = max(
+                0,
+                max_elements
+                - visited
+                - len(queue)
+                - len(deferred_menu_queue),
+            )
             children, children_truncated = runtime.children(element, limit=remaining)
+            node["children_count"] = len(children)
+            node["children_complete"] = not children_truncated
             truncated = truncated or children_truncated
             next_ancestors = (*ancestors, signature)
+            child_queue = (
+                deferred_menu_queue
+                if signature["role"]
+                in {"AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem"}
+                else queue
+            )
+            enqueued_child_count = 0
             for index, child in enumerate(children):
                 child_identity = element_identity(child)
                 if child_identity is not None:
@@ -1565,8 +1606,17 @@ def _capture_tree(
                         continue
                     discovered.setdefault(child_identity, []).append(child)
                 owned_elements.append(child)
-                queue.append((child, (*path, index), next_ancestors))
-        if queue or visited >= max_elements or time.monotonic() >= deadline:
+                child_queue.append((child, (*path, index), next_ancestors))
+                enqueued_child_count += 1
+            node["enqueued_child_count"] = enqueued_child_count
+            if _should_include_node(node):
+                elements.append(_serializable_node(node))
+        if (
+            queue
+            or deferred_menu_queue
+            or visited >= max_elements
+            or time.monotonic() >= deadline
+        ):
             truncated = True
     finally:
         for element in reversed(owned_elements):
@@ -2773,6 +2823,10 @@ def _verify_live_descendant_identity(
         element,
     )
     live_labels.update(descendant_labels)
+    live_urls = set(descendant_urls)
+    node_url = _clean_text(node.get("url"), max_length=600)
+    if node_url:
+        live_urls.add(node_url)
     expected_key = _app_key(expected_label)
     if expected_label and (
         not expected_key
@@ -2786,7 +2840,7 @@ def _verify_live_descendant_identity(
         raise RuntimeError(
             "The approved AX target no longer contains the reviewed descendant label."
         )
-    if expected_url and expected_url not in descendant_urls:
+    if expected_url and expected_url not in live_urls:
         raise RuntimeError(
             "The approved AX target no longer contains the reviewed file URL."
         )
@@ -2948,6 +3002,7 @@ def perform_macos_accessibility_action(
     ax_ref: object,
     *,
     operation: str = "press",
+    value: object = "",
     platform_name: str | None = None,
     runner=subprocess.run,
     runtime_factory=_AXRuntime,
@@ -3071,6 +3126,29 @@ def perform_macos_accessibility_action(
                 geometry_clicker=geometry_clicker,
                 sleeper=sleeper,
             )
+        elif normalized_operation == "set_value":
+            if role not in _EDITABLE_ROLES:
+                raise RuntimeError("The approved AX target is not an editable element.")
+            if node.get("protected"):
+                raise RuntimeError(
+                    "Protected text cannot be replaced through macOS Accessibility."
+                )
+            _focus_editable_element(
+                runtime,
+                application,
+                element,
+                node,
+                reference,
+                geometry_clicker=geometry_clicker,
+                sleeper=sleeper,
+            )
+            expected_value = str(value if value is not None else "")
+            runtime.set_string_attribute(element, "AXValue", expected_value)
+            # AXUIElementSetAttributeValue is asynchronous in Chromium/Electron.
+            # Once macOS accepts the mutation, do not report it as unsupported:
+            # the caller performs a bounded live-value verification, and a
+            # keyboard fallback here could deliver the same text twice.
+            ax_action = "AXValueSet"
         elif activation == "open":
             if "AXOpen" not in actions:
                 raise RuntimeError(
@@ -3128,6 +3206,8 @@ def perform_macos_accessibility_action(
             "target_pid": pid,
             "method": "macos_accessibility",
         }
+        if ax_action == "AXValueSet":
+            result["input_value_set"] = True
         if ax_action == "AXGeometryHitTest":
             result.update(
                 {

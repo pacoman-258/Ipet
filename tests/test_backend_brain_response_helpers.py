@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -18,6 +19,38 @@ class BrainResponseHelpersTests(unittest.TestCase):
         result = helpers.sse("token", {"text": "你好", "symbol": "星"})
 
         self.assertEqual(result, 'event: token\ndata: {"text": "你好", "symbol": "星"}\n\n')
+
+    def test_done_sse_omits_nested_inline_media_without_mutating_source(self) -> None:
+        source = {
+            "text": "观察完成",
+            "observation": {
+                "frame": {
+                    "mime_type": "image/png",
+                    "data_url": "data:image/png;base64," + ("A" * 100_000),
+                    "frames": [
+                        {
+                            "image_data_url": "data:image/jpeg;base64,AA==",
+                            "width": 20,
+                        }
+                    ],
+                }
+            },
+        }
+
+        result = helpers.sse("done", source)
+        payload = json.loads(result.split("data: ", 1)[1])
+
+        self.assertEqual(payload["text"], "观察完成")
+        self.assertEqual(payload["observation"]["frame"]["mime_type"], "image/png")
+        self.assertEqual(payload["observation"]["frame"]["frames"][0]["width"], 20)
+        self.assertNotIn("data_url", payload["observation"]["frame"])
+        self.assertNotIn(
+            "image_data_url",
+            payload["observation"]["frame"]["frames"][0],
+        )
+        self.assertEqual(payload["inline_media_omitted_count"], 2)
+        self.assertIn("data_url", source["observation"]["frame"])
+        self.assertLess(len(result), 1_000)
 
     def test_sanitize_brain_error_redacts_saved_values_and_inline_credentials(self) -> None:
         result = helpers.sanitize_brain_error(

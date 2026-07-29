@@ -173,16 +173,44 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
             return True, ""
         return False, "click missing complete x/y"
     if action_type == "type_text":
-        if not str(arguments.get("target_app") or "").strip():
+        target_app = str(arguments.get("target_app") or "").strip()
+        if not target_app:
             return False, "type_text missing target_app"
         if "ax_ref" in arguments and not _has_ax_action_ref(arguments):
             return False, "type_text invalid ax_ref"
+        if arguments.get("replace_existing") is True and not _has_ax_action_ref(
+            arguments
+        ):
+            return False, "replace text missing reviewed AX input"
+        ax_ref = (
+            arguments.get("ax_ref")
+            if isinstance(arguments.get("ax_ref"), dict)
+            else {}
+        )
+        chat_message_input = bool(
+            _is_chat_target_app(target_app)
+            and str(ax_ref.get("input_kind") or "").strip()
+            != "search_field"
+        )
+        if chat_message_input:
+            if not str(arguments.get("intended_chat") or "").strip():
+                return False, "chat type_text missing intended_chat"
+            if not _has_ax_action_ref(arguments):
+                return False, "chat type_text missing reviewed AX input"
         return True, ""
     if action_type == "key_press":
-        if not str(arguments.get("target_app") or "").strip():
+        target_app = str(arguments.get("target_app") or "").strip()
+        if not target_app:
             return False, "key_press missing target_app"
         key = str(arguments.get("key") or "enter").strip().lower() or "enter"
         if key in {"enter", "return"}:
+            if _is_chat_target_app(target_app):
+                if not str(arguments.get("intended_chat") or "").strip():
+                    return False, "chat send missing intended_chat"
+                if not str(arguments.get("expected_text") or "").strip():
+                    return False, "chat send missing expected_text"
+                if not _valid_ax_reference(arguments.get("input_ax_ref")):
+                    return False, "chat send missing reviewed input_ax_ref"
             return True, ""
         return False, f"key_press {key}"
     if action_type == "launch_app":
@@ -199,6 +227,23 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
     return False, action_type or "unknown"
 
 
+def _is_chat_target_app(value: object) -> bool:
+    key = "".join(str(value or "").casefold().split())
+    return key in {"qq", "腾讯qq", "wechat", "微信", "微信app"}
+
+
+def _valid_ax_reference(value: object) -> bool:
+    ax_ref = value if isinstance(value, dict) else {}
+    path = ax_ref.get("path")
+    return bool(
+        str(ax_ref.get("app_id") or "").strip()
+        and str(ax_ref.get("role") or "").strip()
+        and str(ax_ref.get("fingerprint") or "").strip()
+        and isinstance(path, list)
+        and all(isinstance(item, int) and item >= 0 for item in path)
+    )
+
+
 def _has_numeric_action_argument(arguments: dict[str, Any], key: str) -> bool:
     if key not in arguments:
         return False
@@ -210,15 +255,7 @@ def _has_numeric_action_argument(arguments: dict[str, Any], key: str) -> bool:
 
 
 def _has_ax_action_ref(arguments: dict[str, Any]) -> bool:
-    ax_ref = arguments.get("ax_ref") if isinstance(arguments.get("ax_ref"), dict) else {}
-    path = ax_ref.get("path")
-    return bool(
-        str(ax_ref.get("app_id") or "").strip()
-        and str(ax_ref.get("role") or "").strip()
-        and str(ax_ref.get("fingerprint") or "").strip()
-        and isinstance(path, list)
-        and all(isinstance(item, int) and item >= 0 for item in path)
-    )
+    return _valid_ax_reference(arguments.get("ax_ref"))
 
 
 def _unsupported_simple_action_prompt(
@@ -246,6 +283,10 @@ def _unsupported_simple_action_prompt(
         "用户选择人类操作后，再使用桌面观察、点击、输入或回车；当前任务内不要重复询问已经明确的选择。"
         "launch_app 只用于 Brain 已判断目标是本地应用并明确给出 arguments.app 的情况；"
         "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
+        "QQ/微信的消息输入 type_text 必须同时携带经过观察确认的 intended_chat 与输入框 ax_ref；"
+        "只有 ax_ref 内签名 input_kind=search_field 的搜索框可不带 intended_chat，"
+        "清空或替换输入框使用同一个 type_text 并设置 replace_existing=true，且必须携带最新 ax_ref；"
+        "发送 Enter 必须携带同一 intended_chat、expected_text 与从输入阶段继承的 input_ax_ref；"
         "普通 macOS GUI 应用会优先尝试返回 Accessibility affordance；目标带 ax_ref 时必须原样复制，"
         "click 不再需要 x/y，type_text 可携带输入元素的 ax_ref 并由执行器先聚焦；没有 ax_ref 时才使用坐标点击。"
         "发送/确认可使用 key_press enter。"

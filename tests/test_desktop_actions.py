@@ -20,6 +20,13 @@ def _desktop_actions_module():
 
 
 class DesktopActionsModuleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = mock.patch(
+            "body.macos_accessibility.invalidate_macos_accessibility_cache"
+        )
+        self.cache_invalidator = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_module_does_not_import_main(self) -> None:
         module = _desktop_actions_module()
         source = Path(module.__file__).read_text(encoding="utf-8")
@@ -81,6 +88,78 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertTrue(result["clicked"])
         self.assertTrue(result["ax_target_verified"])
         self.assertNotIn("x", result)
+
+    def test_click_noop_keeps_already_active_chat_state_and_cache(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        result = desktop_actions.execute_human_ops_click(
+            {
+                "target_app": "QQ",
+                "ax_ref": {
+                    "app_id": "qq",
+                    "role": "AXGroup",
+                    "path": [0, 3],
+                    "fingerprint": "copied",
+                },
+                "label": "当前会话",
+            },
+            platform_name="darwin",
+            event_clicker=lambda *_args: self.fail("no coordinate click should run"),
+            accessibility_actioner=lambda *_args, **_kwargs: {
+                "clicked": False,
+                "already_satisfied": True,
+                "postcondition_verified": True,
+                "ax_target_verified": True,
+                "ax_action_performed": False,
+                "ax_action": "AXNoOpAlreadyActive",
+            },
+        )
+
+        self.assertFalse(result["clicked"])
+        self.assertTrue(result["already_satisfied"])
+        self.cache_invalidator.assert_not_called()
+
+    def test_click_allows_verified_ax_geometry_to_use_human_ops_dispatcher(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        clicks = []
+        ax_ref = {
+            "app_id": "qq",
+            "role": "AXGroup",
+            "path": [0, 3],
+            "activation": "hit_test",
+            "fingerprint": "copied",
+        }
+
+        def event_clicker(x, y):
+            clicks.append((x, y))
+
+        def accessibility_actioner(_target_app, _reference, **kwargs):
+            kwargs["geometry_clicker"](356, 414)
+            return {
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+                "ax_action": "AXGeometryHitTest",
+                "x": 356,
+                "y": 414,
+                "method": "macos_accessibility+core_graphics",
+            }
+
+        result = desktop_actions.execute_human_ops_click(
+            {
+                "target_app": "QQ",
+                "ax_ref": ax_ref,
+                "label": "测试联系人",
+            },
+            platform_name="darwin",
+            event_clicker=event_clicker,
+            accessibility_actioner=accessibility_actioner,
+        )
+
+        self.assertEqual(clicks, [(356, 414)])
+        self.assertEqual(result["ax_action"], "AXGeometryHitTest")
+        self.assertEqual(
+            result["method"],
+            "macos_accessibility+core_graphics",
+        )
 
     def test_click_falls_back_to_system_events_after_core_graphics_error(self) -> None:
         desktop_actions = _desktop_actions_module()
@@ -154,10 +233,13 @@ class DesktopActionsModuleTests(unittest.TestCase):
     def test_type_text_can_focus_an_approved_ax_input_before_typing(self) -> None:
         desktop_actions = _desktop_actions_module()
         calls = []
+        focus_kwargs = []
         ax_ref = {"app_id": "qq", "role": "AXTextArea", "path": [2], "fingerprint": "copied"}
+        clicker = lambda _x, _y: None
 
         def accessibility_actioner(target_app, reference, **kwargs):
             calls.append(("ax", target_app, reference, kwargs["operation"]))
+            focus_kwargs.append(kwargs)
             return {
                 "ax_target_verified": True,
                 "ax_action_performed": True,
@@ -166,16 +248,357 @@ class DesktopActionsModuleTests(unittest.TestCase):
             }
 
         result = desktop_actions.execute_human_ops_type_text(
-            {"target_app": "QQ", "ax_ref": ax_ref, "text": "你好", "label": "消息输入框"},
+            {
+                "target_app": "QQ",
+                "ax_ref": ax_ref,
+                "intended_chat": "目标会话",
+                "text": "你好",
+                "label": "消息输入框",
+            },
             platform_name="darwin",
             event_typer=lambda text: calls.append(("type", text)),
+            event_clicker=clicker,
             accessibility_actioner=accessibility_actioner,
+            input_value_verifier=lambda _target_app, **kwargs: calls.append(
+                ("verify", kwargs["expected_text"])
+            )
+            or {
+                "input_value_verified": True,
+                "postcondition_verified": True,
+                "method": "macos_accessibility",
+            },
+            chat_context_verifier=lambda target_app, **kwargs: calls.append(
+                (
+                    "chat",
+                    target_app,
+                    kwargs["intended_chat"],
+                    kwargs["input_ax_ref"],
+                )
+            )
+            or {
+                "chat_identity_verified": True,
+                "chat_input_verified": True,
+            },
         )
 
         self.assertEqual(calls[0], ("ax", "QQ", ax_ref, "focus"))
-        self.assertEqual(calls[1], ("type", "你好"))
+        self.assertIs(focus_kwargs[0]["geometry_clicker"], clicker)
+        self.assertEqual(calls[1], ("chat", "QQ", "目标会话", ax_ref))
+        self.assertEqual(calls[2], ("type", "你好"))
+        self.assertEqual(calls[3], ("verify", "你好"))
+        self.assertEqual(calls[4], ("chat", "QQ", "目标会话", ax_ref))
         self.assertTrue(result["ax_target_verified"])
+        self.assertTrue(result["chat_identity_verified"])
+        self.assertTrue(result["postcondition_verified"])
+        self.assertEqual(result["verification_method"], "macos_accessibility")
         self.assertEqual(result["method"], "macos_accessibility_focus+core_graphics_unicode")
+
+    def test_chat_search_field_can_type_without_message_recipient_binding(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        search_ref = {
+            "app_id": "qq",
+            "role": "AXTextField",
+            "path": [0, 1],
+            "input_kind": "search_field",
+            "fingerprint": "copied",
+        }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {
+                "target_app": "QQ",
+                "ax_ref": search_ref,
+                "text": "莉霖澪",
+                "label": "搜索输入框",
+            },
+            platform_name="darwin",
+            event_typer=lambda text: calls.append(("type", text)),
+            accessibility_actioner=lambda target_app, reference, **kwargs: (
+                calls.append(
+                    (
+                        "focus",
+                        target_app,
+                        reference,
+                        kwargs["operation"],
+                    )
+                )
+                or {
+                    "ax_target_verified": True,
+                    "ax_action_performed": True,
+                    "target_pid": 777,
+                    "method": "macos_accessibility",
+                }
+            ),
+            input_value_verifier=lambda _target_app, **_kwargs: {
+                "input_value_verified": True,
+                "postcondition_verified": True,
+            },
+            chat_context_verifier=lambda *_args, **_kwargs: self.fail(
+                "search input must not run chat recipient verification"
+            ),
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("focus", "QQ", search_ref, "focus"),
+                ("type", "莉霖澪"),
+            ],
+        )
+        self.assertEqual(result["target_pid"], 777)
+        self.assertTrue(result["typed"])
+        self.assertTrue(result["postcondition_verified"])
+
+    def test_signed_search_field_can_be_cleared_with_targeted_replace(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        search_ref = {
+            "app_id": "qq",
+            "role": "AXTextField",
+            "path": [0, 1],
+            "input_kind": "search_field",
+            "fingerprint": "copied",
+        }
+
+        def accessibility_actioner(_app, _reference, **kwargs):
+            if kwargs["operation"] == "set_value":
+                raise RuntimeError("AXValue is not settable")
+            return {
+                "ax_target_verified": True,
+                "target_pid": 777,
+            }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {
+                "target_app": "QQ",
+                "ax_ref": search_ref,
+                "text": "",
+                "replace_existing": True,
+                "label": "搜索输入框",
+            },
+            platform_name="darwin",
+            event_typer=lambda text: calls.append(("type", text)),
+            event_key_presser=lambda key_code, **kwargs: calls.append(
+                ("key", key_code, kwargs)
+            ),
+            accessibility_actioner=accessibility_actioner,
+            input_value_verifier=lambda _target_app, **kwargs: {
+                "input_value_verified": kwargs["expected_text"] == "",
+                "postcondition_verified": kwargs["expected_text"] == "",
+            },
+            chat_context_verifier=lambda *_args, **_kwargs: self.fail(
+                "search input must not run chat recipient verification"
+            ),
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("key", 0, {"target_pid": 777, "flags": 1 << 20}),
+                ("key", 51, {"target_pid": 777}),
+                ("type", ""),
+            ],
+        )
+        self.assertTrue(result["replace_existing"])
+        self.assertEqual(result["target_pid"], 777)
+        self.assertTrue(result["postcondition_verified"])
+        self.assertEqual(
+            result["semantic_value_fallback_reason"],
+            "AXValue is not settable",
+        )
+
+    def test_replace_text_prefers_verified_ax_value_assignment(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        operations = []
+        search_ref = {
+            "app_id": "qq",
+            "role": "AXTextField",
+            "path": [0, 1],
+            "input_kind": "search_field",
+            "fingerprint": "copied",
+        }
+
+        def accessibility_actioner(_app, _reference, **kwargs):
+            operations.append((kwargs["operation"], kwargs.get("value")))
+            return {
+                "ax_target_verified": True,
+                "target_pid": 777,
+                **(
+                    {"input_value_set": True}
+                    if kwargs["operation"] == "set_value"
+                    else {}
+                ),
+            }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {
+                "target_app": "QQ",
+                "ax_ref": search_ref,
+                "text": "",
+                "replace_existing": True,
+                "label": "搜索输入框",
+            },
+            platform_name="darwin",
+            event_typer=lambda _text: self.fail("AXValue set must avoid typing"),
+            event_key_presser=lambda *_args, **_kwargs: self.fail(
+                "AXValue set must avoid keyboard shortcuts"
+            ),
+            accessibility_actioner=accessibility_actioner,
+            input_value_verifier=lambda _target_app, **kwargs: {
+                "input_value_verified": kwargs["expected_text"] == "",
+            },
+        )
+
+        self.assertEqual(operations, [("set_value", "")])
+        self.assertTrue(result["input_value_set"])
+        self.assertTrue(result["postcondition_verified"])
+        self.assertEqual(result["method"], "macos_accessibility_set_value")
+
+    def test_accepted_async_ax_value_is_not_redelivered_by_keyboard(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        search_ref = {
+            "app_id": "qq",
+            "role": "AXTextField",
+            "path": [0, 1],
+            "input_kind": "search_field",
+            "fingerprint": "copied",
+        }
+
+        def accessibility_actioner(_app, _reference, **kwargs):
+            return {
+                "ax_target_verified": True,
+                "target_pid": 777,
+                **(
+                    {"input_value_set": True}
+                    if kwargs["operation"] == "set_value"
+                    else {}
+                ),
+            }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {
+                "target_app": "QQ",
+                "ax_ref": search_ref,
+                "text": "async draft",
+                "replace_existing": True,
+            },
+            platform_name="darwin",
+            event_typer=lambda _text: self.fail(
+                "accepted AXValue must not be delivered again"
+            ),
+            event_key_presser=lambda *_args, **_kwargs: self.fail(
+                "accepted AXValue must not fall back to a keyboard shortcut"
+            ),
+            accessibility_actioner=accessibility_actioner,
+            input_value_verifier=lambda *_args, **_kwargs: {
+                "input_value_verified": False,
+            },
+        )
+
+        self.assertTrue(result["input_value_set"])
+        self.assertFalse(result["postcondition_verified"])
+        self.assertEqual(result["method"], "macos_accessibility_set_value")
+
+    def test_type_text_postcondition_failure_does_not_redeliver_text(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        typed: list[str] = []
+        ax_ref = {
+            "app_id": "qq",
+            "role": "AXTextField",
+            "path": [0, 1],
+            "bounds": {"x": 100, "y": 100, "width": 180, "height": 28},
+            "input_kind": "search_field",
+            "fingerprint": "copied",
+        }
+
+        result = desktop_actions.execute_human_ops_type_text(
+            {
+                "target_app": "QQ",
+                "ax_ref": ax_ref,
+                "text": "只输入一次",
+                "label": "搜索输入框",
+            },
+            platform_name="darwin",
+            event_typer=lambda text: typed.append(text),
+            accessibility_actioner=lambda *_args, **_kwargs: {
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+                "target_pid": 777,
+            },
+            input_value_verifier=lambda *_args, **_kwargs: (
+                (_ for _ in ()).throw(RuntimeError("value not observable"))
+            ),
+            runner=lambda *_args, **_kwargs: self.fail(
+                "postcondition failure must not fall back and type again"
+            ),
+        )
+
+        self.assertEqual(typed, ["只输入一次"])
+        self.assertTrue(result["typed"])
+        self.assertFalse(result["postcondition_verified"])
+        self.assertEqual(result["postcondition_reason"], "value not observable")
+
+    def test_replace_text_requires_reviewed_input_reference(self) -> None:
+        desktop_actions = _desktop_actions_module()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "reviewed AX input reference",
+        ):
+            desktop_actions.execute_human_ops_type_text(
+                {
+                    "target_app": "Music",
+                    "text": "",
+                    "replace_existing": True,
+                },
+                platform_name="darwin",
+                event_typer=lambda _text: None,
+            )
+
+    def test_chat_send_revalidates_recipient_and_draft_before_enter(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "copied",
+        }
+
+        result = desktop_actions.execute_human_ops_key_press(
+            {
+                "target_app": "WeChat",
+                "key": "enter",
+                "intended_chat": "目标会话",
+                "expected_text": "准备发送的草稿",
+                "input_ax_ref": input_ref,
+            },
+            platform_name="darwin",
+            event_presser=lambda key_code, **kwargs: calls.append(
+                ("key", key_code, kwargs)
+            ),
+            chat_context_verifier=lambda target_app, **kwargs: calls.append(
+                ("chat", target_app, kwargs)
+            )
+            or {
+                "chat_identity_verified": True,
+                "chat_input_verified": True,
+                "chat_draft_verified": True,
+                "target_pid": 888,
+            },
+        )
+
+        self.assertEqual(calls[0][0], "chat")
+        self.assertEqual(calls[0][2]["intended_chat"], "目标会话")
+        self.assertEqual(calls[0][2]["expected_text"], "准备发送的草稿")
+        self.assertEqual(calls[0][2]["input_ax_ref"], input_ref)
+        self.assertTrue(calls[0][2]["require_input_focused"])
+        self.assertEqual(calls[1][0], "key")
+        self.assertEqual(calls[1][1], 36)
+        self.assertEqual(calls[1][2]["target_pid"], 888)
+        self.assertTrue(result["chat_identity_verified"])
+        self.assertTrue(result["chat_draft_verified"])
+        self.assertEqual(result["method"], "targeted_core_graphics")
 
     def test_type_text_falls_back_to_system_events_after_core_graphics_error(self) -> None:
         desktop_actions = _desktop_actions_module()
@@ -259,6 +682,33 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertEqual(calls[1], ["/usr/bin/open", "/Applications/NeteaseMusic.app"])
         self.assertEqual(result["app"], "NeteaseMusic")
 
+    def test_launch_app_falls_back_to_bundle_identifier(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["/usr/bin/mdfind", "-onlyin", "/Applications"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0 if args[:2] == ["/usr/bin/open", "-b"] else 1,
+                stdout="",
+                stderr="not found",
+            )
+
+        result = desktop_actions.execute_human_ops_launch_app(
+            {"app": "WeChat"},
+            platform_name="darwin",
+            runner=runner,
+        )
+
+        self.assertTrue(result["launched"])
+        self.assertIn(
+            ["/usr/bin/open", "-b", "com.tencent.xinWeChat"],
+            calls,
+        )
+
     def test_key_press_enter_and_return_use_key_code_36(self) -> None:
         desktop_actions = _desktop_actions_module()
         scripts = []
@@ -319,52 +769,95 @@ class DesktopActionsModuleTests(unittest.TestCase):
         self.assertEqual(result["previous_frontmost_app"], "Ipet")
         self.assertTrue(result["focused"])
 
-    def test_restore_focus_only_when_observed_target_is_still_frontmost(self) -> None:
+    def test_focus_requires_a_window_on_the_current_space(self) -> None:
         desktop_actions = _desktop_actions_module()
-        calls = []
+        surfaces = iter([False, True])
+        activations = []
 
-        def runner(args, **kwargs):
-            calls.append(args)
-            return subprocess.CompletedProcess(
-                args=args,
-                returncode=0,
-                stdout="",
-                stderr="",
+        result = desktop_actions.focus_macos_application(
+            {"target_app": "QQ"},
+            platform_name="darwin",
+            sleeper=lambda _seconds: None,
+            frontmost_provider=lambda: "QQ",
+            native_activator=lambda profile: activations.append(
+                profile["bundle_id"]
+            )
+            or "launch_services",
+            visible_window_provider=lambda _profile: next(surfaces),
+        )
+
+        self.assertEqual(
+            activations,
+            ["com.tencent.qq"],
+        )
+        self.assertTrue(result["focused"])
+        self.assertTrue(result["surface_visible"])
+
+    def test_ax_window_metadata_can_verify_surface_without_reading_content(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        runtime = mock.Mock()
+        runtime.trusted.return_value = True
+        runtime.focused_application.return_value = (4321, "QQ")
+        runtime.application.return_value = 100
+        runtime._attribute_elements.return_value = ([200], False)
+        runtime.attributes.return_value = {
+            "AXMinimized": False,
+            "AXSize": {"width": 980, "height": 720},
+        }
+
+        with mock.patch.object(
+            desktop_actions._macos_accessibility,
+            "_AXRuntime",
+            return_value=runtime,
+        ):
+            visible = desktop_actions._visible_macos_accessibility_window(
+                desktop_actions._macos_accessibility.resolve_macos_ax_app("QQ")
             )
 
-        result = desktop_actions.restore_macos_application_focus(
-            {
-                "target_app": "WeChat",
-                "previous_frontmost_app": "Google Chrome",
-            },
-            platform_name="darwin",
-            runner=runner,
-            frontmost_provider=lambda: "WeChat",
+        self.assertTrue(visible)
+        runtime.attributes.assert_called_once_with(
+            200,
+            ("AXMinimized", "AXSize"),
         )
-
-        self.assertTrue(result["restored"])
         self.assertEqual(
-            calls,
-            [["/usr/bin/open", "-a", "Google Chrome"]],
+            [call.args[0] for call in runtime.release.call_args_list],
+            [200, 100],
         )
+        runtime.close.assert_called_once_with()
 
-    def test_restore_focus_preserves_user_foreground_change(self) -> None:
+    def test_frontmost_application_prefers_native_accessibility_query(self) -> None:
         desktop_actions = _desktop_actions_module()
+        runtime = mock.Mock()
+        runtime.trusted.return_value = True
+        runtime.focused_application.return_value = (1234, "QQ")
         runner = mock.Mock()
 
-        result = desktop_actions.restore_macos_application_focus(
-            {
-                "target_app": "WeChat",
-                "previous_frontmost_app": "Google Chrome",
-            },
-            platform_name="darwin",
-            runner=runner,
-            frontmost_provider=lambda: "Finder",
-        )
+        with mock.patch.object(
+            desktop_actions._macos_accessibility,
+            "_AXRuntime",
+            return_value=runtime,
+        ):
+            result = desktop_actions.frontmost_macos_application(runner=runner)
 
-        self.assertFalse(result["restored"])
-        self.assertEqual(result["reason"], "foreground_changed_by_user")
+        self.assertEqual(result, "QQ")
+        runtime.close.assert_called_once_with()
         runner.assert_not_called()
+
+    def test_frontmost_application_tolerates_system_events_timeout(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        runtime = mock.Mock()
+        runtime.trusted.return_value = False
+        runner = mock.Mock(side_effect=subprocess.TimeoutExpired("osascript", 1.0))
+
+        with mock.patch.object(
+            desktop_actions._macos_accessibility,
+            "_AXRuntime",
+            return_value=runtime,
+        ):
+            result = desktop_actions.frontmost_macos_application(runner=runner)
+
+        self.assertEqual(result, "")
+        runtime.close.assert_called_once_with()
 
     def test_focus_macos_application_normalizes_localized_allowlisted_name(self) -> None:
         desktop_actions = _desktop_actions_module()
@@ -384,6 +877,149 @@ class DesktopActionsModuleTests(unittest.TestCase):
 
         self.assertEqual(calls, [["/usr/bin/open", "-a", "WeChat"]])
         self.assertTrue(result["focused"])
+
+    def test_focus_macos_application_prefers_native_running_app_activation(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        runner = mock.Mock()
+        activations = []
+        frontmost = iter(["ChatGPT", "WeChat"])
+
+        result = desktop_actions.focus_macos_application(
+            {"target_app": "WeChat"},
+            platform_name="darwin",
+            runner=runner,
+            sleeper=lambda _seconds: None,
+            frontmost_provider=lambda: next(frontmost),
+            native_activator=lambda profile: activations.append(profile["bundle_id"]) or True,
+        )
+
+        runner.assert_not_called()
+        self.assertEqual(activations, ["com.tencent.xinWeChat"])
+        self.assertEqual(result["method"], "native")
+        self.assertEqual(result["frontmost_app"], "WeChat")
+        self.assertEqual(result["previous_frontmost_app"], "ChatGPT")
+
+    def test_restore_focus_only_when_observed_target_is_still_frontmost(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        activations = []
+
+        result = desktop_actions.restore_macos_application_focus(
+            {
+                "target_app": "WeChat",
+                "previous_frontmost_app": "ChatGPT",
+            },
+            platform_name="darwin",
+            frontmost_provider=lambda: "WeChat",
+            native_activator=lambda profile: activations.append(
+                profile["display_name"]
+            )
+            or "appkit",
+        )
+
+        self.assertTrue(result["restored"])
+        self.assertEqual(result["target_app"], "ChatGPT")
+        self.assertEqual(activations, ["ChatGPT"])
+
+    def test_restore_focus_preserves_user_foreground_change(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        activator = mock.Mock()
+
+        result = desktop_actions.restore_macos_application_focus(
+            {
+                "target_app": "WeChat",
+                "previous_frontmost_app": "ChatGPT",
+            },
+            platform_name="darwin",
+            frontmost_provider=lambda: "Finder",
+            native_activator=activator,
+        )
+
+        self.assertFalse(result["restored"])
+        self.assertEqual(result["reason"], "foreground_changed_by_user")
+        activator.assert_not_called()
+
+    def test_native_activation_uses_accessibility_before_system_events(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        with mock.patch.object(
+            desktop_actions,
+            "_activate_running_macos_application",
+            return_value=False,
+        ), mock.patch.object(
+            desktop_actions,
+            "_activate_macos_application_with_launch_services",
+            return_value=False,
+        ), mock.patch.object(
+            desktop_actions._macos_accessibility,
+            "activate_macos_accessibility_application",
+            return_value=True,
+        ) as activate_ax, mock.patch.object(
+            desktop_actions,
+            "_activate_running_macos_application_with_system_events",
+        ) as activate_system_events:
+            method = desktop_actions._activate_macos_application(
+                {"app_id": "wechat", "display_name": "微信"},
+                runner=lambda *_args, **_kwargs: None,
+            )
+
+        self.assertEqual(method, "accessibility")
+        activate_ax.assert_called_once()
+        activate_system_events.assert_not_called()
+
+    def test_native_activation_prefers_launch_services_before_accessibility(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        with mock.patch.object(
+            desktop_actions,
+            "_activate_running_macos_application",
+            return_value=False,
+        ), mock.patch.object(
+            desktop_actions,
+            "_activate_macos_application_with_launch_services",
+            return_value=True,
+        ) as activate_launch_services, mock.patch.object(
+            desktop_actions._macos_accessibility,
+            "activate_macos_accessibility_application",
+        ) as activate_ax:
+            method = desktop_actions._activate_macos_application(
+                {
+                    "app_id": "qq",
+                    "display_name": "QQ",
+                    "launch_name": "QQ",
+                    "bundle_id": "com.tencent.qq",
+                },
+                runner=lambda *_args, **_kwargs: None,
+            )
+
+        self.assertEqual(method, "launch_services")
+        activate_launch_services.assert_called_once()
+        activate_ax.assert_not_called()
+
+    def test_system_events_activation_targets_running_bundle_without_launch_services(self) -> None:
+        desktop_actions = _desktop_actions_module()
+        calls = []
+
+        def runner(args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="微信\n",
+                stderr="",
+            )
+
+        activated = desktop_actions._activate_running_macos_application_with_system_events(
+            {
+                "bundle_id": "com.tencent.xinWeChat",
+                "display_name": "微信",
+                "launch_name": "WeChat",
+                "aliases": ("微信", "WeChat"),
+            },
+            runner=runner,
+        )
+
+        self.assertTrue(activated)
+        self.assertEqual(calls[0][0][:2], ["/usr/bin/osascript", "-e"])
+        self.assertIn("com.tencent.xinWeChat", calls[0][0][-1])
+        self.assertIn("set frontmost of proc to true", calls[0][0][-1])
 
     def test_native_approval_dialog_returns_rejection_without_guessing(self) -> None:
         desktop_actions = _desktop_actions_module()

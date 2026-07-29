@@ -246,6 +246,105 @@ class BackendReactPromptsTests(unittest.TestCase):
             react_prompts._simple_human_action_support(BrainDecision.propose_act("type_text", {"target_app": "Chrome", "text": "hi"})),
             (True, ""),
         )
+        chat_input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "copied",
+        }
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "type_text",
+                    {
+                        "target_app": "WeChat",
+                        "intended_chat": "目标会话",
+                        "ax_ref": chat_input_ref,
+                        "text": "hi",
+                    },
+                )
+            ),
+            (True, ""),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "type_text",
+                    {
+                        "target_app": "Music",
+                        "text": "",
+                        "replace_existing": True,
+                    },
+                )
+            ),
+            (False, "replace text missing reviewed AX input"),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "type_text",
+                    {
+                        "target_app": "Music",
+                        "ax_ref": {
+                            "app_id": "music",
+                            "role": "AXTextField",
+                            "path": [1, 1, 2, 0],
+                            "fingerprint": "copied",
+                        },
+                        "text": "",
+                        "replace_existing": True,
+                    },
+                )
+            ),
+            (True, ""),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "type_text",
+                    {
+                        "target_app": "WeChat",
+                        "ax_ref": chat_input_ref,
+                        "text": "hi",
+                    },
+                )
+            ),
+            (False, "chat type_text missing intended_chat"),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "type_text",
+                    {
+                        "target_app": "WeChat",
+                        "ax_ref": {
+                            "app_id": "wechat",
+                            "role": "AXTextField",
+                            "path": [0, 1],
+                            "input_kind": "search_field",
+                            "fingerprint": "copied",
+                        },
+                        "text": "文件传输助手",
+                    },
+                )
+            ),
+            (True, ""),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "key_press",
+                    {
+                        "target_app": "WeChat",
+                        "key": "enter",
+                        "intended_chat": "目标会话",
+                        "expected_text": "hi",
+                        "input_ax_ref": chat_input_ref,
+                    },
+                )
+            ),
+            (True, ""),
+        )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("launch_app", {"app": "WeChat"})),
             (True, ""),

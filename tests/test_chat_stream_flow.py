@@ -386,6 +386,59 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("conversation_history", calls[1])
 
+    async def test_configured_react_budget_allows_more_than_three_followups(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            decision = (
+                BrainDecision.think(
+                    "继续定位",
+                    goal={"status": "in_progress", "next": "think"},
+                )
+                if calls <= 4
+                else BrainDecision.say("定位完成", goal={"status": "done"})
+            )
+            return SimpleNamespace(
+                text=decision.summary,
+                decision=decision,
+                provider="test",
+                model="brain",
+            )
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {
+                    "model_endpoint": "https://llm.example",
+                    "model_name": "brain",
+                },
+                "human_ops": {},
+            },
+            run_brain_turn=run_brain_turn,
+            looks_like_desktop_action_request=lambda _text: True,
+            goal_status=lambda decision, *, operation_request: str(
+                (decision.payload.get("goal") or {}).get("status") or ""
+            ),
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {
+                    "text": "完成复杂桌面任务",
+                    "session_id": "configured-react-budget",
+                    "max_reasoning_steps": 4,
+                },
+                deps,
+            )
+        )
+
+        self.assertEqual(calls, 5)
+        self.assertEqual(events[-1][1]["text"], "定位完成")
+        self.assertEqual(events[-1][1]["decision"]["payload"]["goal"]["status"], "done")
+
     async def test_disabled_observe_model_sends_captured_image_directly_to_brain(self) -> None:
         topic_store = TopicStoreSpy()
         calls: list[dict[str, Any]] = []
@@ -437,6 +490,71 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1]["image_data_url"], "data:image/png;base64,AA==")
         self.assertTrue(prompt_calls[0]["brain_observed_image"])
         self.assertNotIn("conversation_history", calls[1])
+
+    async def test_structured_near_match_stops_before_a_second_brain_call(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+
+        async def run_brain_turn(
+            _config: dict[str, Any],
+            **_kwargs: Any,
+        ) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                self.fail("a structured near match must not call Brain again")
+            decision = BrainDecision.observe(
+                "screen",
+                target_app="QQ",
+                ax_query="测试联系入 会话列表",
+            )
+            return SimpleNamespace(
+                text=decision.summary,
+                decision=decision,
+                provider="test",
+                model="brain",
+            )
+
+        async def perform_observe(
+            _decision: BrainDecision,
+            _config: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {
+                "text": "找到一个近似名称，需要用户确认。",
+                "analysis_route": "structured",
+                "ax_search": {
+                    "insufficiency_reason": "near_match_requires_confirmation",
+                    "near_match_labels": ["测试联系人"],
+                    "visual_fallback_required": False,
+                },
+                "observations": [],
+                "unknowns": [],
+            }
+
+        deps = self._dependencies(
+            topic_store,
+            run_brain_turn=run_brain_turn,
+            perform_human_ops_observe=perform_observe,
+            looks_like_desktop_action_request=lambda _text: True,
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {
+                    "text": "打开测试联系入会话",
+                    "session_id": "near-match",
+                },
+                deps,
+            )
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(
+            events[-1][1]["decision"]["payload"]["goal"]["status"],
+            "need_user",
+        )
+        self.assertIn("测试联系人", events[-1][1]["text"])
 
     async def test_direct_brain_click_image_pixels_are_normalized_before_approval(self) -> None:
         topic_store = TopicStoreSpy()
@@ -551,13 +669,19 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
 
         events = await _collect_events(
             stream_chat_response(
-                {"text": "点击文件", "session_id": "full-auth", "task_id": "task-full-auth"},
+                {
+                    "text": "点击文件",
+                    "session_id": "full-auth",
+                    "task_id": "task-full-auth",
+                    "max_reasoning_steps": 9,
+                },
                 deps,
             )
         )
 
         self.assertEqual(streamed, ["full-proposal"])
         self.assertEqual(pending["full-proposal"]["task_id"], "task-full-auth")
+        self.assertEqual(pending["full-proposal"]["react_budget_remaining"], 9)
         self.assertNotIn("approval_required", [name for name, _payload in events])
         self.assertTrue(events[-1][1]["auto_authorized"])
 

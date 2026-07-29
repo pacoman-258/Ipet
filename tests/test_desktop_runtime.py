@@ -3,11 +3,28 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app import desktop_runtime
 
 
 class DesktopRuntimeTests(unittest.TestCase):
+    def test_qt_binding_preference_is_pyside_first_and_process_consistent(self) -> None:
+        with mock.patch.dict(desktop_runtime.sys.modules, {}, clear=True):
+            self.assertFalse(desktop_runtime.prefer_pyqt_bindings("darwin"))
+        with mock.patch.dict(
+            desktop_runtime.sys.modules,
+            {"PyQt6.QtCore": object()},
+            clear=True,
+        ):
+            self.assertTrue(desktop_runtime.prefer_pyqt_bindings("darwin"))
+        with mock.patch.dict(
+            desktop_runtime.sys.modules,
+            {"PyQt6.QtCore": object(), "PySide6.QtCore": object()},
+            clear=True,
+        ):
+            self.assertFalse(desktop_runtime.prefer_pyqt_bindings("darwin"))
+
     def test_macos_runtime_env_keeps_webgl_without_software_opengl_default(self) -> None:
         env = desktop_runtime.qt_runtime_env_defaults("darwin")
 

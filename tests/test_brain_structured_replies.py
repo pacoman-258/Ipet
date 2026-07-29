@@ -51,6 +51,37 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertEqual(decision.summary, "当然可以。")
         self.assertEqual(decision.payload["text"], "当然可以。")
 
+    def test_structured_say_reply_ignores_short_trailing_model_noise(self) -> None:
+        decision = parse_brain_reply(
+            '{"kind":"say","text":"微信页面读取失败。",'
+            '"goal":{"status":"blocked"}}র'
+        )
+
+        self.assertEqual(decision.kind, DecisionKind.SAY)
+        self.assertEqual(decision.summary, "微信页面读取失败。")
+        self.assertEqual(decision.payload["goal"]["status"], "blocked")
+
+    def test_json_prefix_with_long_prose_remains_visible_text(self) -> None:
+        raw = (
+            '{"kind":"say","text":"结构片段"} '
+            "but this is a longer prose suffix that must remain visible"
+        )
+
+        decision = parse_brain_reply(raw)
+
+        self.assertEqual(decision.kind, DecisionKind.SAY)
+        self.assertEqual(decision.payload["text"], raw)
+
+    def test_result_style_say_reply_is_unwrapped_and_keeps_terminal_goal(self) -> None:
+        decision = parse_brain_reply(
+            '{"goal":{"objective":"只读检查 QQ","status":"done"},'
+            '"result":"当前会话是莉霖澪。"}'
+        )
+
+        self.assertEqual(decision.kind, DecisionKind.SAY)
+        self.assertEqual(decision.summary, "当前会话是莉霖澪。")
+        self.assertEqual(decision.payload["goal"]["status"], "done")
+
     def test_reserved_observe_reply_is_parsed_but_not_reviewable(self) -> None:
         decision = parse_brain_reply(
             """

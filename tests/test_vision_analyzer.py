@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import unittest
@@ -52,6 +53,76 @@ class VisionAnalyzerTests(unittest.TestCase):
         self.assertLessEqual(len(observation["claim"]), 240)
         self.assertLessEqual(len(observation["evidence"]), 360)
         self.assertLessEqual(len(observation["evidence"]), 80)
+
+    def test_macos_ocr_preserves_bounded_normalized_text_boxes(self) -> None:
+        output = json.dumps(
+            {
+                "text": "搜索 目标会话",
+                "items": [
+                    {
+                        "text": "目标会话",
+                        "confidence": 0.91,
+                        "box": {
+                            "x": 0.1,
+                            "y": 0.2,
+                            "width": 0.3,
+                            "height": 0.08,
+                        },
+                    },
+                    {
+                        "text": "invalid",
+                        "confidence": 0.5,
+                        "box": {
+                            "x": 1.2,
+                            "y": 0.2,
+                            "width": 0.3,
+                            "height": 0.08,
+                        },
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=output,
+                stderr="",
+            )
+
+        analyzer = VisionAnalyzer(
+            {
+                "enabled": True,
+                "provider": "macos_vision_ocr",
+            },
+            runner=runner,
+        )
+
+        result = analyzer.enrich_payload(
+            {"mime_type": "image/png", "data_url": PNG_DATA_URL}
+        )
+
+        self.assertEqual(result.status["status"], "ok")
+        self.assertEqual(
+            result.payload["local_ocr"],
+            {
+                "source": "macos-vision-ocr",
+                "items": [
+                    {
+                        "text": "目标会话",
+                        "confidence": 0.91,
+                        "box": {
+                            "x": 0.1,
+                            "y": 0.2,
+                            "width": 0.3,
+                            "height": 0.08,
+                        },
+                    }
+                ],
+            },
+        )
 
     def test_openai_compatible_vlm_generates_visual_observations(self) -> None:
         calls = []

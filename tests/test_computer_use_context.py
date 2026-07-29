@@ -44,6 +44,44 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertTrue(context_helpers._looks_like_desktop_action_request("点击按钮"))
         self.assertTrue(context_helpers._looks_like_click_request("点击按钮"))
 
+    def test_intent_helpers_ignore_read_only_state_and_negative_action_constraints(self) -> None:
+        read_only_requests = (
+            (
+                "只读检查当前 QQ 会话：告诉我当前打开的会话名称、"
+                "聊天输入框是否可用，以及最后一条可见消息摘要。"
+                "不得输入、不得发送、不得点击链接。"
+            ),
+            "检查当前打开的 QQ 会话和聊天输入框，不要输入或发送消息",
+            "列出音乐播放列表名称和当前播放状态",
+            "告诉我发送按钮是否可点击",
+            "不要点击这个按钮",
+        )
+        for text in read_only_requests:
+            with self.subTest(text=text):
+                self.assertFalse(
+                    context_helpers._looks_like_desktop_action_request(text)
+                )
+
+        positive_requests = (
+            "在 QQ 输入你好，但不要发送",
+            "不要点击链接，打开 QQ",
+            "查看当前会话后，发送你好",
+        )
+        for text in positive_requests:
+            with self.subTest(text=text):
+                self.assertTrue(
+                    context_helpers._looks_like_desktop_action_request(text)
+                )
+
+        self.assertFalse(
+            context_helpers._looks_like_click_request("请勿点击确认按钮")
+        )
+        self.assertTrue(
+            context_helpers._looks_like_click_request(
+                "不要点击链接，但要点击确认按钮"
+            )
+        )
+
     def test_app_intent_wrappers_delegate_to_computer_use_context_helpers(self) -> None:
         with mock.patch.object(context_helpers, "_looks_like_desktop_observe_request", return_value=True) as helper:
             self.assertTrue(backend_app._looks_like_desktop_observe_request("看看屏幕"))
@@ -157,10 +195,436 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertEqual(context["surface"]["kind"], "wechat_gui")
         self.assertEqual(context["surface"]["source"], "macos_accessibility")
         self.assertEqual(context["affordances"][0]["kind"], "chat_input")
-        self.assertEqual(context["affordances"][0]["supports"], ["click", "type_text", "key_press"])
+        self.assertEqual(
+            context["affordances"][0]["supports"],
+            ["click", "type_text", "key_press"],
+        )
         self.assertEqual(context["affordances"][0]["ax_ref"], ax_ref)
         self.assertTrue(context["chat_context"]["input_focused"])
-        self.assertTrue(context_helpers._observation_has_reviewable_click_affordance(context))
+        self.assertTrue(
+            context_helpers._observation_has_reviewable_click_affordance(
+                context
+            )
+        )
+
+    def test_local_ocr_match_augments_insufficient_accessibility_context(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "本机 OCR 找到唯一关键词匹配。",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "wechat",
+                        "name": "微信",
+                        "surface": "wechat_gui",
+                    },
+                    "elements": [],
+                    "search": {
+                        "query": "点击目标会话",
+                        "sufficient": False,
+                        "insufficiency_reason": "no_semantic_match",
+                    },
+                },
+                "local_ocr_search": {
+                    "available": True,
+                    "query": "点击目标会话",
+                    "matched_count": 1,
+                    "best_match_count": 1,
+                    "sufficient": True,
+                    "actionable": True,
+                    "matches": [
+                        {
+                            "label": "目标会话",
+                            "kind": "chat_thread",
+                            "supports": ["click"],
+                            "confidence": 0.91,
+                            "location": {
+                                "x": 191,
+                                "y": 301,
+                            },
+                        }
+                    ],
+                },
+            },
+            "点击目标会话",
+        )
+
+        self.assertEqual(context["surface"]["app_id"], "wechat")
+        self.assertEqual(context["affordances"][0]["label"], "目标会话")
+        self.assertEqual(
+            context["affordances"][0]["location"]["coordinate_space"],
+            "macos_screen_points",
+        )
+        self.assertTrue(context["visual_search"]["sufficient"])
+
+    def test_local_ocr_match_ignores_malformed_confidence(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "本机 OCR 找到唯一关键词匹配。",
+            {
+                "local_ocr_search": {
+                    "available": True,
+                    "query": "点击目标会话",
+                    "matched_count": 1,
+                    "best_match_count": 1,
+                    "sufficient": True,
+                    "actionable": True,
+                    "matches": [
+                        {
+                            "label": "目标会话",
+                            "kind": "chat_thread",
+                            "supports": ["click"],
+                            "confidence": "unknown",
+                            "location": {"x": 191, "y": 301},
+                        }
+                    ],
+                }
+            },
+            "点击目标会话",
+        )
+
+        self.assertEqual(context["affordances"][0]["confidence"], 0.0)
+
+    def test_verified_geometry_collection_item_becomes_click_affordance(self) -> None:
+        ax_ref = {
+            "app_id": "qq",
+            "role": "AXGroup",
+            "path": [0, 3],
+            "bounds": {"x": 231, "y": 382, "width": 250, "height": 64},
+            "activation": "hit_test",
+            "descendant_label": "测试联系人",
+            "fingerprint": "copied",
+        }
+        context = context_helpers._infer_computer_use_context(
+            "AX 读取成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "qq",
+                        "name": "QQ",
+                        "surface": "qq_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXGroup",
+                            "label": "测试联系人",
+                            "semantic_path": "会话列表 > 测试联系人",
+                            "supports": ["show_menu", "hit_test"],
+                            "activation": "hit_test",
+                            "ax_ref": ax_ref,
+                        }
+                    ],
+                    "search": {
+                        "query": "测试联系人 会话列表",
+                        "collection_label": "会话列表",
+                        "collection_item_total_count": 8,
+                        "collection_item_returned_count": 8,
+                        "collection_complete": True,
+                        "sufficient": True,
+                    },
+                }
+            },
+            "打开测试联系人的会话",
+        )
+
+        affordance = context["affordances"][0]
+        self.assertEqual(affordance["supports"], ["click"])
+        self.assertEqual(affordance["activation"], "verified_geometry")
+        self.assertEqual(affordance["ax_ref"], ax_ref)
+        self.assertIn("unique AX collection item geometry", affordance["evidence"])
+        self.assertEqual(context["ax_search"]["collection_label"], "会话列表")
+        self.assertTrue(context["ax_search"]["collection_complete"])
+
+    def test_read_only_collection_labels_reach_brain_context_without_ax_refs(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "已通过 AX 读取专辑列表",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "music",
+                        "name": "音乐",
+                        "surface": "music_gui",
+                    },
+                    "elements": [
+                        {
+                            "label": "专辑",
+                            "context_relation": "collection_anchor",
+                        },
+                        {
+                            "label": "Album A",
+                            "context_relation": "collection_item",
+                        },
+                        {
+                            "label": "Album B",
+                            "context_relation": "collection_item",
+                        },
+                    ],
+                    "search": {
+                        "query": "列出所有专辑",
+                        "current_view_title": "专辑",
+                        "collection_label": "专辑",
+                        "collection_item_total_count": 2,
+                        "collection_item_returned_count": 2,
+                        "collection_complete": True,
+                        "sufficient": True,
+                    },
+                }
+            },
+            "读取专辑名称",
+        )
+
+        self.assertEqual(context["affordances"], [])
+        self.assertEqual(
+            context["ax_search"]["collection_items"],
+            ["Album A", "Album B"],
+        )
+        self.assertEqual(
+            context["ax_search"]["current_view_title"],
+            "专辑",
+        )
+        context_text = context_helpers._computer_use_context_text(context)
+        self.assertIn("Album A", context_text)
+        self.assertIn("Album B", context_text)
+
+    def test_playlist_noun_does_not_enable_music_playback_affordance(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "music",
+                        "name": "音乐",
+                        "surface": "music_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXGroup",
+                            "label": "ONE OF US, Afterglow",
+                            "supports": ["press"],
+                            "activation_effect": "media_playback",
+                            "ax_ref": {"fingerprint": "album"},
+                        }
+                    ],
+                    "search": {
+                        "query": "查看播放列表里的 ONE OF US, Afterglow 专辑",
+                        "sufficient": True,
+                    },
+                }
+            },
+            "查看播放列表里的 ONE OF US, Afterglow 专辑",
+        )
+
+        self.assertEqual(context["affordances"], [])
+        for query in (
+            "查看播放列表",
+            "查看播放清单",
+            "查看播放队列",
+            "view play queue",
+        ):
+            with self.subTest(query=query):
+                self.assertFalse(
+                    context_helpers._media_playback_requested(query)
+                )
+        self.assertTrue(
+            context_helpers._media_playback_requested("播放这张专辑")
+        )
+
+    def test_unique_compact_qq_search_editor_is_not_chat_input(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "qq",
+                        "name": "QQ",
+                        "surface": "qq_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXMenuItem",
+                            "label": "搜索",
+                            "supports": ["press"],
+                            "ax_ref": {"fingerprint": "hidden-menu"},
+                        },
+                        {
+                            "role": "AXTextField",
+                            "supports": ["focus", "type_text"],
+                            "bounds": {
+                                "x": 151,
+                                "y": 127,
+                                "width": 162,
+                                "height": 20,
+                            },
+                            "ax_ref": {"fingerprint": "qq-search"},
+                        },
+                    ],
+                    "search": {
+                        "query": "搜索",
+                        "sufficient": True,
+                        "actionable_match_count": 1,
+                        "visible_match_count": 1,
+                    },
+                }
+            },
+            "搜索联系人",
+        )
+
+        self.assertEqual(len(context["affordances"]), 1)
+        self.assertEqual(context["affordances"][0]["kind"], "search_field")
+        self.assertEqual(context["affordances"][0]["label"], "搜索输入框")
+        self.assertNotIn("chat_context", context)
+
+    def test_compact_qq_text_area_uses_search_intent_not_chat_role_default(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ", "surface": "qq_gui"},
+                    "elements": [
+                        {
+                            "role": "AXTextArea",
+                            "supports": ["focus", "type_text"],
+                            "bounds": {
+                                "x": 151,
+                                "y": 127,
+                                "width": 162,
+                                "height": 20,
+                            },
+                            "ax_ref": {"fingerprint": "qq-search-text-area"},
+                        }
+                    ],
+                    "search": {
+                        "query": "搜索",
+                        "sufficient": True,
+                        "actionable_match_count": 1,
+                        "visible_match_count": 1,
+                    },
+                }
+            },
+            "搜索联系人",
+        )
+
+        self.assertEqual(context["affordances"][0]["kind"], "search_field")
+        self.assertNotIn("chat_context", context)
+
+    def test_compact_qq_editor_uses_target_hint_when_free_query_omits_search_word(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ", "surface": "qq_gui"},
+                    "elements": [
+                        {
+                            "role": "AXTextField",
+                            "supports": ["focus", "type_text"],
+                            "bounds": {
+                                "x": 151,
+                                "y": 127,
+                                "width": 162,
+                                "height": 20,
+                            },
+                            "ax_ref": {"fingerprint": "qq-free-query-search"},
+                        }
+                    ],
+                    "search": {
+                        "query": "联系人 Alice",
+                        "sufficient": True,
+                        "actionable_match_count": 1,
+                        "visible_match_count": 1,
+                    },
+                }
+            },
+            "搜索联系人",
+        )
+
+        self.assertEqual(context["affordances"][0]["kind"], "search_field")
+        self.assertNotIn("chat_context", context)
+
+    def test_search_intent_does_not_reclassify_explicit_chat_editor(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ", "surface": "qq_gui"},
+                    "elements": [
+                        {
+                            "role": "AXTextArea",
+                            "label": "消息输入框",
+                            "identifier": "message-input",
+                            "focused": True,
+                            "supports": ["focus", "type_text"],
+                            "bounds": {
+                                "x": 500,
+                                "y": 600,
+                                "width": 320,
+                                "height": 60,
+                            },
+                            "ax_ref": {"fingerprint": "qq-message-input"},
+                        }
+                    ],
+                    "search": {
+                        "query": "搜索当前聊天内容",
+                        "sufficient": True,
+                        "actionable_match_count": 1,
+                        "visible_match_count": 1,
+                    },
+                }
+            },
+            "搜索当前聊天内容",
+        )
+
+        self.assertEqual(context["affordances"][0]["kind"], "chat_input")
+        self.assertTrue(context["chat_context"]["input_ready"])
+        self.assertTrue(context["chat_context"]["input_focused"])
+
+    def test_native_show_menu_is_a_reviewable_click_affordance(self) -> None:
+        ax_ref = {
+            "app_id": "music",
+            "role": "AXGroup",
+            "path": [1, 0, 0],
+            "activation": "show_menu",
+            "fingerprint": "menu-ref",
+        }
+        context = context_helpers._infer_computer_use_context(
+            "AX 读取成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "music",
+                        "name": "音乐",
+                        "surface": "music_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXGroup",
+                            "label": "测试专辑",
+                            "supports": ["press", "show_menu"],
+                            "activation": "show_menu",
+                            "activation_effect": "context_menu",
+                            "ax_ref": ax_ref,
+                        }
+                    ],
+                    "search": {
+                        "query": "显示测试专辑的上下文菜单",
+                        "sufficient": True,
+                    },
+                }
+            },
+            "显示测试专辑的上下文菜单",
+        )
+
+        affordance = context["affordances"][0]
+        self.assertEqual(affordance["supports"], ["click"])
+        self.assertEqual(affordance["activation"], "show_menu")
+        self.assertEqual(affordance["ax_ref"], ax_ref)
+        self.assertIn("native AXShowMenu action", affordance["evidence"])
 
     def test_accessibility_affordance_preserves_hierarchy_path_and_search_quality(self) -> None:
         context = context_helpers._infer_computer_use_context(
@@ -229,6 +693,205 @@ class ComputerUseContextTests(unittest.TestCase):
 
         self.assertEqual(context["affordances"], [])
         self.assertFalse(context["ax_search"]["sufficient"])
+
+    def test_insufficient_ax_search_withholds_all_executable_affordances(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 不能独立验证当前会话",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ", "surface": "qq_gui"},
+                    "elements": [
+                        {
+                            "role": "AXTextArea",
+                            "label": "消息输入框",
+                            "supports": ["focus", "type_text"],
+                            "focused": True,
+                            "ax_ref": {"fingerprint": "chat-input"},
+                        }
+                    ],
+                    "search": {
+                        "query": "验证当前会话标题和输入框",
+                        "sufficient": False,
+                        "insufficiency_reason": "active_chat_identity_unverified",
+                    },
+                }
+            },
+            "验证当前会话",
+        )
+
+        self.assertEqual(context["affordances"], [])
+        self.assertNotIn("chat_context", context)
+        self.assertTrue(context["ax_search"]["executable_refs_withheld"])
+
+    def test_stale_ax_search_never_exposes_executable_affordances(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 缓存已过期",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "finder",
+                        "name": "访达",
+                        "surface": "finder_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXRow",
+                            "label": "Downloads",
+                            "supports": ["select", "open"],
+                            "ax_ref": {"fingerprint": "old-file-row"},
+                        }
+                    ],
+                    "search": {
+                        "query": "打开 Downloads",
+                        "sufficient": True,
+                        "stale": True,
+                        "stale_reason": "snapshot_expired",
+                    },
+                }
+            },
+            "打开 Downloads",
+        )
+
+        self.assertEqual(context["affordances"], [])
+        self.assertTrue(context["ax_search"]["stale"])
+        self.assertTrue(context["ax_search"]["executable_refs_withheld"])
+
+    def test_media_playback_affordance_requires_explicit_play_intent(self) -> None:
+        element = {
+            "role": "AXGroup",
+            "label": "ONE OF US, Afterglow",
+            "supports": ["press"],
+            "activation_effect": "media_playback",
+            "ax_ref": {"fingerprint": "album-card"},
+        }
+
+        open_context = context_helpers._infer_computer_use_context(
+            "AX 搜索不足",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "music", "name": "音乐", "surface": "music_gui"},
+                    "elements": [element],
+                    "search": {
+                        "query": "打开 ONE OF US 专辑详情",
+                        "sufficient": False,
+                        "insufficiency_reason": "action_intent_mismatch",
+                    },
+                }
+            },
+            "打开 ONE OF US 专辑详情",
+        )
+        play_context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "music", "name": "音乐", "surface": "music_gui"},
+                    "elements": [element],
+                    "search": {
+                        "query": "播放 ONE OF US 专辑",
+                        "sufficient": True,
+                    },
+                }
+            },
+            "播放 ONE OF US 专辑",
+        )
+
+        self.assertEqual(open_context["affordances"], [])
+        self.assertFalse(open_context["ax_search"]["sufficient"])
+        self.assertEqual(play_context["affordances"][0]["supports"], ["click"])
+        self.assertEqual(
+            play_context["affordances"][0]["activation_effect"],
+            "media_playback",
+        )
+
+    def test_music_track_info_effect_is_preserved_for_brain(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "AX 搜索成功",
+            {
+                "accessibility": {
+                    "usable": True,
+                    "app": {
+                        "app_id": "music",
+                        "name": "音乐",
+                        "surface": "music_gui",
+                    },
+                    "elements": [
+                        {
+                            "role": "AXMenuItem",
+                            "label": "显示简介",
+                            "supports": ["press"],
+                            "activation_effect": "track_info_dialog",
+                            "ax_ref": {"fingerprint": "get-info"},
+                        }
+                    ],
+                    "search": {
+                        "query": "点击显示简介菜单项 AXMenuItem",
+                        "sufficient": True,
+                        "requested_roles": ["axmenuitem"],
+                    },
+                }
+            },
+            "显示所选歌曲的信息",
+        )
+
+        target = context["affordances"][0]
+        self.assertEqual(target["activation_effect"], "track_info_dialog")
+        self.assertTrue(
+            any("not verified album details" in item for item in target["evidence"])
+        )
+
+    def test_finder_open_and_selection_keep_distinct_file_item_semantics(self) -> None:
+        def context_for(element: dict[str, object], query: str) -> dict[str, object]:
+            return context_helpers._infer_computer_use_context(
+                "AX 搜索成功",
+                {
+                    "accessibility": {
+                        "usable": True,
+                        "app": {
+                            "app_id": "finder",
+                            "name": "访达",
+                            "surface": "finder_gui",
+                        },
+                        "elements": [element],
+                        "search": {"query": query, "sufficient": True},
+                    }
+                },
+                query,
+            )
+
+        open_context = context_for(
+            {
+                "role": "AXTextField",
+                "label": "Downloads",
+                "url": "file:///Users/test/Downloads",
+                "supports": ["open"],
+                "activation": "open",
+                "context_relation": "collection_item",
+                "ax_ref": {"fingerprint": "finder-open"},
+            },
+            "打开 Downloads 文件夹",
+        )
+        select_context = context_for(
+            {
+                "role": "AXGroup",
+                "label": "Downloads",
+                "supports": ["hit_test"],
+                "context_relation": "collection_item",
+                "ax_ref": {"fingerprint": "finder-select"},
+            },
+            "选择 Downloads 文件夹",
+        )
+
+        open_item = open_context["affordances"][0]
+        select_item = select_context["affordances"][0]
+        self.assertEqual(open_item["kind"], "file_item")
+        self.assertEqual(open_item["activation"], "open")
+        self.assertIn("native AXOpen action", open_item["evidence"])
+        self.assertEqual(select_item["kind"], "file_item")
+        self.assertEqual(select_item["activation"], "verified_geometry")
 
     def test_computer_use_context_text_includes_chat_context(self) -> None:
         context_text = context_helpers._computer_use_context_text(

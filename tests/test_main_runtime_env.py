@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from app import click_preview
+from body import active_vision as body_active_vision
 import main
 
 
@@ -255,8 +256,8 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertFalse(main._should_install_python_event_filters("darwin"))
         self.assertTrue(main._should_install_python_event_filters("win32"))
 
-    def test_macos_prefers_pyqt_bindings(self) -> None:
-        self.assertTrue(main._prefer_pyqt_bindings("darwin"))
+    def test_runtime_prefers_pyside_bindings(self) -> None:
+        self.assertFalse(main._prefer_pyqt_bindings("darwin"))
         self.assertFalse(main._prefer_pyqt_bindings("win32"))
 
     def test_default_config_omits_legacy_runtime_platform_config(self) -> None:
@@ -896,6 +897,10 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertEqual([item["app"] for item in candidates[:2]], ["StudyBrowser", "MediaBox"])
         self.assertTrue(all(item["focusable"] for item in candidates[:2]))
         self.assertTrue(candidates[0]["target_id"].startswith("running_app:"))
+        self.assertIn("Finder", [item["app"] for item in candidates])
+        finder = next(item for item in candidates if item["app"] == "Finder")
+        self.assertEqual(finder["source"], "running_app")
+        self.assertTrue(finder["focusable"])
         self.assertFalse(any(item["app"] == "logd" for item in candidates))
         self.assertFalse(any(item["app"] == "com" for item in candidates))
         self.assertEqual(calls[0][0], "osascript")
@@ -1103,28 +1108,130 @@ class MainDesktopEnvTests(unittest.TestCase):
         self.assertEqual(payload["active_observation"]["action_trace"], [])
         self.assertNotIn("data_url", payload["active_observation"])
 
-    def test_active_vision_application_capture_does_not_hide_or_raise_ipet(self) -> None:
+    def test_active_vision_application_capture_hides_and_restores_ipet(self) -> None:
         window = _FakeWindow()
+        events = []
 
-        payload = main.capture_active_vision_frame_payload(
-            window,
-            {"mode": "desktop_survey", "target_app": "Google Chrome", "settle_ms": 1},
-            {"enabled": True, "active_observation": {"enabled": True, "settle_ms": 1}},
-            screen_provider=lambda: object(),
-            frame_encoder=lambda screen, config, **kwargs: {
-                "mime_type": "image/jpeg",
-                "data_url": "data:image/jpeg;base64,active",
-                "capture_backend": "unit-test",
-            },
-            desktop_targets_provider=lambda **kwargs: [],
-            dock_items_provider=None,
-            running_apps_provider=lambda **kwargs: [],
-            sleeper=lambda seconds: None,
+        with mock.patch(
+            "body.active_vision._flush_qt_window_state",
+            side_effect=lambda: events.append("process_events"),
+        ):
+            payload = main.capture_active_vision_frame_payload(
+                window,
+                {
+                    "mode": "desktop_survey",
+                    "target_app": "Google Chrome",
+                    "accessibility_enabled": False,
+                    "settle_ms": 1,
+                },
+                {"enabled": True, "active_observation": {"enabled": True, "settle_ms": 1}},
+                platform_name="darwin",
+                screen_provider=lambda: object(),
+                frame_encoder=lambda screen, config, **kwargs: (
+                    events.append("capture")
+                    or {
+                        "mime_type": "image/jpeg",
+                        "data_url": "data:image/jpeg;base64,active",
+                        "capture_backend": "unit-test",
+                    }
+                ),
+                desktop_targets_provider=lambda **kwargs: [],
+                dock_items_provider=None,
+                running_apps_provider=lambda **kwargs: [],
+                sleeper=lambda seconds: events.append(f"sleep:{seconds}"),
+            )
+
+        self.assertEqual(window.calls, ["hide", "show"])
+        self.assertEqual(
+            events,
+            [
+                "process_events",
+                "sleep:0.001",
+                "capture",
+                "process_events",
+            ],
         )
-
-        self.assertEqual(window.calls, [])
+        self.assertNotIn("raise", window.calls)
         self.assertEqual(payload["active_observation"]["capture_scope"], "application")
         self.assertEqual(payload["active_observation"]["target_app"], "Google Chrome")
+
+    def test_application_frame_crop_preserves_screen_coordinate_origin(self) -> None:
+        copies = []
+
+        class FakeImage:
+            def width(self):
+                return 1920
+
+            def height(self):
+                return 1249
+
+            def isNull(self):
+                return False
+
+            def copy(self, x, y, width, height):
+                copies.append((x, y, width, height))
+                return object()
+
+        with (
+            mock.patch.object(
+                body_active_vision,
+                "_decode_frame_image",
+                return_value=FakeImage(),
+            ),
+            mock.patch.object(
+                body_active_vision._screen_capture,
+                "_encode_pixmap_frame",
+                return_value=(
+                    "image/jpeg",
+                    "data:image/jpeg;base64,cropped",
+                    880,
+                    640,
+                ),
+            ),
+            mock.patch.object(
+                body_active_vision._screen_capture,
+                "_visual_hash_from_image_like",
+                return_value="ahash:cropped",
+            ),
+        ):
+            result = body_active_vision._crop_application_frame_payload(
+                {
+                    "mime_type": "image/jpeg",
+                    "data_url": "data:image/jpeg;base64,full",
+                    "frame_hash": "sha256:full",
+                    "display_layout": [
+                        {
+                            "x": 0,
+                            "y": 0,
+                            "width": 1920,
+                            "height": 1249,
+                        }
+                    ],
+                },
+                {"x": 15, "y": 125, "width": 880, "height": 640},
+                {},
+            )
+
+        self.assertEqual(copies, [(15, 125, 880, 640)])
+        self.assertEqual(result["data_url"], "data:image/jpeg;base64,cropped")
+        self.assertEqual(result["capture_scope"], "application")
+        self.assertEqual(result["source_capture_scope"], "")
+        self.assertEqual(result["capture_region"], "target_application_window")
+        self.assertEqual(
+            result["display_layout"],
+            [
+                {
+                    "x": 15,
+                    "y": 125,
+                    "width": 880,
+                    "height": 640,
+                    "name": "target_application_window",
+                    "device_pixel_ratio": 1.0,
+                }
+            ],
+        )
+        self.assertEqual(result["image_width"], 880)
+        self.assertEqual(result["image_height"], 640)
 
     def test_active_vision_survey_records_discovery_error_and_fallback_candidates(self) -> None:
         window = _FakeWindow()

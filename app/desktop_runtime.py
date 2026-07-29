@@ -173,7 +173,15 @@ def should_install_python_event_filters(
 
 
 def prefer_pyqt_bindings(platform_name_value: str | None = None, *, sys_platform: str | None = None) -> bool:
-    return is_macos(platform_name_value, sys_platform=sys_platform)
+    del platform_name_value, sys_platform
+    if "PySide6.QtCore" in sys.modules:
+        return False
+    if "PyQt6.QtCore" in sys.modules:
+        return True
+    # The process-wide order is fixed: PySide6 first, PyQt6 only as fallback.
+    # Loading both bindings registers duplicate Objective-C classes on macOS
+    # and can crash later during permission or Accessibility callbacks.
+    return False
 
 
 def common_exec_search_dirs(

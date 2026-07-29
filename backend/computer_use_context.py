@@ -89,6 +89,123 @@ _DESKTOP_OBSERVE_TERMS = (
     "当前屏幕",
     "屏幕上",
 )
+_MEDIA_PLAYBACK_TERMS = (
+    "播放",
+    "继续播放",
+    "暂停",
+    "play",
+    "resume",
+    "pause",
+)
+_ACTION_CLAUSE_TERMS = tuple(
+    dict.fromkeys(
+        (
+            *_DESKTOP_ACTION_TERMS,
+            *_CHAT_REPLY_ACTION_TERMS,
+            "click",
+            "open ",
+            "launch ",
+            "play",
+            "resume",
+            "pause",
+        )
+    )
+)
+_NEGATED_ACTION_MARKERS = (
+    "不允许",
+    "不要",
+    "不得",
+    "不能",
+    "不可",
+    "不应",
+    "不必",
+    "不用",
+    "无需",
+    "无须",
+    "不准",
+    "禁止",
+    "严禁",
+    "请勿",
+    "切勿",
+    "别",
+    "without",
+    "do not",
+    "don't",
+    "must not",
+    "never",
+)
+
+
+def _positive_action_intent_text(value: object) -> str:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return ""
+    clauses = re.split(
+        r"(?:[，,。；;！？!?\n]+|而是|但是|但要|不过|\bbut\b|\binstead\b)",
+        text,
+    )
+    positive_clauses: list[str] = []
+    for clause in clauses:
+        clause = clause.strip()
+        if not clause:
+            continue
+        action_positions = [
+            position
+            for term in _ACTION_CLAUSE_TERMS
+            if (position := clause.find(term)) >= 0
+        ]
+        if action_positions:
+            first_action = min(action_positions)
+            prefix = clause[:first_action]
+            if any(marker in prefix for marker in _NEGATED_ACTION_MARKERS):
+                continue
+        positive_clauses.append(clause)
+    positive_text = " ".join(positive_clauses)
+    for pattern in (
+        r"(?:当前|已经|已)\s*打开(?:的|着|状态)",
+        r"正在\s*打开",
+        r"(?:是否|有没有|有无)\s*打开",
+        r"打开(?:的|着)\s*(?:会话|窗口|页面|应用|文件|聊天)",
+        r"(?:当前|已经|已)\s*选择(?:的|状态)",
+        r"(?:是否|能否)\s*(?:可)?点击",
+        r"可点击",
+        r"播放\s*(?:列表|清单|队列|按钮|控件|状态|记录|历史)",
+        r"暂停\s*(?:按钮|控件|状态)",
+        r"\bplay\s+(?:list|queue|button|control|state|history)\b",
+    ):
+        positive_text = re.sub(pattern, " ", positive_text)
+    return " ".join(positive_text.split())
+
+
+def _chat_action_intent_text(value: object) -> str:
+    text = _positive_action_intent_text(value)
+    for pattern in (
+        r"输入\s*(?:框|栏|区域|控件|能力|状态)",
+        r"(?:是否|能否)\s*(?:可)?输入",
+        r"可输入",
+        r"发送\s*(?:按钮|入口|控件|能力|状态|操作)",
+        r"(?:是否|能否)\s*(?:可)?发送",
+        r"可发送",
+    ):
+        text = re.sub(pattern, " ", text)
+    return " ".join(text.split())
+
+
+def _media_playback_requested(query: object) -> bool:
+    intent_text = _positive_action_intent_text(query)
+    chinese_intent = re.sub(
+        r"播放\s*(?:列表|清单|队列|按钮|控件|状态|记录|历史)",
+        " ",
+        intent_text,
+    )
+    if any(term in chinese_intent for term in ("继续播放", "播放", "暂停")):
+        return True
+    english_intent = re.sub(
+        r"\bplay\s+(?:list|queue|button|control|state|history)\b",
+        " ",
+        intent_text,
+    )
+    return bool(re.search(r"\b(?:play|resume|pause)\b", english_intent))
 
 _COORDINATE_X_RE = re.compile(r"(?i)(?:^|[^\w])x\s*[:=：=]\s*(-?\d+(?:\.\d+)?)?")
 _COORDINATE_Y_RE = re.compile(r"(?i)(?:^|[^\w])y\s*[:=：=]\s*(-?\d+(?:\.\d+)?)?")
@@ -102,12 +219,16 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
 
 
 def _looks_like_desktop_action_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
+    text = _positive_action_intent_text(user_text)
     if not text:
         return False
     if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
         return False
-    has_action = any(term in text for term in _DESKTOP_ACTION_TERMS)
+    has_action = any(
+        term in text
+        for term in _DESKTOP_ACTION_TERMS
+        if term not in _MEDIA_PLAYBACK_TERMS
+    ) or _media_playback_requested(text)
     has_target = any(term in text for term in _DESKTOP_TARGET_TERMS)
     return (has_action and (has_target or _looks_like_app_launch_request(text))) or _looks_like_chat_reply_request(text)
 
@@ -118,7 +239,7 @@ def _looks_like_desktop_observe_request(user_text: str) -> bool:
 
 
 def _looks_like_app_launch_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
+    text = _positive_action_intent_text(user_text)
     if not text:
         return False
     if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
@@ -146,7 +267,7 @@ def _app_launch_target(user_text: str) -> str:
 
 
 def _looks_like_chat_reply_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
+    text = _chat_action_intent_text(user_text)
     if not text:
         return False
     if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
@@ -155,7 +276,7 @@ def _looks_like_chat_reply_request(user_text: str) -> bool:
 
 
 def _looks_like_click_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
+    text = _positive_action_intent_text(user_text)
     explicit_click = any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
         target in text for target in _DESKTOP_TARGET_TERMS
     )
@@ -451,7 +572,11 @@ def _ax_affordance_kind(app_id: str, role: str, label: str, identifier: str) -> 
     return "control"
 
 
-def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]:
+def _accessibility_computer_use_context(
+    frame: dict[str, Any],
+    *,
+    target_hint: str = "",
+) -> dict[str, Any]:
     accessibility = frame.get("accessibility") if isinstance(frame.get("accessibility"), dict) else {}
     if not bool(accessibility.get("usable")):
         return {}
@@ -462,6 +587,11 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
     elements = accessibility.get("elements") if isinstance(accessibility.get("elements"), list) else []
     search = accessibility.get("search") if isinstance(accessibility.get("search"), dict) else {}
     search_query = str(search.get("query") or "").strip().casefold()
+    search_intent_text = f"{search_query} {target_hint}".casefold()
+    search_intent = any(
+        term in search_intent_text
+        for term in ("搜索", "查找", "search", "find")
+    )
     requested_roles = (
         search.get("requested_roles")
         if isinstance(search.get("requested_roles"), list)
@@ -472,16 +602,39 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
         or "菜单" in search_query
         or "menu" in search_query
     )
+    executable_refs_allowed = bool(
+        not search
+        or (
+            search.get("sufficient") is not False
+            and not bool(search.get("stale"))
+        )
+    )
     affordances: list[dict[str, Any]] = []
-    editable_elements: list[dict[str, Any]] = []
-    for element in elements:
+    chat_input_elements: list[dict[str, Any]] = []
+    search_field_elements: list[dict[str, Any]] = []
+    for element in elements if executable_refs_allowed else []:
         if not isinstance(element, dict):
             continue
         ax_ref = element.get("ax_ref") if isinstance(element.get("ax_ref"), dict) else {}
+        reference_app_id = str(ax_ref.get("app_id") or "").strip()
+        if reference_app_id and reference_app_id != app_id:
+            continue
         raw_supports = element.get("supports") if isinstance(element.get("supports"), list) else []
         support_set = {str(item or "").strip() for item in raw_supports}
+        activation_effect = str(element.get("activation_effect") or "").strip()
+        playback_intended = _media_playback_requested(search_query)
+        if activation_effect == "media_playback" and not playback_intended:
+            support_set.discard("press")
         supports: list[str] = []
-        if support_set.intersection({"press", "focus", "select"}):
+        click_supports = support_set.intersection(
+            {"press", "open", "focus", "select", "hit_test"}
+        )
+        if (
+            "show_menu" in support_set
+            and str(element.get("activation") or "") == "show_menu"
+        ):
+            click_supports.add("show_menu")
+        if click_supports:
             supports.append("click")
         if "type_text" in support_set:
             supports.append("type_text")
@@ -497,12 +650,62 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
             element.get("label")
             or element.get("title")
             or element.get("description")
+            or element.get("placeholder")
             or element.get("identifier")
             or role
         ).strip()[:180]
         identifier = str(element.get("identifier") or "").strip()
+        kind = _ax_affordance_kind(app_id, role, label, identifier)
+        bounds_width = _coerce_int(bounds.get("width"))
+        bounds_height = _coerce_int(bounds.get("height"))
+        editor_semantics = " ".join(
+            str(element.get(key) or "")
+            for key in (
+                "label",
+                "title",
+                "description",
+                "placeholder",
+                "identifier",
+            )
+        ).casefold()
+        editor_is_search = role == "AXSearchField" or any(
+            term in editor_semantics
+            for term in ("搜索", "查找", "search", "find")
+        )
+        editor_is_chat = any(
+            term in editor_semantics
+            for term in (
+                "消息输入框",
+                "聊天输入框",
+                "输入消息",
+                "message input",
+                "message-input",
+                "chat input",
+            )
+        )
+        if (
+            app_id in {"qq", "wechat"}
+            and (
+                editor_is_search
+                or (search_intent and not editor_is_chat)
+            )
+            and role in {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}
+            and 0 < bounds_width <= 360
+            and 0 < bounds_height <= 72
+            and max(0, int(search.get("actionable_match_count") or 0)) <= 1
+            and max(0, int(search.get("visible_match_count") or 0)) <= 1
+        ):
+            kind = "search_field"
+            if label == role:
+                label = "搜索输入框"
+        if app_id == "finder" and (
+            "open" in support_set
+            or str(element.get("url") or "").casefold().startswith("file:")
+            or str(element.get("context_relation") or "") == "collection_item"
+        ):
+            kind = "file_item"
         item: dict[str, Any] = {
-            "kind": _ax_affordance_kind(app_id, role, label, identifier),
+            "kind": kind,
             "label": label,
             "role": role,
             "supports": supports,
@@ -510,6 +713,30 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
             "evidence": ["macOS Accessibility hierarchy"],
             "confidence": 1.0,
         }
+        if kind == "search_field" and (search_intent or editor_is_search):
+            item["evidence"].append(
+                "query-aligned unique compact editable field"
+            )
+        if "hit_test" in support_set:
+            item["activation"] = "verified_geometry"
+            item["evidence"].append("unique AX collection item geometry")
+        if "open" in support_set:
+            item["activation"] = "open"
+            item["evidence"].append("native AXOpen action")
+        if (
+            "show_menu" in support_set
+            and str(element.get("activation") or "") == "show_menu"
+        ):
+            item["activation"] = "show_menu"
+            item["evidence"].append("native AXShowMenu action")
+        if activation_effect == "media_playback":
+            item["activation_effect"] = activation_effect
+            item["evidence"].append("AXPress starts media playback")
+        elif activation_effect == "track_info_dialog":
+            item["activation_effect"] = activation_effect
+            item["evidence"].append(
+                "Music opens the selected track information dialog, not verified album details"
+            )
         semantic_path = str(element.get("semantic_path") or "").strip()[:260]
         if semantic_path and semantic_path != label:
             item["semantic_path"] = semantic_path
@@ -524,8 +751,10 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
         if element.get("selected"):
             item["selected"] = True
         affordances.append(item)
-        if "type_text" in supports:
-            editable_elements.append(item)
+        if kind == "chat_input" and "type_text" in supports:
+            chat_input_elements.append(item)
+        if kind == "search_field" and "type_text" in supports:
+            search_field_elements.append(item)
         if len(affordances) >= 16:
             break
     result: dict[str, Any] = {
@@ -541,6 +770,15 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
     }
     if search:
         index = search.get("index") if isinstance(search.get("index"), dict) else {}
+        collection_items = [
+            str(element.get("label") or "").strip()[:180]
+            for element in elements
+            if (
+                isinstance(element, dict)
+                and str(element.get("context_relation") or "") == "collection_item"
+                and str(element.get("label") or "").strip()
+            )
+        ][:64]
         result["ax_search"] = {
             "available": True,
             "tool": "observe.ax_query",
@@ -567,8 +805,53 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
             ][:8],
             "role_match_count": max(0, int(search.get("role_match_count") or 0)),
             "contextual_count": max(0, int(search.get("contextual_count") or 0)),
+            "current_view_title": str(
+                search.get("current_view_title") or ""
+            )[:120],
+            "collection_label": str(search.get("collection_label") or "")[:120],
+            "collection_item_total_count": max(
+                0,
+                int(search.get("collection_item_total_count") or 0),
+            ),
+            "collection_item_returned_count": max(
+                0,
+                int(search.get("collection_item_returned_count") or 0),
+            ),
+            "collection_complete": bool(search.get("collection_complete")),
+            "collection_labels_complete": bool(
+                search.get(
+                    "collection_labels_complete",
+                    search.get("collection_complete"),
+                )
+            ),
+            "collection_labels_truncated_count": max(
+                0,
+                int(search.get("collection_labels_truncated_count") or 0),
+            ),
+            "collection_items": collection_items,
+            "near_match_labels": [
+                str(item)[:80]
+                for item in (
+                    search.get("near_match_labels")
+                    if isinstance(search.get("near_match_labels"), list)
+                    else []
+                )
+            ][:5],
+            "active_chat_identity_verified": bool(
+                search.get("active_chat_identity_verified")
+            ),
+            "active_chat_label": str(
+                search.get("active_chat_label") or ""
+            )[:160],
+            "active_chat_input_focused": bool(
+                search.get("active_chat_input_focused")
+            ),
+            "visual_fallback_required": bool(
+                search.get("visual_fallback_required", True)
+            ),
             "sufficient": bool(search.get("sufficient", True)),
             "insufficiency_reason": str(search.get("insufficiency_reason") or "")[:120],
+            "executable_refs_withheld": not executable_refs_allowed,
             "more_available": bool(search.get("search_truncated") or search.get("capture_truncated")),
             "index": {
                 "roles": dict(index.get("roles") or {}) if isinstance(index.get("roles"), dict) else {},
@@ -578,23 +861,138 @@ def _accessibility_computer_use_context(frame: dict[str, Any]) -> dict[str, Any]
                 "selected": max(0, int(index.get("selected") or 0)),
             },
         }
-    if app_id in {"wechat", "qq"} and editable_elements:
-        focused = any(bool(item.get("focused")) for item in editable_elements)
+    if (
+        app_id in {"wechat", "qq"}
+        and chat_input_elements
+        and not (search_intent and search_field_elements)
+    ):
+        focused = any(bool(item.get("focused")) for item in chat_input_elements)
         result["chat_context"] = {
             "input_ready": True,
             "input_focused": focused,
             "send_ready": any("发送" in str(item.get("label") or "") for item in affordances),
             "confidence": 1.0,
         }
+    if (
+        app_id in {"wechat", "qq"}
+        and bool(search.get("active_chat_identity_verified"))
+    ):
+        result["chat_context"] = {
+            "contact": str(search.get("active_chat_label") or "")[:160],
+            "input_ready": True,
+            "input_focused": bool(
+                search.get("active_chat_input_focused")
+            ),
+            "send_ready": any(
+                "发送" in str(item.get("label") or "")
+                for item in affordances
+            ),
+            "confidence": 1.0,
+            "source": "macos_accessibility_same_window_identity",
+        }
     return result
+
+
+def _local_ocr_computer_use_context(
+    frame: dict[str, Any],
+) -> dict[str, Any]:
+    search = (
+        frame.get("local_ocr_search")
+        if isinstance(frame.get("local_ocr_search"), dict)
+        else {}
+    )
+    matches = (
+        search.get("matches")
+        if isinstance(search.get("matches"), list)
+        else []
+    )
+    affordances: list[dict[str, Any]] = []
+    for match in matches[:8]:
+        if not isinstance(match, dict):
+            continue
+        location = (
+            match.get("location")
+            if isinstance(match.get("location"), dict)
+            else {}
+        )
+        supports = (
+            [
+                str(item or "").strip()
+                for item in match.get("supports")
+                if str(item or "").strip()
+            ]
+            if isinstance(match.get("supports"), list)
+            else []
+        )
+        try:
+            confidence = max(
+                0.0,
+                min(1.0, float(match.get("confidence") or 0.0)),
+            )
+        except (TypeError, ValueError):
+            confidence = 0.0
+        item: dict[str, Any] = {
+            "kind": str(match.get("kind") or "visual_text")[:60],
+            "label": str(match.get("label") or "")[:180],
+            "supports": supports,
+            "evidence": ["local macOS Vision OCR text box"],
+            "confidence": confidence,
+        }
+        if (
+            _has_numeric_action_argument(location, "x")
+            and _has_numeric_action_argument(location, "y")
+        ):
+            item["location"] = {
+                "x": _coerce_int(location.get("x")),
+                "y": _coerce_int(location.get("y")),
+                "coordinate_space": "macos_screen_points",
+            }
+        affordances.append(item)
+    if not search:
+        return {}
+    return {
+        "affordances": affordances,
+        "visual_search": {
+            "available": bool(search.get("available")),
+            "tool": "local_ocr_search",
+            "query_source": "observe.ax_query",
+            "source": "macos-vision-ocr",
+            "query": str(search.get("query") or "")[:240],
+            "matched_count": max(
+                0,
+                int(search.get("matched_count") or 0),
+            ),
+            "best_match_count": max(
+                0,
+                int(search.get("best_match_count") or 0),
+            ),
+            "sufficient": bool(search.get("sufficient")),
+            "actionable": bool(search.get("actionable")),
+        },
+    }
 
 
 def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | None = None, target_hint: str = "") -> dict[str, Any]:
     text = str(observation_text or "")
     frame_data = frame if isinstance(frame, dict) else {}
-    accessibility_context = _accessibility_computer_use_context(frame_data)
+    accessibility_context = _accessibility_computer_use_context(
+        frame_data,
+        target_hint=target_hint,
+    )
+    local_ocr_context = _local_ocr_computer_use_context(frame_data)
     if accessibility_context:
-        return accessibility_context
+        result = dict(accessibility_context)
+        if local_ocr_context:
+            result["affordances"] = [
+                *(
+                    result.get("affordances")
+                    if isinstance(result.get("affordances"), list)
+                    else []
+                ),
+                *local_ocr_context["affordances"],
+            ][:16]
+            result["visual_search"] = local_ocr_context["visual_search"]
+        return result
     active = frame_data.get("active_observation") if isinstance(frame_data.get("active_observation"), dict) else {}
     raw_hint = str(target_hint or "").strip()
     active_hint = str(active.get("target_hint") or "").strip()
@@ -673,7 +1071,15 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
                 }
             )
     is_chat_surface = surface.get("kind") in {"wechat_gui", "chat_gui"}
-    if is_chat_surface and ("搜索" in combined or "查找" in combined):
+    search_negative = _has_negative_visibility_evidence(
+        text,
+        ("搜索框", "搜索输入框", "search field"),
+    )
+    if (
+        is_chat_surface
+        and ("搜索" in combined or "查找" in combined)
+        and not search_negative
+    ):
         item = {
             "kind": "search_field",
             "label": "微信搜索框" if surface.get("kind") == "wechat_gui" else "搜索框",
@@ -694,7 +1100,15 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
         and contact_label in text
         and any(term in text_surface for term in ("可点击", "中心点", "坐标", "列表", "条目", "会话"))
     )
-    if is_chat_surface and (thread_evidence or target_thread_evidence):
+    thread_negative = _has_negative_visibility_evidence(
+        text,
+        ("会话列表", "会话条目", "聊天条目", "聊天项", "联系人列表"),
+    )
+    if (
+        is_chat_surface
+        and (thread_evidence or target_thread_evidence)
+        and not thread_negative
+    ):
         item = {
             "kind": "chat_thread",
             "label": contact_label or "聊天条目",
@@ -706,7 +1120,11 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
         if thread_coordinates:
             item["location"] = thread_coordinates
         affordances.append(item)
-    if "输入框" in combined or "input" in combined:
+    input_negative = _has_negative_visibility_evidence(
+        text,
+        ("聊天输入框", "消息输入框", "输入框", "message input", "chat input"),
+    )
+    if ("输入框" in combined or "input" in combined) and not input_negative:
         input_coordinates = _coordinate_pair_near_terms(text, ("聊天输入框", "消息输入", "输入框", "input", "底部")) or coordinates
         item = {
             "kind": "chat_input" if "聊天" in combined or "微信" in combined else "input",
@@ -718,7 +1136,15 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
         if input_coordinates:
             item["location"] = input_coordinates
         affordances.append(item)
-    if "发送" in combined and ("按钮" in combined or "回车" in combined or "enter" in combined):
+    send_negative = _has_negative_visibility_evidence(
+        text,
+        ("发送按钮", "发送入口", "发送", "send button"),
+    )
+    if (
+        "发送" in combined
+        and ("按钮" in combined or "回车" in combined or "enter" in combined)
+        and not send_negative
+    ):
         item = {
             "kind": "button",
             "label": "发送",
@@ -756,6 +1182,12 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
     chat_context = _infer_chat_context(text, hint, is_chat_surface=is_chat_surface)
     if chat_context:
         result["chat_context"] = chat_context
+    if local_ocr_context:
+        result["affordances"] = [
+            *result["affordances"],
+            *local_ocr_context["affordances"],
+        ][:16]
+        result["visual_search"] = local_ocr_context["visual_search"]
     return result
 
 
@@ -765,7 +1197,8 @@ def _computer_use_context_text(observation: dict[str, Any] | None) -> str:
     affordances = data.get("affordances") if isinstance(data.get("affordances"), list) else []
     chat_context = data.get("chat_context") if isinstance(data.get("chat_context"), dict) else {}
     ax_search = data.get("ax_search") if isinstance(data.get("ax_search"), dict) else {}
-    if not surface and not affordances and not chat_context and not ax_search:
+    visual_search = data.get("visual_search") if isinstance(data.get("visual_search"), dict) else {}
+    if not surface and not affordances and not chat_context and not ax_search and not visual_search:
         return ""
     return "Structured computer-use context:\n" + json.dumps(
         {
@@ -773,6 +1206,7 @@ def _computer_use_context_text(observation: dict[str, Any] | None) -> str:
             "affordances": affordances,
             "chat_context": chat_context,
             "ax_search": ax_search,
+            "visual_search": visual_search,
         },
         ensure_ascii=False,
         sort_keys=True,

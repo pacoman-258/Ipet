@@ -228,10 +228,242 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0]["status"], "success")
         self.assertEqual(responses[0]["result"], {"frame": frame, "trace": frame["active_observation"]})
 
-    def test_active_vision_restores_previous_foreground_application(self) -> None:
+    def test_active_vision_reads_target_ax_without_changing_focus(self) -> None:
         module = _router_module()
         host = _FakeHost()
+        responses = []
+        frame = {
+            "capture_backend": "macos_accessibility",
+            "accessibility": {"usable": True},
+            "active_observation": {"status": "ok", "actions": []},
+        }
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda _payload: self.fail(
+                "background AX reads must not focus the target app"
+            ),
+            capture_active_vision_frame_payload=lambda _window, _payload, _vision: frame,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-ax",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "QQ",
+                    "accessibility_enabled": True,
+                },
+            }
+        )
+
+        self.assertEqual(responses[0]["status"], "success")
+        self.assertNotIn("focus_verification", responses[0]["result"]["frame"])
+
+    def test_active_vision_refocuses_and_retries_menu_only_ax_tree(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
         restorations = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            window_count = 0 if len(captures) == 1 else 1
+            return {
+                "capture_backend": "macos_accessibility",
+                "accessibility": {
+                    "usable": True,
+                    "search": {
+                        # A menu-only tree can accidentally match the query and
+                        # claim sufficiency. Window presence, not that claim,
+                        # decides whether interactive AX needs one focused retry.
+                        "sufficient": True,
+                        "insufficiency_reason": (
+                            "" if window_count > 0 else "only_hidden_menu_matches"
+                        ),
+                        "index": {
+                            "roles": (
+                                {"AXWindow": window_count, "AXButton": 1}
+                                if window_count
+                                else {"AXApplication": 1, "AXMenuItem": 12}
+                            )
+                        },
+                    },
+                },
+                "active_observation": {"status": "ok", "actions": []},
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+                "previous_frontmost_app": "Ipet",
+            },
+            restore_target_application=lambda focus: restorations.append(
+                dict(focus)
+            )
+            or {"restored": True},
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-ax-focus-retry",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "Music",
+                    "accessibility_enabled": True,
+                    "accessibility_cache_mode": "prefer_cache",
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 2)
+        self.assertEqual(captures[1]["accessibility_cache_mode"], "refresh")
+        self.assertEqual(captures[1]["settle_ms"], 0)
+        self.assertEqual(
+            restorations[0]["previous_frontmost_app"],
+            "Ipet",
+        )
+        result_frame = responses[0]["result"]["frame"]
+        self.assertTrue(result_frame["accessibility"]["search"]["sufficient"])
+        self.assertTrue(result_frame["focus_verification"]["focused"])
+
+    def test_active_vision_does_not_attach_wrong_screen_when_target_window_stays_absent(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            if payload.get("accessibility_enabled") is False:
+                self.fail("an unverified target surface must not capture another app")
+            return {
+                "capture_backend": "macos_accessibility",
+                "target_app": None,
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ"},
+                    "search": {
+                        "sufficient": False,
+                        "insufficiency_reason": "requested_role_not_found",
+                        "window_candidates": [
+                            {
+                                "bounds": {
+                                    "x": 15,
+                                    "y": 125,
+                                    "width": 880,
+                                    "height": 640,
+                                },
+                                "focused": False,
+                                "enabled": True,
+                            }
+                        ],
+                        "index": {
+                            "roles": {
+                                "AXApplication": 1,
+                                "AXMenuItem": 12,
+                            }
+                        },
+                    },
+                },
+                "active_observation": {
+                    "status": "partial",
+                    "target_app": None,
+                    "actions": [],
+                },
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+            },
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-window-absent",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "QQ",
+                    "accessibility_enabled": True,
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 2)
+        frame = responses[0]["result"]["frame"]
+        self.assertFalse(frame["focus_verification"]["focused"])
+        self.assertFalse(frame["focus_verification"]["surface_visible"])
+        self.assertIn(
+            "application_focus_unverified",
+            frame["active_observation"]["unknowns"][0],
+        )
+
+    def test_active_vision_refocuses_when_auxiliary_window_lacks_query_evidence(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            sufficient = len(captures) > 1
+            return {
+                "capture_backend": "macos_accessibility",
+                "accessibility": {
+                    "usable": True,
+                    "search": {
+                        "sufficient": sufficient,
+                        "insufficiency_reason": (
+                            "" if sufficient else "no_actionable_match"
+                        ),
+                        "index": {
+                            "roles": {
+                                "AXWindow": 1,
+                                "AXGroup": 3,
+                                "AXButton": 3,
+                                "AXMenuItem": 16,
+                            }
+                        },
+                    },
+                },
+                "active_observation": {
+                    "status": "ok" if sufficient else "partial",
+                    "actions": [],
+                },
+            }
+
         router = module.DesktopCommandRouter(
             host,
             root_dir=Path("/tmp/ipet-router-test"),
@@ -241,24 +473,300 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             focus_target_application=lambda payload: {
                 "focused": True,
                 "target_app": payload["target_app"],
-                "previous_frontmost_app": "Ipet",
+                "frontmost_app": payload["target_app"],
             },
-            restore_target_application=lambda result: restorations.append(result) or {},
-            capture_active_vision_frame_payload=lambda *_args: {
-                "active_observation": {"status": "ok", "actions": []}
-            },
-            write_response_func=lambda *_args: None,
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
         )
 
         router.process_desktop_command(
             {
-                "nonce": "vision-restore",
+                "nonce": "vision-ax-aux-window-retry",
                 "type": "active_vision_capture",
-                "payload": {"target_app": "Music"},
+                "payload": {
+                    "target_app": "QQ",
+                    "accessibility_enabled": True,
+                    "accessibility_query": "莉森溪 会话 输入框",
+                },
             }
         )
 
-        self.assertEqual(restorations[0]["previous_frontmost_app"], "Ipet")
+        self.assertEqual(len(captures), 2)
+        self.assertEqual(captures[1]["accessibility_cache_mode"], "refresh")
+        self.assertEqual(captures[1]["settle_ms"], 0)
+        self.assertTrue(
+            responses[0]["result"]["frame"]["focus_verification"]["focused"]
+        )
+
+    def test_active_vision_refocuses_before_visual_fallback(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            return {
+                "capture_backend": "macos_screencapture",
+                "active_observation": {"status": "ok", "actions": []},
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+            },
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-fallback",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "WeChat",
+                    "accessibility_enabled": True,
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 2)
+        self.assertTrue(captures[0]["accessibility_enabled"])
+        self.assertFalse(captures[1]["accessibility_enabled"])
+        self.assertTrue(captures[1]["target_surface_verified"])
+        self.assertTrue(
+            responses[0]["result"]["frame"]["focus_verification"]["focused"]
+        )
+
+    def test_active_vision_returns_visual_fallback_in_same_command_after_ax_retry(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            if payload.get("accessibility_enabled") is False:
+                return {
+                    "capture_backend": "macos_screencapture",
+                    "active_observation": {
+                        "status": "ok",
+                        "actions": [],
+                    },
+                }
+            return {
+                "capture_backend": "macos_accessibility",
+                "accessibility": {
+                    "usable": True,
+                    "snapshot_id": "wechat-window-chrome",
+                    "search": {
+                        "sufficient": False,
+                        "insufficiency_reason": "requested_role_not_found",
+                        "window_candidates": [
+                            {
+                                "bounds": {
+                                    "x": 15,
+                                    "y": 125,
+                                    "width": 880,
+                                    "height": 640,
+                                },
+                                "focused": False,
+                                "enabled": True,
+                            }
+                        ],
+                        "index": {
+                            "roles": {
+                                "AXWindow": 1,
+                                "AXButton": 3,
+                                "AXMenuItem": 12,
+                            }
+                        },
+                    },
+                },
+                "active_observation": {
+                    "status": "partial",
+                    "actions": [],
+                },
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+            },
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-ax-to-visual",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "WeChat",
+                    "accessibility_enabled": True,
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 3)
+        self.assertTrue(captures[0]["accessibility_enabled"])
+        self.assertEqual(captures[1]["accessibility_cache_mode"], "refresh")
+        self.assertFalse(captures[2]["accessibility_enabled"])
+        self.assertTrue(captures[2]["target_surface_verified"])
+        self.assertEqual(
+            captures[2]["target_bounds"],
+            {"x": 15, "y": 125, "width": 880, "height": 640},
+        )
+        frame = responses[0]["result"]["frame"]
+        self.assertEqual(frame["capture_backend"], "macos_screencapture")
+        self.assertEqual(
+            frame["accessibility"]["snapshot_id"],
+            "wechat-window-chrome",
+        )
+        self.assertEqual(
+            frame["accessibility_fallback"]["reason"],
+            "requested_role_not_found",
+        )
+        self.assertTrue(frame["focus_verification"]["focused"])
+
+    def test_active_vision_keeps_near_match_structured_without_visual_fallback(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            if payload.get("accessibility_enabled") is False:
+                self.fail("a structurally proven near match must not capture pixels")
+            return {
+                "capture_backend": "macos_accessibility",
+                "accessibility": {
+                    "usable": True,
+                    "app": {"app_id": "qq", "name": "QQ"},
+                    "search": {
+                        "sufficient": False,
+                        "insufficiency_reason": "near_match_requires_confirmation",
+                        "near_match_labels": ["测试联系人"],
+                        "visual_fallback_required": False,
+                        "index": {
+                            "roles": {
+                                "AXWindow": 1,
+                                "AXGroup": 2,
+                            }
+                        },
+                    },
+                },
+                "active_observation": {
+                    "status": "partial",
+                    "actions": [],
+                },
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+            },
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-near-match",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "QQ",
+                    "accessibility_enabled": True,
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 2)
+        self.assertTrue(captures[0]["accessibility_enabled"])
+        self.assertEqual(captures[1]["accessibility_cache_mode"], "refresh")
+        frame = responses[0]["result"]["frame"]
+        self.assertEqual(frame["capture_backend"], "macos_accessibility")
+        self.assertNotIn("accessibility_fallback", frame)
+        self.assertEqual(frame["target_app"], "QQ")
+        self.assertEqual(frame["active_observation"]["target_app"], "QQ")
+        self.assertTrue(frame["focus_verification"]["focused"])
+
+    def test_active_vision_focus_failure_returns_explicit_partial_frame(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda _payload: (_ for _ in ()).throw(
+                RuntimeError("expected WeChat, got ChatGPT")
+            ),
+            capture_active_vision_frame_payload=lambda _window, _payload, _vision: captures.append(
+                dict(_payload)
+            ),
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-focus-failed",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "WeChat",
+                    "accessibility_enabled": False,
+                },
+            }
+        )
+
+        result = responses[0]["result"]
+        self.assertEqual(responses[0]["status"], "success")
+        self.assertEqual(captures, [])
+        self.assertEqual(result["frame"]["capture_backend"], "unavailable")
+        self.assertFalse(result["frame"]["focus_verification"]["focused"])
+        self.assertEqual(result["trace"]["status"], "partial")
+        self.assertIn(
+            "application_focus_unverified",
+            result["trace"]["unknowns"][0],
+        )
 
     def test_accessibility_index_status_and_refresh_do_not_focus_an_app(self) -> None:
         module = _router_module()
@@ -552,9 +1060,9 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         module = _router_module()
         host = _FakeHost()
         now = {"value": 100}
-        clicks = []
-        restorations = []
-        responses = []
+        clicks: list[dict] = []
+        restorations: list[dict] = []
+        responses: list[tuple[str, dict[str, object] | None]] = []
 
         def focus(payload):
             now["value"] = 250
@@ -571,8 +1079,11 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             default_response_path=Path("/tmp/ipet-router-test/response.json"),
             heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
             focus_target_application=focus,
-            restore_target_application=lambda result: restorations.append(result) or {},
             execute_human_ops_click=lambda payload: clicks.append(payload) or {},
+            restore_target_application=lambda focus_result: restorations.append(
+                focus_result
+            )
+            or {"restored": True},
             write_response_func=lambda _command, status, result=None: responses.append(
                 (status, result)
             ),
@@ -593,11 +1104,11 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         self.assertEqual(responses[0][0], "error")
         self.assertIn("expired before click", responses[0][1]["error"])
 
-    def test_poll_serializes_blocking_commands_off_poller(self) -> None:
+    def test_poll_runs_blocking_target_command_off_poller_and_serializes_work(self) -> None:
         module = _router_module()
         host = _FakeHost()
-        runners = []
-        calls = []
+        runners: list[object] = []
+        calls: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             command_path = root / "command.json"
@@ -631,7 +1142,10 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
                     "focused": True,
                     "target_app": payload["target_app"],
                 },
-                execute_human_ops_click=lambda payload: calls.append(payload["x"]) or {},
+                execute_human_ops_click=lambda payload: calls.append(
+                    f"click:{payload['x']}"
+                )
+                or {},
                 write_response_func=lambda *_args: None,
             )
             host._desktop_command_mtime = None
@@ -643,12 +1157,65 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
             self.assertEqual(list(queue_dir.glob("*.json")), [])
             runners[0]()
 
-        self.assertEqual(calls, [1, 2])
+        self.assertEqual(calls, ["click:1", "click:2"])
 
-    def test_poll_rejects_unversioned_queue_command(self) -> None:
+    def test_poll_keeps_qt_vision_capture_on_the_poller_thread(self) -> None:
         module = _router_module()
         host = _FakeHost()
-        responses = []
+        runners: list[object] = []
+        captures: list[dict[str, object]] = []
+        responses: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            command_path = root / "command.json"
+            queue_dir = root / "command.queue"
+            queue_dir.mkdir()
+            (queue_dir / "001.json").write_text(
+                json.dumps(
+                    {
+                        "protocol": "ipet.desktop-command.v1",
+                        "nonce": "vision-ui-thread",
+                        "type": "active_vision_capture",
+                        "deadline_ns": 9_999_999_999_999_999_999,
+                        "payload": {
+                            "target_app": "QQ",
+                            "accessibility_enabled": True,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            router = module.DesktopCommandRouter(
+                host,
+                root_dir=root,
+                command_path=command_path,
+                default_response_path=root / "response.json",
+                heartbeat_path=root / "heartbeat.json",
+                background_runner=lambda task: runners.append(task),
+                capture_active_vision_frame_payload=lambda _host, payload, _config: captures.append(
+                    dict(payload)
+                )
+                or {
+                    "capture_backend": "macos_accessibility",
+                    "accessibility": {"usable": True},
+                    "active_observation": {"status": "success"},
+                },
+                write_response_func=lambda _command, status, _result=None: responses.append(
+                    status
+                ),
+            )
+            host._desktop_command_mtime = None
+
+            router.on_desktop_command_poll()
+
+        self.assertEqual(runners, [])
+        self.assertEqual(len(captures), 1)
+        self.assertEqual(responses, ["success"])
+
+    def test_poll_rejects_queue_command_without_protocol_or_deadline(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             command_path = root / "command.json"
@@ -671,10 +1238,11 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
                 default_response_path=root / "response.json",
                 heartbeat_path=root / "heartbeat.json",
                 write_response_func=lambda _command, _status, result=None: responses.append(
-                    (result or {}).get("error")
+                    str((result or {}).get("error") or "")
                 ),
             )
             host._desktop_command_mtime = None
+
             router.on_desktop_command_poll()
 
         self.assertEqual(
@@ -685,7 +1253,7 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
     def test_seen_nonce_window_rejects_nonconsecutive_replay(self) -> None:
         module = _router_module()
         host = _FakeHost()
-        dispatched = []
+        dispatched: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             command_path = root / "command.json"

@@ -473,7 +473,16 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(stripped)
     except Exception:
-        return None
+        try:
+            parsed, end = json.JSONDecoder().raw_decode(stripped)
+        except Exception:
+            return None
+        # Some providers occasionally append one stray Unicode character
+        # after an otherwise complete structured reply.  Accept only a tiny
+        # suffix so prose that merely starts with JSON is still treated as
+        # ordinary visible text.
+        if len(stripped[end:].strip()) > 8:
+            return None
     return parsed if isinstance(parsed, dict) else None
 
 
@@ -506,7 +515,13 @@ def parse_brain_reply(raw_text: str) -> BrainDecision:
     kind = str(data.get("kind") or data.get("type") or "say").strip().lower()
     if kind == "say":
         payload = _as_dict(data.get("payload"))
-        visible_text = str(data.get("text") or data.get("content") or data.get("summary") or "").strip()
+        visible_text = str(
+            data.get("text")
+            or data.get("content")
+            or data.get("summary")
+            or data.get("result")
+            or ""
+        ).strip()
         return BrainDecision.say(visible_text or text, goal=_goal_from_data(data, payload))
     if kind == "think":
         payload = _as_dict(data.get("payload"))

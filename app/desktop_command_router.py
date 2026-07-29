@@ -11,7 +11,6 @@ from typing import Callable
 DESKTOP_COMMAND_PROTOCOL = "ipet.desktop-command.v1"
 _BACKGROUND_COMMAND_TYPES = frozenset(
     {
-        "active_vision_capture",
         "human_ops_click",
         "human_ops_key_press",
         "human_ops_launch_app",
@@ -56,6 +55,41 @@ def _not_configured_action(_payload):
 
 def _default_background_runner(task: Callable[[], None]) -> None:
     threading.Thread(target=task, name="ipet-ax-index-refresh", daemon=True).start()
+
+
+def _visual_target_bounds_from_accessibility(
+    accessibility: object,
+) -> dict[str, int]:
+    data = accessibility if isinstance(accessibility, dict) else {}
+    search = data.get("search") if isinstance(data.get("search"), dict) else {}
+    if (
+        search.get("stale")
+        or search.get("process_changed")
+        or not bool(data.get("usable"))
+    ):
+        return {}
+    candidates = (
+        search.get("window_candidates")
+        if isinstance(search.get("window_candidates"), list)
+        else []
+    )
+    for candidate in candidates:
+        bounds = (
+            candidate.get("bounds")
+            if isinstance(candidate, dict)
+            and isinstance(candidate.get("bounds"), dict)
+            else {}
+        )
+        try:
+            result = {
+                key: int(round(float(bounds.get(key) or 0)))
+                for key in ("x", "y", "width", "height")
+            }
+        except (TypeError, ValueError):
+            continue
+        if result["width"] >= 80 and result["height"] >= 40:
+            return result
+    return {}
 
 
 class DesktopCommandRouter:
@@ -243,6 +277,9 @@ class DesktopCommandRouter:
         except Exception:
             queued_paths = []
         if queued_paths:
+            # Intake is cheap. Drain every atomic file now and serialize only
+            # the potentially blocking work so a one-second Qt timer cannot
+            # manufacture an avoidable queue backlog.
             for queued_path in queued_paths:
                 self._process_desktop_command_path(
                     queued_path,
@@ -349,13 +386,7 @@ class DesktopCommandRouter:
                 if isinstance(command.get("payload"), dict)
                 else {}
             )
-            should_run_in_background = (
-                command_type in _BACKGROUND_COMMAND_TYPES
-                and (
-                    command_type != "active_vision_capture"
-                    or bool(str(payload.get("target_app") or "").strip())
-                )
-            )
+            should_run_in_background = command_type in _BACKGROUND_COMMAND_TYPES
             if should_run_in_background:
                 self._queue_background_command(command)
             else:
@@ -663,19 +694,303 @@ class DesktopCommandRouter:
         focus: dict[str, object] = {}
         try:
             target_app = str(payload.get("target_app") or "").strip()
-            if target_app:
+            accessibility_requested = bool(
+                target_app
+                and payload.get("accessibility_enabled", True) is not False
+            )
+            def focus_safely() -> dict[str, object]:
+                try:
+                    self._require_fresh_command(
+                        command,
+                        stage="observation focus",
+                    )
+                    result = self.focus_target_application(payload)
+                    return dict(result) if isinstance(result, dict) else {}
+                except DesktopCommandExpired:
+                    raise
+                except Exception as exc:
+                    return {
+                        "focused": False,
+                        "target_app": target_app,
+                        "error": self.clean_vision_text(exc, max_length=240),
+                    }
+
+            capture_payload = (
+                {**payload, "defer_visual_fallback": True}
+                if accessibility_requested
+                else payload
+            )
+            if target_app and not accessibility_requested:
+                focus = focus_safely()
+                if (
+                    focus.get("focused") is True
+                    and focus.get("surface_visible") is True
+                ):
+                    capture_payload = {
+                        **payload,
+                        "target_surface_verified": True,
+                    }
+            if (
+                target_app
+                and not accessibility_requested
+                and (
+                    focus.get("focused") is not True
+                    or focus.get("surface_visible") is not True
+                )
+            ):
+                frame = {
+                    "capture_backend": "unavailable",
+                    "capture_scope": "application",
+                    "target_app": target_app,
+                    "active_observation": {
+                        "status": "partial",
+                        "target_app": target_app,
+                        "capture_scope": "application",
+                        "unknowns": [],
+                        "actions": [],
+                    },
+                }
+            else:
                 self._require_fresh_command(
                     command,
-                    stage="observation focus",
+                    stage="screen observation",
                 )
-                focus = self.focus_target_application(payload)
-            self._require_fresh_command(
-                command,
-                stage="screen observation",
+                frame = self.capture_active_vision_frame_payload(
+                    self.host,
+                    capture_payload,
+                    config.get("vision", {}),
+                )
+            accessibility = (
+                frame.get("accessibility")
+                if isinstance(frame, dict)
+                and isinstance(frame.get("accessibility"), dict)
+                else {}
             )
-            frame = self.capture_active_vision_frame_payload(self.host, payload, config.get("vision", {}))
+            search = (
+                accessibility.get("search")
+                if isinstance(accessibility.get("search"), dict)
+                else {}
+            )
+            index = search.get("index") if isinstance(search.get("index"), dict) else {}
+            roles = index.get("roles") if isinstance(index.get("roles"), dict) else {}
+            if (
+                accessibility_requested
+                and isinstance(frame, dict)
+                and str(frame.get("capture_backend") or "") == "macos_accessibility"
+                and (
+                    not bool(accessibility.get("usable"))
+                    or (
+                        bool(roles)
+                        and (
+                            int(roles.get("AXWindow") or 0) <= 0
+                            or search.get("sufficient") is not True
+                        )
+                    )
+                )
+            ):
+                focus = focus_safely()
+                if focus.get("focused") is True:
+                    self._require_fresh_command(
+                        command,
+                        stage="accessibility observation",
+                    )
+                    frame = self.capture_active_vision_frame_payload(
+                        self.host,
+                        {
+                            **payload,
+                            "defer_visual_fallback": True,
+                            "accessibility_cache_mode": "refresh",
+                            # AX can be richest immediately after a verified
+                            # application activation. A fixed visual settle
+                            # delay gives focus-stealing apps time to reclaim
+                            # the foreground and degrades the tree to menus.
+                            "settle_ms": 0,
+                        },
+                        config.get("vision", {}),
+                    )
+            if (
+                accessibility_requested
+                and isinstance(frame, dict)
+                and str(frame.get("capture_backend") or "")
+                == "macos_accessibility"
+            ):
+                focused_accessibility = (
+                    frame.get("accessibility")
+                    if isinstance(frame.get("accessibility"), dict)
+                    else {}
+                )
+                focused_search = (
+                    focused_accessibility.get("search")
+                    if isinstance(
+                        focused_accessibility.get("search"),
+                        dict,
+                    )
+                    else {}
+                )
+                focused_index = (
+                    focused_search.get("index")
+                    if isinstance(focused_search.get("index"), dict)
+                    else {}
+                )
+                focused_roles = (
+                    focused_index.get("roles")
+                    if isinstance(focused_index.get("roles"), dict)
+                    else {}
+                )
+                focused_app = (
+                    focused_accessibility.get("app")
+                    if isinstance(focused_accessibility.get("app"), dict)
+                    else {}
+                )
+                focused_app_id = str(
+                    focused_app.get("app_id") or ""
+                ).strip().casefold()
+                if (
+                    bool(focused_accessibility.get("usable"))
+                    and focused_app_id in {"qq", "wechat", "music"}
+                    and int(focused_roles.get("AXWindow") or 0) <= 0
+                ):
+                    focus = {
+                        **focus,
+                        "focused": False,
+                        "surface_visible": False,
+                        "error": (
+                            "The target application became frontmost but "
+                            "no visible application window was exposed."
+                        ),
+                    }
+            visual_fallback_performed = False
+            if (
+                accessibility_requested
+                and isinstance(frame, dict)
+                and str(frame.get("capture_backend") or "")
+                == "macos_accessibility"
+            ):
+                latest_accessibility = (
+                    frame.get("accessibility")
+                    if isinstance(frame.get("accessibility"), dict)
+                    else {}
+                )
+                latest_search = (
+                    latest_accessibility.get("search")
+                    if isinstance(latest_accessibility.get("search"), dict)
+                    else {}
+                )
+                if (
+                    not bool(latest_accessibility.get("usable"))
+                    or (
+                        latest_search.get("sufficient") is False
+                        and latest_search.get("visual_fallback_required")
+                        is not False
+                    )
+                ):
+                    if (
+                        focus.get("focused") is not True
+                        and focus.get("surface_visible") is not False
+                    ):
+                        focus = focus_safely()
+                    if (
+                        focus.get("focused") is True
+                        and focus.get("surface_visible") is True
+                    ):
+                        self._require_fresh_command(
+                            command,
+                            stage="visual observation",
+                        )
+                        visual_frame = self.capture_active_vision_frame_payload(
+                            self.host,
+                            {
+                                **payload,
+                                "accessibility_enabled": False,
+                                "target_surface_verified": True,
+                                "target_bounds": (
+                                    _visual_target_bounds_from_accessibility(
+                                        latest_accessibility
+                                    )
+                                ),
+                            },
+                            config.get("vision", {}),
+                        )
+                        if isinstance(visual_frame, dict):
+                            visual_frame = dict(visual_frame)
+                            visual_frame["accessibility"] = latest_accessibility
+                            visual_frame["accessibility_fallback"] = {
+                                "reason": str(
+                                    latest_search.get(
+                                        "insufficiency_reason"
+                                    )
+                                    or "insufficient_ax_search"
+                                ).strip(),
+                                "ax_snapshot_id": str(
+                                    latest_accessibility.get(
+                                        "snapshot_id"
+                                    )
+                                    or ""
+                                ),
+                            }
+                        frame = visual_frame
+                        visual_fallback_performed = True
+            if (
+                accessibility_requested
+                and isinstance(frame, dict)
+                and str(frame.get("capture_backend") or "") != "macos_accessibility"
+                and not visual_fallback_performed
+            ):
+                if (
+                    focus.get("focused") is not True
+                    and focus.get("surface_visible") is not False
+                ):
+                    focus = focus_safely()
+                if (
+                    focus.get("focused") is True
+                    and focus.get("surface_visible") is True
+                ):
+                    self._require_fresh_command(
+                        command,
+                        stage="visual observation",
+                    )
+                    frame = self.capture_active_vision_frame_payload(
+                        self.host,
+                        {
+                            **payload,
+                            "accessibility_enabled": False,
+                            "target_surface_verified": True,
+                        },
+                        config.get("vision", {}),
+                    )
+            if target_app and isinstance(frame, dict):
+                frame = dict(frame)
+                frame["target_app"] = target_app
+                active_observation = (
+                    dict(frame.get("active_observation"))
+                    if isinstance(frame.get("active_observation"), dict)
+                    else {}
+                )
+                active_observation["target_app"] = target_app
+                frame["active_observation"] = active_observation
             if focus and isinstance(frame, dict):
+                frame = dict(frame)
                 frame["focus_verification"] = focus
+                if focus.get("focused") is not True:
+                    trace = (
+                        dict(frame.get("active_observation"))
+                        if isinstance(frame.get("active_observation"), dict)
+                        else {}
+                    )
+                    unknowns = (
+                        list(trace.get("unknowns"))
+                        if isinstance(trace.get("unknowns"), list)
+                        else []
+                    )
+                    focus_error = self.clean_vision_text(
+                        focus.get("error") or "target application focus was not verified",
+                        max_length=240,
+                    )
+                    unknowns.append(f"application_focus_unverified: {focus_error}")
+                    trace["unknowns"] = list(dict.fromkeys(unknowns))
+                    if str(trace.get("status") or "").lower() in {"", "ok", "success"}:
+                        trace["status"] = "partial"
+                    frame["active_observation"] = trace
             trace = frame.get("active_observation") if isinstance(frame, dict) and isinstance(frame.get("active_observation"), dict) else {}
             self.write_desktop_command_response(command, "success", {"frame": frame, "trace": trace})
         except Exception as exc:
@@ -697,7 +1012,9 @@ class DesktopCommandRouter:
                 try:
                     self.restore_target_application(focus)
                 except Exception as exc:
-                    self.print_func(f"恢复观察前台应用失败: {exc}")
+                    self.print_func(
+                        f"恢复观察前台应用失败: {exc}"
+                    )
         self.write_desktop_host_heartbeat()
 
     def _process_accessibility_index_status(self, command: dict) -> None:

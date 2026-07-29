@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from unittest import mock
 
 from body.environment_controller import EnvironmentController, desktop_metadata_payload, read_idle_seconds
 
@@ -77,6 +78,29 @@ class EnvironmentControllerTests(unittest.TestCase):
         controller.collect_once()
         self.assertEqual(posts[0][0], "http://127.0.0.1:9000/api/environment/events")
         self.assertNotIn("visible_text", posts[0][1])
+
+    def test_repeated_identical_post_error_is_logged_once_until_recovery(self) -> None:
+        timer = _Timer()
+        outcomes = [RuntimeError("403"), RuntimeError("403"), None, RuntimeError("403")]
+
+        def post_event(_url, _payload, _timeout):
+            outcome = outcomes.pop(0)
+            if outcome is not None:
+                raise outcome
+
+        controller = EnvironmentController(
+            timer_factory=lambda _parent: timer,
+            metadata_provider=lambda _config: {"foreground_app": "Editor"},
+            idle_provider=lambda: 0,
+            task_runner=lambda task: task(),
+            post_event=post_event,
+        )
+        controller.apply_config({"environment": {"mode": "active", "metadata_enabled": True}})
+        with mock.patch("builtins.print") as print_mock:
+            for _ in range(4):
+                controller.collect_once()
+
+        self.assertEqual(print_mock.call_count, 2)
 
 
 if __name__ == "__main__":

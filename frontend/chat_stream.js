@@ -141,7 +141,8 @@
         const blocked =
           ["blocked", "need_user"].includes(goalStatus) ||
           payload?.approved === false ||
-          payload?.execution?.ok === false;
+          payload?.execution?.ok === false ||
+          payload?.execution?.continuation_ok === false;
         const terminalCategory = blocked ? "blocked" : "completed";
         const terminalText = blocked ? "任务未能继续，已说明缺少的条件" : "任务完成，结果已验证";
         const terminalTurn = appendWorklogPhase(

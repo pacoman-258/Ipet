@@ -222,7 +222,10 @@ def create_human_ops_decision_route_deps(
         blocked_react_decision=context.blocked_react_decision or (lambda user_text, last_decision=None: BrainDecision.say(user_text)),
         unsupported_simple_action_prompt=context.unsupported_simple_action_prompt or (lambda **kwargs: ""),
         with_inherited_enter_expected_text=context.with_inherited_enter_expected_text
-        or (lambda decision, *, previous_proposal, execution: decision),
+        or (
+            lambda decision, *, previous_proposal, execution, observation=None,
+            chat_send_transaction=None: decision
+        ),
         create_human_ops_act_proposal=context.create_human_ops_act_proposal or (lambda **kwargs: ("", None)),
         proposal_event_payload=context.proposal_event_payload or (lambda proposal_id, proposal: {}),
         react_followup_prompt=context.react_followup_prompt or (lambda **kwargs: ""),

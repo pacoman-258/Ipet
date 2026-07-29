@@ -8,6 +8,7 @@ from unittest import mock
 from brain.decisions import BrainDecision
 from backend import app as backend_app
 from backend.human_ops_observe import HumanOpsObserveDependencies, perform_human_ops_observe
+from backend.observe_result import build_local_ocr_search
 
 
 def _deps(**overrides):
@@ -37,6 +38,157 @@ def _deps(**overrides):
 
 
 class HumanOpsObserveSplitTests(unittest.TestCase):
+    def test_local_ocr_search_returns_only_query_matching_screen_coordinates(self) -> None:
+        result = build_local_ocr_search(
+            {
+                "display_layout": [
+                    {
+                        "x": 15,
+                        "y": 125,
+                        "width": 880,
+                        "height": 640,
+                    }
+                ],
+                "local_ocr": {
+                    "items": [
+                        {
+                            "text": "目标会话",
+                            "confidence": 0.91,
+                            "box": {
+                                "x": 0.1,
+                                "y": 0.7,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        },
+                        {
+                            "text": "不相关的私人文字",
+                            "confidence": 0.99,
+                            "box": {
+                                "x": 0.5,
+                                "y": 0.4,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        },
+                    ]
+                },
+            },
+            "点击目标会话的会话入口",
+        )
+
+        self.assertTrue(result["sufficient"])
+        self.assertTrue(result["actionable"])
+        self.assertEqual(result["matched_count"], 1)
+        self.assertEqual(result["matches"][0]["label"], "目标会话")
+        self.assertEqual(
+            result["matches"][0]["location"],
+            {
+                "x": 191,
+                "y": 301,
+                "coordinate_space": "macos_screen_points",
+            },
+        )
+        self.assertNotIn("不相关", str(result))
+
+    def test_local_ocr_search_with_duplicate_best_labels_is_not_actionable(self) -> None:
+        result = build_local_ocr_search(
+            {
+                "display_layout": [
+                    {"x": 0, "y": 0, "width": 800, "height": 600}
+                ],
+                "local_ocr": {
+                    "items": [
+                        {
+                            "text": "目标会话",
+                            "confidence": 0.9,
+                            "box": {
+                                "x": 0.1,
+                                "y": 0.7,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        },
+                        {
+                            "text": "目标会话",
+                            "confidence": 0.88,
+                            "box": {
+                                "x": 0.5,
+                                "y": 0.7,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        },
+                    ]
+                },
+            },
+            "点击目标会话",
+        )
+
+        self.assertFalse(result["sufficient"])
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["best_match_count"], 2)
+        self.assertTrue(
+            all(not match.get("supports") for match in result["matches"])
+        )
+        self.assertTrue(
+            all("location" not in match for match in result["matches"])
+        )
+
+    def test_local_ocr_search_rejects_instruction_words_and_weak_matches(self) -> None:
+        instruction_only = build_local_ocr_search(
+            {
+                "display_layout": [
+                    {"x": 0, "y": 0, "width": 800, "height": 600}
+                ],
+                "local_ocr": {
+                    "items": [
+                        {
+                            "text": "打开",
+                            "confidence": 0.99,
+                            "box": {
+                                "x": 0.1,
+                                "y": 0.7,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        }
+                    ]
+                },
+            },
+            "打开目标会话",
+        )
+        weak_target = build_local_ocr_search(
+            {
+                "display_layout": [
+                    {"x": 0, "y": 0, "width": 800, "height": 600}
+                ],
+                "local_ocr": {
+                    "items": [
+                        {
+                            "text": "目标会话",
+                            "confidence": 0.2,
+                            "box": {
+                                "x": 0.1,
+                                "y": 0.7,
+                                "width": 0.2,
+                                "height": 0.05,
+                            },
+                        }
+                    ]
+                },
+            },
+            "打开目标会话",
+        )
+
+        self.assertEqual(instruction_only["matched_count"], 0)
+        self.assertFalse(instruction_only["actionable"])
+        self.assertEqual(weak_target["matched_count"], 1)
+        self.assertFalse(weak_target["sufficient"])
+        self.assertFalse(weak_target["actionable"])
+        self.assertNotIn("supports", weak_target["matches"][0])
+        self.assertNotIn("location", weak_target["matches"][0])
+
     def test_module_does_not_import_backend_app(self) -> None:
         import backend.human_ops_observe as observe_module
 
@@ -108,6 +260,27 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertEqual(payload["target_app"], "Google Chrome")
         self.assertEqual(payload["capture_scope"], "application")
 
+    def test_desktop_surface_name_is_not_treated_as_an_application(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={"frame": {"capture_backend": "macos_screencapture"}}
+        )
+
+        asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "列出当前前台应用及其可见窗口",
+                    target_app="当前桌面",
+                ),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(send_desktop_command=send_mock),
+            )
+        )
+
+        payload = send_mock.await_args.args[1]
+        self.assertEqual(payload["target_app"], "")
+        self.assertEqual(payload["capture_scope"], "desktop")
+        self.assertNotIn("accessibility_query", payload)
+
     def test_model_ax_query_drives_bounded_search_for_each_supported_app(self) -> None:
         send_mock = mock.AsyncMock(
             return_value={
@@ -146,7 +319,9 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
                 self.assertEqual(payload["target_app"], target_app)
                 self.assertEqual(payload["accessibility_query"], ax_query)
                 self.assertEqual(payload["accessibility_cache_mode"], "prefer_cache")
-                self.assertEqual(payload["accessibility_result_limit"], 10)
+                self.assertEqual(payload["accessibility_result_limit"], 16)
+                self.assertEqual(payload["accessibility_timeout_sec"], 6.0)
+                self.assertEqual(send_mock.await_args.kwargs["timeout_sec"], 18)
 
     def test_question_is_only_a_compatibility_fallback_for_ax_search(self) -> None:
         send_mock = mock.AsyncMock(return_value={"frame": {"capture_backend": "macos_screencapture"}})
@@ -284,6 +459,203 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertEqual(
             result["frame"]["accessibility_fallback"]["reason"],
             "no_semantic_match",
+        )
+
+    def test_unique_local_ocr_match_becomes_structured_without_brain_image(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_screencapture",
+                    "data_url": "data:image/png;base64,AA==",
+                    "display_layout": [
+                        {"x": 15, "y": 125, "width": 880, "height": 640}
+                    ],
+                    "focus_verification": {
+                        "focused": True,
+                        "surface_visible": True,
+                        "target_app": "微信",
+                    },
+                    "accessibility": {
+                        "usable": True,
+                        "app": {
+                            "app_id": "wechat",
+                            "name": "微信",
+                            "surface": "wechat_gui",
+                        },
+                        "elements": [],
+                        "search": {
+                            "query": "点击目标会话",
+                            "sufficient": False,
+                            "visual_fallback_required": True,
+                            "insufficiency_reason": "no_semantic_match",
+                        },
+                    },
+                }
+            }
+        )
+        local_calls: list[str] = []
+
+        def enrich_local(frame: dict, query: str) -> dict:
+            local_calls.append(query)
+            return {
+                **frame,
+                "local_ocr_search": {
+                    "available": True,
+                    "query": query,
+                    "matched_count": 1,
+                    "best_match_count": 1,
+                    "sufficient": True,
+                    "actionable": True,
+                    "matches": [
+                        {
+                            "label": "目标会话",
+                            "kind": "chat_thread",
+                            "supports": ["click"],
+                            "confidence": 0.91,
+                            "location": {
+                                "x": 191,
+                                "y": 301,
+                                "coordinate_space": "macos_screen_points",
+                            },
+                        }
+                    ],
+                },
+            }
+
+        def infer_context(_text, frame, _target):
+            match = frame["local_ocr_search"]["matches"][0]
+            return {
+                "surface": {
+                    "kind": "wechat_gui",
+                    "app": "微信",
+                    "app_id": "wechat",
+                },
+                "affordances": [match],
+                "ax_search": {
+                    "sufficient": False,
+                    "insufficiency_reason": "no_semantic_match",
+                },
+                "visual_search": {
+                    "sufficient": True,
+                    "matched_count": 1,
+                },
+            }
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "screen",
+                    target_app="微信",
+                    ax_query="点击目标会话",
+                ),
+                {
+                    "observe_screen": True,
+                    "accessibility": True,
+                    "observe_model": {"enabled": False},
+                },
+                deps=_deps(
+                    send_desktop_command=send_mock,
+                    enrich_observation_frame_with_local_ocr=enrich_local,
+                    infer_computer_use_context=infer_context,
+                ),
+            )
+        )
+
+        self.assertEqual(local_calls, ["点击目标会话"])
+        self.assertEqual(result["analysis_route"], "structured")
+        self.assertEqual(result["visual_search"]["matched_count"], 1)
+        self.assertEqual(result["affordances"][0]["location"]["x"], 191)
+        self.assertTrue(
+            str(result["frame"].get("data_url") or "").startswith(
+                "data:image/"
+            )
+        )
+
+    def test_near_match_ambiguity_stays_structured_without_screenshot(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_accessibility",
+                    "accessibility": {
+                        "usable": True,
+                        "snapshot_id": "axs-qq",
+                        "text": "找到近似可见名称：测试联系人；必须由用户确认。",
+                        "elements": [],
+                        "search": {
+                            "query": "测试联系入 会话列表",
+                            "sufficient": False,
+                            "insufficiency_reason": "near_match_requires_confirmation",
+                            "near_match_labels": ["测试联系人"],
+                            "visual_fallback_required": False,
+                        },
+                    },
+                },
+                "trace": {"ax": "ambiguous"},
+            }
+        )
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "screen",
+                    target_app="QQ",
+                    ax_query="测试联系入 会话列表",
+                ),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(send_desktop_command=send_mock),
+            )
+        )
+
+        self.assertEqual(send_mock.await_count, 1)
+        self.assertEqual(result["analysis_route"], "structured")
+        self.assertNotIn("accessibility_fallback", result["frame"])
+        self.assertEqual(
+            result["frame"]["accessibility"]["search"]["insufficiency_reason"],
+            "near_match_requires_confirmation",
+        )
+
+    def test_verified_focus_failure_does_not_start_a_second_visual_command(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_accessibility",
+                    "focus_verification": {
+                        "focused": False,
+                        "surface_visible": False,
+                        "error": "target window is not on the current Space",
+                    },
+                    "accessibility": {
+                        "usable": True,
+                        "elements": [],
+                        "search": {
+                            "sufficient": False,
+                            "insufficiency_reason": "requested_role_not_found",
+                        },
+                    },
+                },
+                "trace": {"status": "partial"},
+            }
+        )
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "screen",
+                    target_app="QQ",
+                    ax_query="conversation input",
+                ),
+                {
+                    "observe_screen": True,
+                    "observe_model": {"enabled": False},
+                },
+                deps=_deps(send_desktop_command=send_mock),
+            )
+        )
+
+        self.assertEqual(send_mock.await_count, 1)
+        self.assertEqual(
+            result["frame"]["focus_verification"]["surface_visible"],
+            False,
         )
 
     def test_observe_model_disabled_reports_missing_capture_data(self) -> None:

@@ -320,6 +320,17 @@ def _enrich_observation_frame_with_model(frame: dict[str, Any], human_ops_config
     )
 
 
+def _enrich_observation_frame_with_local_ocr(
+    frame: dict[str, Any],
+    query: str,
+) -> dict[str, Any]:
+    return _observe_result_helpers.enrich_observation_frame_with_local_ocr(
+        frame,
+        query,
+        analyzer_class=_vision_analyzer_class(),
+    )
+
+
 async def _send_desktop_command_from_app(
     command_type: str,
     payload: dict[str, Any] | None = None,
@@ -349,6 +360,9 @@ async def _perform_human_ops_observe(decision: BrainDecision, human_ops_config: 
             observe_click_coordinate_status=_observe_click_coordinate_status,
             goal_requests_click_coordinate_followup=_goal_requests_click_coordinate_followup,
             click_coordinate_observe_failure_text=_click_coordinate_observe_failure_text,
+            enrich_observation_frame_with_local_ocr=(
+                _enrich_observation_frame_with_local_ocr
+            ),
         ),
     )
 

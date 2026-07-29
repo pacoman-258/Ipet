@@ -45,6 +45,8 @@ ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "loca
 ANALYZER_IMAGE_DETAILS = {"low", "high", "auto"}
 ANALYZER_STATUS_KEYS = {"enabled", "provider", "status", "last_error", "observations_added", "unknowns_added"}
 DATA_URL_PREFIX = "data:"
+MAX_LOCAL_OCR_ITEMS = 128
+MAX_LOCAL_OCR_ITEM_TEXT = 180
 
 
 @dataclass(frozen=True)
@@ -237,7 +239,10 @@ class VisionAnalyzer:
             message = f"macOS OCR failed: {detail or 'swift helper failed'}"
             return {"observations": [], "unknowns": [message], "last_error": message}
 
-        text = _extract_ocr_text(getattr(result, "stdout", ""), max_chars=int(self.config["max_text_chars"]))
+        text, ocr_items = _extract_ocr_payload(
+            getattr(result, "stdout", ""),
+            max_chars=int(self.config["max_text_chars"]),
+        )
         if not text:
             return {"observations": [], "unknowns": ["macOS OCR did not detect readable screen text"], "last_error": ""}
 
@@ -253,6 +258,7 @@ class VisionAnalyzer:
             "observations": [observation],
             "unknowns": [],
             "last_error": "",
+            "ocr_items": ocr_items,
         }
 
     def _analyze_with_openai_compatible_vlm(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -504,19 +510,87 @@ def _decode_frame_data_url(payload: dict[str, Any], *, max_bytes: int) -> tuple[
     return mime_type, image_bytes
 
 
-def _extract_ocr_text(output: Any, *, max_chars: int) -> str:
+def _normalized_ocr_box(value: Any) -> dict[str, float]:
+    source = value if isinstance(value, dict) else {}
+    try:
+        x = float(source.get("x"))
+        y = float(source.get("y"))
+        width = float(source.get("width"))
+        height = float(source.get("height"))
+    except (TypeError, ValueError):
+        return {}
+    if (
+        width <= 0
+        or height <= 0
+        or x < 0
+        or y < 0
+        or x > 1
+        or y > 1
+    ):
+        return {}
+    width = min(width, 1 - x)
+    height = min(height, 1 - y)
+    if width <= 0 or height <= 0:
+        return {}
+    return {
+        "x": round(x, 7),
+        "y": round(y, 7),
+        "width": round(width, 7),
+        "height": round(height, 7),
+    }
+
+
+def _sanitize_ocr_items(value: Any) -> list[dict[str, Any]]:
+    source = value if isinstance(value, list) else []
+    items: list[dict[str, Any]] = []
+    for raw_item in source[:MAX_LOCAL_OCR_ITEMS]:
+        if not isinstance(raw_item, dict):
+            continue
+        text = _clean_text(
+            raw_item.get("text"),
+            max_length=MAX_LOCAL_OCR_ITEM_TEXT,
+        )
+        box = _normalized_ocr_box(raw_item.get("box"))
+        if not text or not box:
+            continue
+        try:
+            confidence = float(raw_item.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        items.append(
+            {
+                "text": text,
+                "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                "box": box,
+            }
+        )
+    return items
+
+
+def _extract_ocr_payload(
+    output: Any,
+    *,
+    max_chars: int,
+) -> tuple[str, list[dict[str, Any]]]:
     raw = str(output or "").strip()
     if not raw:
-        return ""
+        return "", []
     try:
         parsed = json.loads(raw)
     except Exception:
         parsed = None
+    items: list[dict[str, Any]] = []
     if isinstance(parsed, dict):
         raw = str(parsed.get("text") or "")
+        items = _sanitize_ocr_items(parsed.get("items"))
     elif isinstance(parsed, list):
         raw = " ".join(str(item) for item in parsed)
-    return _clean_text(raw, max_length=max_chars)
+    return _clean_text(raw, max_length=max_chars), items
+
+
+def _extract_ocr_text(output: Any, *, max_chars: int) -> str:
+    text, _items = _extract_ocr_payload(output, max_chars=max_chars)
+    return text
 
 
 def merge_analysis_into_payload(payload: dict[str, Any], config: Any, analysis: dict[str, Any]) -> VisionAnalysisResult:
@@ -553,6 +627,14 @@ def merge_analysis_into_payload(payload: dict[str, Any], config: Any, analysis: 
     observe_answer = _clean_text(analysis.get("observe_answer") or analysis_summary, max_length=1200)
     if observe_answer:
         enriched["observe_answer"] = observe_answer
+    ocr_items = _sanitize_ocr_items(analysis.get("ocr_items"))
+    if ocr_items:
+        enriched["local_ocr"] = {
+            "source": "macos-vision-ocr",
+            "items": ocr_items,
+        }
+    else:
+        enriched.pop("local_ocr", None)
     enriched["analysis"] = status
     return VisionAnalysisResult(enriched, status)
 
@@ -836,15 +918,27 @@ _MACOS_VISION_OCR_SWIFT = textwrap.dedent(
     }
 
     var recognized: [String] = []
+    var recognizedItems: [[String: Any]] = []
     let request = VNRecognizeTextRequest { request, error in
         if let error = error {
             FileHandle.standardError.write(Data(error.localizedDescription.utf8))
             return
         }
         let observations = request.results as? [VNRecognizedTextObservation] ?? []
-        for observation in observations {
+        for observation in observations.prefix(128) {
             if let candidate = observation.topCandidates(1).first {
                 recognized.append(candidate.string)
+                let box = observation.boundingBox
+                recognizedItems.append([
+                    "text": String(candidate.string.prefix(180)),
+                    "confidence": Double(candidate.confidence),
+                    "box": [
+                        "x": Double(box.origin.x),
+                        "y": Double(box.origin.y),
+                        "width": Double(box.size.width),
+                        "height": Double(box.size.height),
+                    ],
+                ])
             }
         }
     }
@@ -855,7 +949,12 @@ _MACOS_VISION_OCR_SWIFT = textwrap.dedent(
     do {
         try handler.perform([request])
         let joined = recognized.joined(separator: " ")
-        print(String(joined.prefix(maxChars)))
+        let payload: [String: Any] = [
+            "text": String(joined.prefix(maxChars)),
+            "items": recognizedItems,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        print(String(data: data, encoding: .utf8) ?? "{}")
     } catch {
         FileHandle.standardError.write(Data(error.localizedDescription.utf8))
         exit(4)

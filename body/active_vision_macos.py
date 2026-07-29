@@ -319,7 +319,7 @@ def _app_bundle_info_from_process_path(process_path: str) -> dict[str, str]:
                 return {}
             app_root = lowered_parts[index - 1] if index > 0 else ""
             is_system_app = index >= 2 and lowered_parts[index - 2 : index] == ["system", "applications"]
-            is_core_services_app = index >= 4 and lowered_parts[index - 4 : index] == [
+            is_core_services_app = index >= 3 and lowered_parts[index - 3 : index] == [
                 "system",
                 "library",
                 "coreservices",

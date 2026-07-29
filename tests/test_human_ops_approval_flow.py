@@ -10,10 +10,16 @@ from backend.task_control import TASK_CONTROL, TaskStopped
 from human_ops.approvals import ReviewableProposal
 from human_ops.approval_flow import (
     HumanOpsApprovalFlowDependencies,
+    _action_retry_key,
     execution_verification,
+    near_match_confirmation_decision,
+    observation_confirms_expected_draft,
     stream_human_ops_proposal_decision,
 )
-from human_ops.proposals import proposal_event_payload
+from human_ops.proposals import (
+    proposal_event_payload,
+    with_inherited_enter_expected_text,
+)
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -64,6 +70,64 @@ def _goal_status(decision: BrainDecision, *, operation_request: bool) -> str:
 
 
 class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
+    def test_near_match_requires_explicit_user_confirmation(self) -> None:
+        decision = near_match_confirmation_decision(
+            {
+                "ax_search": {
+                    "insufficiency_reason": "near_match_requires_confirmation",
+                    "near_match_labels": ["测试联系人"],
+                }
+            },
+            "打开测试联系入会话",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.payload["goal"]["status"], "need_user")
+        self.assertEqual(
+            decision.payload["goal"]["next"],
+            "confirm_near_match",
+        )
+        self.assertIn("测试联系人", decision.summary)
+
+    def test_type_text_retry_key_survives_ax_path_and_fingerprint_churn(self) -> None:
+        first = {
+            "action_type": "type_text",
+            "arguments": {
+                "target_app": "QQ",
+                "text": "目标会话",
+                "replace_existing": True,
+                "ax_ref": {
+                    "app_id": "qq",
+                    "role": "AXTextField",
+                    "input_kind": "search_field",
+                    "path": [1, 2, 3],
+                    "bounds": {"x": 739, "y": 154, "width": 138, "height": 20},
+                    "fingerprint": "before-overlay",
+                },
+            },
+        }
+        repeated = {
+            "action_type": "type_text",
+            "arguments": {
+                "target_app": "QQ",
+                "text": "目标会话",
+                "replace_existing": False,
+                "ax_ref": {
+                    "app_id": "qq",
+                    "role": "AXTextField",
+                    "input_kind": "search_field",
+                    "path": [1, 4, 8],
+                    "bounds": {"x": 739.0, "y": 154.0, "width": 138.0, "height": 20.0},
+                    "fingerprint": "after-overlay",
+                },
+            },
+        }
+
+        self.assertEqual(_action_retry_key(first), _action_retry_key(repeated))
+        repeated["arguments"]["text"] = "另一个目标"
+        self.assertNotEqual(_action_retry_key(first), _action_retry_key(repeated))
+
     def test_execution_verification_uses_native_evidence_before_visual_fallback(self) -> None:
         click = ReviewableProposal.act(
             action_type="click",
@@ -83,6 +147,15 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         send_result = execution_verification(
             send,
             {"pressed": True, "focused": True, "frontmost_app": "WeChat"},
+        )
+        type_text = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入草稿",
+            payload={"target_app": "WeChat", "text": "你好"},
+        )
+        type_result = execution_verification(
+            type_text,
+            {"typed": True, "focused": True, "frontmost_app": "WeChat"},
         )
         playwright = ReviewableProposal.act(
             action_type="playwright",
@@ -121,6 +194,17 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "ax_action_performed": True,
             },
         )
+        already_satisfied_result = execution_verification(
+            semantic_click,
+            {
+                "clicked": False,
+                "already_satisfied": True,
+                "postcondition_verified": True,
+                "focused": True,
+                "ax_target_verified": True,
+                "ax_action_performed": False,
+            },
+        )
 
         self.assertEqual(click_result["status"], "insufficient")
         self.assertTrue(click_result["requires_visual"])
@@ -128,6 +212,9 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send_result["status"], "insufficient")
         self.assertTrue(send_result["requires_visual"])
         self.assertIn("expected message", send_result["reason"])
+        self.assertEqual(type_result["status"], "insufficient")
+        self.assertTrue(type_result["requires_visual"])
+        self.assertIn("expected draft", type_result["reason"])
         self.assertEqual(playwright_result["status"], "verified")
         self.assertFalse(playwright_result["requires_visual"])
         self.assertEqual(file_result["status"], "verified")
@@ -135,6 +222,138 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(semantic_result["status"], "insufficient")
         self.assertTrue(semantic_result["requires_visual"])
         self.assertEqual(semantic_result["method"], "macos_accessibility_action_and_native_state")
+        self.assertEqual(already_satisfied_result["status"], "verified")
+        self.assertFalse(already_satisfied_result["requires_visual"])
+
+    def test_expected_draft_requires_real_ax_or_visual_evidence(self) -> None:
+        expected = "你好，明天下午见"
+        self.assertTrue(
+            observation_confirms_expected_draft(
+                {
+                    "analysis_route": "structured",
+                    "frame": {
+                        "accessibility": {
+                            "elements": [
+                                {
+                                    "role": "AXTextArea",
+                                    "value": expected,
+                                }
+                            ]
+                        }
+                    },
+                },
+                expected,
+            )
+        )
+        self.assertTrue(
+            observation_confirms_expected_draft(
+                {
+                    "observations": [
+                        {"claim": f"聊天输入框中完整显示“{expected}”"}
+                    ]
+                },
+                expected,
+            )
+        )
+        self.assertFalse(
+            observation_confirms_expected_draft(
+                {
+                    "text": f"请验证草稿“{expected}”",
+                    "frame": {
+                        "accessibility": {
+                            "search": {"query": expected},
+                            "elements": [],
+                        }
+                    },
+                },
+                expected,
+            )
+        )
+        self.assertFalse(
+            observation_confirms_expected_draft(
+                {
+                    "analysis_route": "brain",
+                    "frame": {"data_url": "data:image/png;base64,AAAA"},
+                    "chat_context": {"contact": "另一个会话"},
+                    "observations": [
+                        {"claim": "输入框里是另一段草稿"}
+                    ],
+                },
+                expected,
+                expected_chat="目标会话",
+            )
+        )
+
+    def test_expected_draft_rejects_wrong_live_chat_header(self) -> None:
+        expected_text = "准备发送的草稿"
+        input_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "identifier": "message-input",
+            "path": [0, 1],
+            "fingerprint": "copied",
+        }
+        observation = {
+            "frame": {
+                "accessibility": {
+                    "elements": [
+                        {
+                            "role": "AXWindow",
+                            "tree_path": [0],
+                            "bounds": {
+                                "x": 100,
+                                "y": 80,
+                                "width": 900,
+                                "height": 700,
+                            },
+                        },
+                        {
+                            "role": "AXStaticText",
+                            "label": "另一个会话",
+                            "tree_path": [0, 0],
+                            "bounds": {
+                                "x": 560,
+                                "y": 112,
+                                "width": 120,
+                                "height": 24,
+                            },
+                        },
+                        {
+                            "role": "AXTextArea",
+                            "identifier": "message-input",
+                            "value": expected_text,
+                            "tree_path": [0, 1],
+                            "bounds": {
+                                "x": 390,
+                                "y": 590,
+                                "width": 590,
+                                "height": 120,
+                            },
+                        },
+                        {
+                            "role": "AXRow",
+                            "label": "目标会话",
+                            "tree_path": [0, 2],
+                            "bounds": {
+                                "x": 110,
+                                "y": 220,
+                                "width": 250,
+                                "height": 64,
+                            },
+                        },
+                    ]
+                }
+            }
+        }
+
+        self.assertFalse(
+            observation_confirms_expected_draft(
+                observation,
+                expected_text,
+                expected_chat="目标会话",
+                input_ax_ref=input_ref,
+            )
+        )
 
     def _dependencies(self, pending: dict[str, dict[str, Any]], **overrides: Any) -> HumanOpsApprovalFlowDependencies:
         async def perform_action(proposal: ReviewableProposal) -> dict[str, Any]:
@@ -295,7 +514,20 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def perform_observe(decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
             calls["observe"] += 1
-            raise AssertionError(f"structured verification should avoid visual observe: {decision}")
+            self.assertEqual(decision.payload["target_app"], "WeChat")
+            return {
+                "text": "目标会话的聊天框中可见完整草稿：你好。",
+                "analysis_route": "structured",
+                "frame": {
+                    "accessibility": {
+                        "elements": [
+                            {"role": "AXTextArea", "value": "你好"}
+                        ]
+                    }
+                },
+                "observations": [],
+                "unknowns": [],
+            }
 
         async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
             calls["brain_prompt"] = user_text
@@ -337,9 +569,8 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(calls["action"], 1)
-        self.assertEqual(calls["observe"], 0)
-        self.assertIn("平台原生状态验证通过", calls["brain_prompt"])
-        self.assertIn("本阶段未截图", calls["brain_prompt"])
+        self.assertEqual(calls["observe"], 1)
+        self.assertIn("目标会话的聊天框中可见完整草稿", calls["brain_prompt"])
         created_decision, session_id, user_text = calls["create"]
         self.assertEqual(created_decision.payload["action_type"], "key_press")
         self.assertEqual(session_id, "neo-session")
@@ -349,13 +580,494 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_names[:4], ["meta", "phase", "display_segment", "phase"])
         self.assertEqual(event_names[-2:], ["phase", "approval_required"])
         phase_payloads = [data for name, data in events if name == "phase"]
-        self.assertEqual([data["category"] for data in phase_payloads], ["acting", "verifying", "waiting_approval"])
+        self.assertEqual(
+            [data["category"] for data in phase_payloads],
+            ["acting", "verifying", "verifying", "waiting_approval"],
+        )
         self.assertEqual(phase_payloads[1]["name"], "human_ops_structured_verify")
         self.assertEqual(phase_payloads[1]["task"], "执行后观察 回复消息")
+        self.assertEqual(phase_payloads[2]["name"], "human_ops_observe")
         self.assertEqual(phase_payloads[-1]["status_id"], "approval:next-proposal")
         self.assertEqual(events[-1][1]["proposal_id"], "next-proposal")
         self.assertEqual(events[-1][1]["action_type"], "key_press")
         self.assertNotIn("done", event_names)
+
+    async def test_approval_continuation_stops_at_structured_near_match_without_brain(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：会话入口",
+            payload={
+                "target_app": "QQ",
+                "x": 120,
+                "y": 180,
+                "label": "会话入口",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "near-match": {
+                "proposal": proposal,
+                "session_id": "near-session",
+                "user_text": "打开测试联系入会话",
+                "status": "pending",
+            }
+        }
+
+        async def perform_action(
+            _proposal: ReviewableProposal,
+        ) -> dict[str, Any]:
+            return {
+                "clicked": True,
+                "focused": True,
+                "target_app": "QQ",
+            }
+
+        async def perform_observe(
+            _decision: BrainDecision,
+            _config: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {
+                "text": "找到一个近似名称，需要用户确认。",
+                "analysis_route": "structured",
+                "ax_search": {
+                    "insufficiency_reason": "near_match_requires_confirmation",
+                    "near_match_labels": ["测试联系人"],
+                    "visual_fallback_required": False,
+                },
+                "observations": [],
+                "unknowns": [],
+            }
+
+        async def reject_brain(*_args: Any, **_kwargs: Any) -> Any:
+            self.fail("a structured near match must not call Brain again")
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda _proposal: True,
+            perform_human_ops_observe=perform_observe,
+            run_brain_turn=reject_brain,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "near-match",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        self.assertEqual(
+            pending["near-match"]["status"],
+            "needs_user_confirmation",
+        )
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(
+            events[-1][1]["decision"]["payload"]["goal"]["status"],
+            "need_user",
+        )
+        self.assertIn("测试联系人", events[-1][1]["text"])
+
+    async def test_unverified_identical_action_is_not_replayed(self) -> None:
+        ax_ref = {
+            "app_id": "qq",
+            "role": "AXGroup",
+            "path": [1, 2, 3],
+            "fingerprint": "same-chat-row",
+        }
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="进入目标会话",
+            payload={
+                "target_app": "QQ",
+                "label": "目标会话",
+                "ax_ref": ax_ref,
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "repeat-first": {
+                "proposal": proposal,
+                "session_id": "repeat-session",
+                "user_text": "进入目标会话",
+                "status": "pending",
+                "react_budget_remaining": 2,
+            }
+        }
+        brain_prompts: list[str] = []
+
+        async def perform_action(
+            _proposal: ReviewableProposal,
+        ) -> dict[str, Any]:
+            return {
+                "clicked": True,
+                "focused": True,
+                "ax_target_verified": True,
+                "ax_action_performed": True,
+                "frontmost_app": "QQ",
+            }
+
+        async def run_brain_turn(
+            _config: dict[str, Any],
+            *,
+            user_text: str,
+        ) -> Any:
+            brain_prompts.append(user_text)
+            if len(brain_prompts) == 1:
+                return SimpleNamespace(
+                    text="再次点击目标会话",
+                    decision=BrainDecision.propose_act(
+                        "click",
+                        {
+                            "target_app": "QQ",
+                            "label": "目标会话",
+                            "ax_ref": ax_ref,
+                        },
+                    ),
+                )
+            return SimpleNamespace(
+                text="当前浮层状态不明，停止重复点击。",
+                decision=BrainDecision.say(
+                    "当前浮层状态不明，停止重复点击。",
+                    goal={"status": "blocked"},
+                ),
+            )
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda _proposal: True,
+            run_brain_turn=run_brain_turn,
+            create_human_ops_act_proposal=lambda *_args, **_kwargs: self.fail(
+                "an unverified identical action must not be enqueued"
+            ),
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "repeat-first",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        self.assertEqual(len(brain_prompts), 2)
+        self.assertIn("不得原样重复该动作", brain_prompts[1])
+        self.assertTrue(
+            any(
+                name == "phase"
+                and payload.get("text")
+                == "上一动作未验证生效，Brain 正在避免重复同一目标"
+                for name, payload in events
+            )
+        )
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(
+            events[-1][1]["decision"]["payload"]["goal"]["status"],
+            "blocked",
+        )
+
+    async def test_continuation_failure_is_not_overwritten_by_action_success(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：目标",
+            payload={
+                "x": 12,
+                "y": 34,
+                "label": "目标",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "proposal-continuation-error": {
+                "proposal": proposal,
+                "session_id": "neo-session",
+                "user_text": "继续完成任务",
+                "status": "pending",
+            }
+        }
+
+        async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
+            return SimpleNamespace(
+                text="继续点击",
+                decision=BrainDecision.propose_act(
+                    "click",
+                    {"x": 40, "y": 50, "label": "下一步"},
+                    goal={"status": "handoff_review"},
+                ),
+            )
+
+        def broken_adapter(_decision: BrainDecision, **_kwargs: Any) -> BrainDecision:
+            raise TypeError("adapter signature mismatch")
+
+        deps = self._dependencies(
+            pending,
+            proposal_continue_after_approval=lambda _proposal: True,
+            run_brain_turn=run_brain_turn,
+            with_inherited_enter_expected_text=broken_adapter,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "proposal-continuation-error",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        done = events[-1][1]
+        failed_phase = next(
+            payload
+            for name, payload in events
+            if name == "phase" and payload.get("name") == "human_ops_continuation"
+        )
+        self.assertEqual(pending["proposal-continuation-error"]["status"], "continuation_failed")
+        self.assertEqual(failed_phase["status"], "failed")
+        self.assertIn("adapter signature mismatch", done["text"])
+        self.assertTrue(done["execution"]["ok"])
+        self.assertFalse(done["execution"]["continuation_ok"])
+
+    async def test_chat_send_transaction_survives_intermediate_action(self) -> None:
+        alice_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "alice",
+        }
+        bob_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 3],
+            "fingerprint": "bob",
+        }
+        intermediate = ReviewableProposal.act(
+            action_type="click",
+            summary="打开表情面板",
+            payload={
+                "target_app": "QQ",
+                "label": "表情",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "intermediate": {
+                "proposal": intermediate,
+                "session_id": "chat-session",
+                "user_text": "给 Alice 发送消息",
+                "status": "pending",
+                "chat_send_transaction": {
+                    "target_app": "QQ",
+                    "intended_chat": "Alice",
+                    "input_ax_ref": alice_ref,
+                    "expected_text": "只发给 Alice",
+                },
+            }
+        }
+        created_decisions: list[BrainDecision] = []
+
+        async def perform_action(
+            _proposal: ReviewableProposal,
+        ) -> dict[str, Any]:
+            return {
+                "clicked": True,
+                "focused": True,
+                "postcondition_verified": True,
+                "target_app": "QQ",
+                "frontmost_app": "QQ",
+            }
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any):
+            decision = BrainDecision.propose_act(
+                "key_press",
+                {
+                    "key": "enter",
+                    "target_app": "QQ",
+                    "intended_chat": "Bob",
+                    "input_ax_ref": bob_ref,
+                    "expected_text": "发给 Bob",
+                },
+            )
+            return SimpleNamespace(text="发送", decision=decision)
+
+        def create_next(
+            decision: BrainDecision,
+            *,
+            session_id: str,
+            user_text: str,
+        ) -> tuple[str, ReviewableProposal]:
+            created_decisions.append(decision)
+            arguments = dict(decision.payload["arguments"])
+            next_proposal = ReviewableProposal.act(
+                action_type="key_press",
+                summary="发送",
+                payload=arguments,
+            )
+            pending["send"] = {
+                "proposal": next_proposal,
+                "session_id": session_id,
+                "user_text": user_text,
+                "status": "pending",
+            }
+            return "send", next_proposal
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda _proposal: True,
+            run_brain_turn=run_brain_turn,
+            with_inherited_enter_expected_text=with_inherited_enter_expected_text,
+            create_human_ops_act_proposal=create_next,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "intermediate",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        arguments = created_decisions[0].payload["arguments"]
+        self.assertEqual(arguments["target_app"], "QQ")
+        self.assertEqual(arguments["intended_chat"], "Alice")
+        self.assertEqual(arguments["input_ax_ref"], alice_ref)
+        self.assertEqual(arguments["expected_text"], "只发给 Alice")
+        self.assertEqual(
+            pending["send"]["chat_send_transaction"]["intended_chat"],
+            "Alice",
+        )
+        self.assertEqual(events[-1][0], "approval_required")
+
+    async def test_enter_is_held_until_a_followup_observation_proves_the_draft(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入草稿",
+            payload={
+                "target_app": "QQ",
+                "text": "测试草稿",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "draft-first": {
+                "proposal": proposal,
+                "session_id": "draft-session",
+                "user_text": "在目标会话发送测试草稿",
+                "status": "pending",
+                "react_budget_remaining": 5,
+            }
+        }
+        observe_calls = 0
+        brain_prompts: list[str] = []
+
+        async def perform_action(
+            _proposal: ReviewableProposal,
+        ) -> dict[str, Any]:
+            return {
+                "typed": True,
+                "focused": True,
+                "target_app": "QQ",
+                "frontmost_app": "QQ",
+            }
+
+        async def perform_observe(
+            decision: BrainDecision,
+            _config: dict[str, Any],
+        ) -> dict[str, Any]:
+            nonlocal observe_calls
+            observe_calls += 1
+            if observe_calls == 1:
+                return {
+                    "text": "请验证测试草稿，但当前没有读到输入框值。",
+                    "analysis_route": "structured",
+                    "frame": {
+                        "accessibility": {
+                            "search": {"query": "测试草稿"},
+                            "elements": [],
+                        }
+                    },
+                    "observations": [],
+                    "unknowns": ["draft value unavailable"],
+                }
+            self.assertEqual(decision.payload["ax_query"], "聊天输入框 测试草稿")
+            return {
+                "text": "重新观察已读到草稿。",
+                "analysis_route": "structured",
+                "frame": {
+                    "accessibility": {
+                        "elements": [
+                            {"role": "AXTextArea", "value": "测试草稿"}
+                        ]
+                    }
+                },
+                "observations": [],
+                "unknowns": [],
+            }
+
+        async def run_brain_turn(
+            _config: dict[str, Any],
+            *,
+            user_text: str,
+        ) -> Any:
+            brain_prompts.append(user_text)
+            if len(brain_prompts) == 2:
+                return SimpleNamespace(
+                    text="重新观察草稿",
+                    decision=BrainDecision.observe(
+                        "screen",
+                        target_app="QQ",
+                        ax_query="聊天输入框 测试草稿",
+                    ),
+                )
+            return SimpleNamespace(
+                text="按回车发送",
+                decision=BrainDecision.propose_act(
+                    "key_press",
+                    {"target_app": "QQ", "key": "enter", "label": "发送"},
+                ),
+            )
+
+        def create_next(
+            _decision: BrainDecision,
+            *,
+            session_id: str,
+            user_text: str,
+        ) -> tuple[str, ReviewableProposal]:
+            next_proposal = ReviewableProposal.act(
+                action_type="key_press",
+                summary="发送草稿",
+                payload={"target_app": "QQ", "key": "enter"},
+            )
+            pending["draft-send"] = {
+                "proposal": next_proposal,
+                "session_id": session_id,
+                "user_text": user_text,
+                "status": "pending",
+            }
+            return "draft-send", next_proposal
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda _proposal: True,
+            perform_human_ops_observe=perform_observe,
+            run_brain_turn=run_brain_turn,
+            create_human_ops_act_proposal=create_next,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "draft-first",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        self.assertEqual(observe_calls, 2)
+        self.assertEqual(len(brain_prompts), 3)
+        self.assertIn("因此不能提交 Enter/Return", brain_prompts[1])
+        self.assertEqual(events[-1][0], "approval_required")
+        self.assertEqual(events[-1][1]["proposal_id"], "draft-send")
 
     async def test_full_authorization_notifies_and_executes_each_continuation_action(self) -> None:
         first = ReviewableProposal.act(
@@ -381,6 +1093,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "task_id": "auto-task",
                 "status": "pending",
                 "authorization_mode": "full",
+                "react_budget_remaining": 7,
             }
         }
         calls: list[tuple[str, str]] = []
@@ -403,6 +1116,24 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 {"target_app": "WeChat", "key": "enter", "label": "发送"},
             ))
 
+        async def perform_observe(
+            _decision: BrainDecision,
+            _config: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {
+                "text": "聊天输入框中已显示完整草稿。",
+                "analysis_route": "structured",
+                "frame": {
+                    "accessibility": {
+                        "elements": [
+                            {"role": "AXTextArea", "value": "你好"}
+                        ]
+                    }
+                },
+                "observations": [],
+                "unknowns": [],
+            }
+
         def create_next(_decision: BrainDecision, *, session_id: str, user_text: str):
             pending["auto-second"] = {
                 "proposal": second,
@@ -423,6 +1154,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "brain": {},
                 "human_ops": {"authorization_mode": "full", "require_act_review": False},
             },
+            perform_human_ops_observe=perform_observe,
             run_brain_turn=run_brain_turn,
             create_human_ops_act_proposal=create_next,
         )
@@ -443,9 +1175,119 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending["auto-first"]["status"], "executed")
         self.assertEqual(pending["auto-second"]["status"], "executed")
         self.assertEqual(pending["auto-second"]["authorization_mode"], "full")
+        self.assertEqual(pending["auto-second"]["react_budget_remaining"], 7)
+        self.assertEqual(pending["auto-first"]["action_budget_remaining"], 23)
+        self.assertEqual(pending["auto-second"]["action_budget_remaining"], 22)
+        self.assertEqual(pending["auto-second"]["actions_executed"], 2)
         self.assertNotIn("approval_required", [name for name, _payload in events])
         self.assertTrue(events[-1][1]["auto_authorized"])
         self.assertEqual(events[-1][1]["authorization_mode"], "full")
+
+    async def test_full_authorization_hard_limits_unbounded_action_chain(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="launch_app",
+            summary="继续打开应用",
+            payload={
+                "app": "Finder",
+                "continue_after_approval": True,
+            },
+        )
+        pending = {
+            "loop-0": {
+                "proposal": proposal,
+                "session_id": "loop-session",
+                "user_text": "持续执行",
+                "task_id": "loop-task",
+                "status": "pending",
+                "authorization_mode": "full",
+                "action_budget_remaining": 3,
+            }
+        }
+        calls: list[str] = []
+        next_index = 0
+
+        async def notify(
+            _proposal: ReviewableProposal,
+            *,
+            task_id: str,
+        ) -> dict[str, Any]:
+            calls.append(f"notify:{task_id}")
+            return {"notified": True}
+
+        async def perform_action(
+            _proposal: ReviewableProposal,
+        ) -> dict[str, Any]:
+            calls.append("action")
+            return {
+                "launched": True,
+                "focused": True,
+                "frontmost_app": "Finder",
+            }
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any):
+            return SimpleNamespace(
+                text="继续",
+                decision=BrainDecision.propose_act(
+                    "launch_app",
+                    {
+                        "app": "Finder",
+                        "continue_after_approval": True,
+                    },
+                ),
+            )
+
+        def create_next(
+            _decision: BrainDecision,
+            *,
+            session_id: str,
+            user_text: str,
+        ):
+            nonlocal next_index
+            next_index += 1
+            proposal_id = f"loop-{next_index}"
+            pending[proposal_id] = {
+                "proposal": proposal,
+                "session_id": session_id,
+                "user_text": user_text,
+                "status": "pending",
+            }
+            return proposal_id, proposal
+
+        deps = self._dependencies(
+            pending,
+            notify_human_ops_action=notify,
+            perform_human_ops_action=perform_action,
+            proposal_continue_after_approval=lambda _proposal: True,
+            normalize_private_config=lambda: {
+                "brain": {},
+                "human_ops": {
+                    "authorization_mode": "full",
+                    "require_act_review": False,
+                },
+            },
+            run_brain_turn=run_brain_turn,
+            create_human_ops_act_proposal=create_next,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision(
+                "loop-0",
+                {"approved": True},
+                deps,
+            )
+        )
+
+        self.assertEqual(calls.count("action"), 3)
+        self.assertEqual(
+            sum(call.startswith("notify:") for call in calls),
+            3,
+        )
+        self.assertEqual(pending["loop-3"]["status"], "action_limit_reached")
+        self.assertEqual(
+            events[-1][1]["execution"]["stage"],
+            "action_limit",
+        )
+        self.assertNotIn("recursion", str(events).lower())
 
     async def test_full_authorization_fails_closed_when_action_notice_fails(self) -> None:
         proposal = ReviewableProposal.act(

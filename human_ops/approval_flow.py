@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from brain.decisions import BrainDecision, DecisionKind
 from backend.task_control import TASK_CONTROL, TaskStopped
+from body.macos_accessibility import _chat_header_matches_input_window
 
 from .approvals import ReviewableProposal
 from .authorization import AUTHORIZATION_MODE_FULL, full_authorization_enabled
@@ -13,6 +16,150 @@ from .filesystem_actions import filesystem_action_success_field
 
 class HumanOpsProposalNotFound(LookupError):
     """Raised when a pending Human Ops proposal cannot be resolved."""
+
+
+FULL_AUTH_ACTION_LIMIT = 24
+
+
+def near_match_confirmation_decision(
+    observation: dict[str, Any] | None,
+    user_text: object,
+) -> BrainDecision | None:
+    data = observation if isinstance(observation, dict) else {}
+    ax_search = (
+        data.get("ax_search")
+        if isinstance(data.get("ax_search"), dict)
+        else {}
+    )
+    if not ax_search:
+        frame = data.get("frame") if isinstance(data.get("frame"), dict) else {}
+        accessibility = (
+            frame.get("accessibility")
+            if isinstance(frame.get("accessibility"), dict)
+            else {}
+        )
+        ax_search = (
+            accessibility.get("search")
+            if isinstance(accessibility.get("search"), dict)
+            else {}
+        )
+    if (
+        str(ax_search.get("insufficiency_reason") or "")
+        != "near_match_requires_confirmation"
+    ):
+        return None
+    raw_labels = (
+        ax_search.get("near_match_labels")
+        if isinstance(ax_search.get("near_match_labels"), list)
+        else []
+    )
+    labels: list[str] = []
+    for raw_label in raw_labels:
+        label = " ".join(str(raw_label or "").replace("\x00", "").split())[:160]
+        if label and label not in labels:
+            labels.append(label)
+        if len(labels) >= 3:
+            break
+    if not labels:
+        return None
+    candidates = "、".join(
+        json.dumps(label, ensure_ascii=False)
+        for label in labels
+    )
+    summary = (
+        f"我找到名称近似但不完全一致的入口：{candidates}。"
+        "为避免操作到错误对象，请确认是否就是你要找的目标。"
+    )
+    objective = str(user_text or "当前桌面操作目标").strip()
+    return BrainDecision.say(
+        summary,
+        goal={
+            "objective": objective,
+            "status": "need_user",
+            "evidence": [
+                "macOS Accessibility 返回了结构化近似名称，且禁止像素猜测。"
+            ],
+            "missing": ["用户确认近似名称是否为目标"],
+            "next": "confirm_near_match",
+        },
+    )
+
+
+def _retry_coordinate(value: object) -> object:
+    try:
+        return round(float(value or 0), 1)
+    except (TypeError, ValueError):
+        return str(value or "").strip()
+
+
+def _action_retry_key(payload: object) -> tuple[object, ...]:
+    source = payload if isinstance(payload, dict) else {}
+    action_type = str(source.get("action_type") or "").strip()
+    if action_type not in {"click", "type_text"}:
+        return ()
+    arguments = (
+        source.get("arguments")
+        if isinstance(source.get("arguments"), dict)
+        else {}
+    )
+    reference = (
+        arguments.get("ax_ref")
+        if isinstance(arguments.get("ax_ref"), dict)
+        else {}
+    )
+    fingerprint = str(reference.get("fingerprint") or "").strip()
+    if action_type == "type_text" and reference:
+        bounds = (
+            reference.get("bounds")
+            if isinstance(reference.get("bounds"), dict)
+            else {}
+        )
+        locator = (
+            "ax_input",
+            str(reference.get("app_id") or "").casefold(),
+            str(reference.get("role") or ""),
+            str(reference.get("input_kind") or ""),
+            str(reference.get("identifier") or ""),
+            str(reference.get("title") or ""),
+            str(reference.get("description") or ""),
+            str(reference.get("placeholder") or ""),
+            str(reference.get("url") or ""),
+            tuple(
+                _retry_coordinate(bounds.get(key))
+                for key in ("x", "y", "width", "height")
+            ),
+        )
+    elif fingerprint:
+        locator: tuple[object, ...] = ("ax", fingerprint)
+    elif arguments.get("x") is not None and arguments.get("y") is not None:
+        locator = (
+            "point",
+            str(arguments.get("x")),
+            str(arguments.get("y")),
+        )
+    else:
+        locator = (
+            "label",
+            str(
+                arguments.get("label")
+                or arguments.get("target")
+                or ""
+            ).strip(),
+        )
+    if not any(locator[1:]):
+        return ()
+    return (
+        action_type,
+        "".join(
+            str(arguments.get("target_app") or "").casefold().split()
+        ),
+        locator,
+        (
+            str(arguments.get("text") or "")
+            if action_type == "type_text"
+            else ""
+        ),
+    )
 
 
 def execution_verification(
@@ -31,19 +178,38 @@ def execution_verification(
     }.get(action_type, "")
     if action_type.startswith("file_"):
         success_field = filesystem_action_success_field(action_type)
+    already_satisfied = bool(data.get("already_satisfied"))
     checks = {
-        success_field: bool(data.get(success_field)) if success_field else False,
+        success_field: (
+            bool(data.get(success_field)) or already_satisfied
+            if success_field
+            else False
+        ),
         "focused": bool(data.get("focused")) if action_type in {"launch_app", "click", "type_text", "key_press"} else True,
     }
     semantic_ax_action = isinstance(arguments.get("ax_ref"), dict) and action_type in {"click", "type_text"}
     if semantic_ax_action:
         checks["ax_target_verified"] = bool(data.get("ax_target_verified"))
-        checks["ax_action_performed"] = bool(data.get("ax_action_performed"))
-    contradictory = any(data.get(name) is False for name in checks)
+        checks["ax_action_performed"] = (
+            bool(data.get("ax_action_performed")) or already_satisfied
+        )
+    no_op_false_fields = (
+        {success_field, "ax_action_performed"}
+        if already_satisfied
+        else set()
+    )
+    contradictory = any(
+        data.get(name) is False
+        for name in checks
+        if name not in no_op_false_fields
+    )
     missing = [name for name, passed in checks.items() if name and not passed]
     key = str(arguments.get("key") or "enter").strip().lower()
     expected_text = str(arguments.get("expected_text") or "").strip()
     semantic_send_pending = action_type == "key_press" and key in {"enter", "return"} and bool(expected_text)
+    text_outcome_pending = action_type == "type_text" and not bool(
+        data.get("postcondition_verified")
+    )
     click_outcome_pending = action_type == "click" and not bool(data.get("postcondition_verified"))
     if contradictory:
         status = "failed"
@@ -54,6 +220,9 @@ def execution_verification(
     elif semantic_send_pending:
         status = "insufficient"
         reason = "native key delivery cannot confirm that the expected message appeared"
+    elif text_outcome_pending:
+        status = "insufficient"
+        reason = "native text delivery cannot confirm that the expected draft appeared in the intended input"
     elif click_outcome_pending:
         status = "insufficient"
         reason = "native click delivery cannot confirm the intended post-action interface state"
@@ -92,6 +261,136 @@ def structured_verification_observation(verification: dict[str, Any]) -> dict[st
         ],
         "unknowns": [],
     }
+
+
+def _rounded_observation_number(value: object) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def observation_confirms_expected_draft(
+    observation: dict[str, Any] | None,
+    expected_text: object,
+    *,
+    expected_chat: object = "",
+    input_ax_ref: object = None,
+) -> bool:
+    data = observation if isinstance(observation, dict) else {}
+    expected = "".join(str(expected_text or "").casefold().split())
+    expected_chat_key = "".join(str(expected_chat or "").casefold().split())
+    if not expected:
+        return False
+
+    frame = data.get("frame") if isinstance(data.get("frame"), dict) else {}
+    accessibility = (
+        frame.get("accessibility")
+        if isinstance(frame.get("accessibility"), dict)
+        else {}
+    )
+    elements = (
+        accessibility.get("elements")
+        if isinstance(accessibility.get("elements"), list)
+        else []
+    )
+    editable_roles = {"AXTextField", "AXTextArea"}
+    reviewed_input = input_ax_ref if isinstance(input_ax_ref, dict) else {}
+    if expected_chat_key and not reviewed_input:
+        return False
+    reviewed_app_id = str(reviewed_input.get("app_id") or "").strip()
+    observed_app = (
+        accessibility.get("app")
+        if isinstance(accessibility.get("app"), dict)
+        else {}
+    )
+    observed_app_id = str(observed_app.get("app_id") or "").strip()
+    if (
+        reviewed_app_id
+        and observed_app_id
+        and reviewed_app_id != observed_app_id
+    ):
+        return False
+    matching_inputs: list[dict[str, Any]] = []
+    for element in elements:
+        if (
+            not isinstance(element, dict)
+            or element.get("protected")
+            or str(element.get("role") or "") not in editable_roles
+        ):
+            continue
+        if reviewed_input:
+            if str(element.get("role") or "") != str(reviewed_input.get("role") or ""):
+                continue
+            expected_identifier = str(reviewed_input.get("identifier") or "")
+            if expected_identifier and str(element.get("identifier") or "") != expected_identifier:
+                continue
+            reviewed_path = reviewed_input.get("path")
+            element_ref = (
+                element.get("ax_ref")
+                if isinstance(element.get("ax_ref"), dict)
+                else {}
+            )
+            element_app_id = str(element_ref.get("app_id") or "").strip()
+            if (
+                reviewed_app_id
+                and element_app_id
+                and element_app_id != reviewed_app_id
+            ):
+                continue
+            element_path = element.get("tree_path") or element_ref.get("path")
+            if isinstance(reviewed_path, list) and list(element_path or []) != reviewed_path:
+                continue
+        value = "".join(str(element.get("value") or "").casefold().split())
+        if value and expected == value:
+            matching_inputs.append(element)
+
+    observations = (
+        data.get("observations")
+        if isinstance(data.get("observations"), list)
+        else []
+    )
+    evidence_items: list[str] = []
+    for item in observations:
+        if not isinstance(item, dict):
+            continue
+        evidence = " ".join(
+            str(item.get(key) or "")
+            for key in ("claim", "text", "description", "value")
+        )
+        evidence_items.append("".join(evidence.casefold().split()))
+
+    if not expected_chat_key:
+        return bool(
+            matching_inputs
+            or any(expected in evidence for evidence in evidence_items)
+        )
+
+    chat_context = (
+        data.get("chat_context")
+        if isinstance(data.get("chat_context"), dict)
+        else {}
+    )
+    chat_context_matches = (
+        "".join(str(chat_context.get("contact") or "").casefold().split())
+        == expected_chat_key
+    )
+    if chat_context_matches and (
+        matching_inputs
+        or any(expected in evidence for evidence in evidence_items)
+    ):
+        return True
+
+    if any(
+        expected in evidence and expected_chat_key in evidence
+        for evidence in evidence_items
+    ):
+        return True
+
+    return any(
+        _chat_header_matches_input_window(elements, input_element, str(expected_chat))
+        for input_element in matching_inputs
+    )
 
 
 @dataclass(frozen=True)
@@ -280,6 +579,56 @@ def stream_human_ops_proposal_decision(
             return
 
         if auto_authorized:
+            try:
+                remaining_actions = int(
+                    record.get("action_budget_remaining", FULL_AUTH_ACTION_LIMIT)
+                )
+            except (TypeError, ValueError):
+                remaining_actions = FULL_AUTH_ACTION_LIMIT
+            remaining_actions = max(
+                0,
+                min(FULL_AUTH_ACTION_LIMIT, remaining_actions),
+            )
+            if remaining_actions <= 0:
+                record["status"] = "action_limit_reached"
+                final_text = (
+                    f"完全授权连续动作已达到 {FULL_AUTH_ACTION_LIMIT} 步安全上限，"
+                    "本次没有继续执行。请检查当前界面后再发起新的任务。"
+                )
+                yield deps.sse(
+                    "phase",
+                    {
+                        "category": "blocked",
+                        "name": "human_ops_action_limit",
+                        "status": "blocked",
+                        "text": final_text,
+                        "source": "human_ops",
+                    },
+                )
+                yield deps.sse("display_segment", {"text": final_text})
+                yield done_event(
+                    {
+                        "turn_id": proposal_key,
+                        "proposal_id": proposal_key,
+                        "session_id": session_id,
+                        "text": final_text,
+                        "approved": True,
+                        "auto_authorized": True,
+                        "authorization_mode": AUTHORIZATION_MODE_FULL,
+                        "execution": {
+                            "ok": False,
+                            "stage": "action_limit",
+                            "action_limit": FULL_AUTH_ACTION_LIMIT,
+                        },
+                    },
+                )
+                return
+            record["action_budget_remaining"] = remaining_actions - 1
+            try:
+                actions_executed = int(record.get("actions_executed") or 0)
+            except (TypeError, ValueError):
+                actions_executed = 0
+            record["actions_executed"] = max(0, actions_executed) + 1
             yield deps.sse(
                 "phase",
                 {
@@ -342,7 +691,9 @@ def stream_human_ops_proposal_decision(
                 execution = await deps.perform_human_ops_action(proposal.approve())
             finally:
                 TASK_CONTROL.exit_atomic(task_id)
-            if action_type == "click":
+            if bool(execution.get("already_satisfied")):
+                final_text = f"目标已处于预期状态，无需重复操作：{label}。"
+            elif action_type == "click":
                 final_text = f"已执行点击：{label}。"
             elif action_type == "type_text":
                 final_text = f"已执行输入：{label}。"
@@ -368,6 +719,44 @@ def stream_human_ops_proposal_decision(
             return
         if record.get("status") == "executed":
             TASK_CONTROL.complete_step(task_id, f"已执行：{label}")
+            proposal_arguments = (
+                proposal.payload.get("arguments")
+                if isinstance(proposal.payload.get("arguments"), dict)
+                else {}
+            )
+            if action_type == "type_text":
+                target_app = str(proposal_arguments.get("target_app") or "").strip()
+                target_key = "".join(target_app.casefold().split())
+                intended_chat = str(
+                    proposal_arguments.get("intended_chat") or ""
+                ).strip()
+                input_ref = (
+                    proposal_arguments.get("input_ax_ref")
+                    if isinstance(proposal_arguments.get("input_ax_ref"), dict)
+                    else proposal_arguments.get("ax_ref")
+                    if isinstance(proposal_arguments.get("ax_ref"), dict)
+                    else {}
+                )
+                expected_text = str(proposal_arguments.get("text") or "")
+                if (
+                    target_key
+                    in {"qq", "腾讯qq", "wechat", "微信", "微信app"}
+                    and intended_chat
+                    and input_ref
+                    and expected_text.strip()
+                ):
+                    record["chat_send_transaction"] = {
+                        "target_app": target_app,
+                        "intended_chat": intended_chat,
+                        "input_ax_ref": deepcopy(input_ref),
+                        "expected_text": expected_text,
+                    }
+                else:
+                    record.pop("chat_send_transaction", None)
+            elif action_type == "key_press":
+                key = str(proposal_arguments.get("key") or "enter").strip().lower()
+                if key in {"enter", "return"}:
+                    record.pop("chat_send_transaction", None)
         yield deps.sse("display_segment", {"text": final_text})
         if record.get("status") == "executed" and deps.proposal_continue_after_approval(proposal):
             TASK_CONTROL.check(task_id, next_action="动作后结构化验证")
@@ -451,6 +840,32 @@ def stream_human_ops_proposal_decision(
                     }
             else:
                 observation = structured_verification_observation(verification)
+            confirmation = near_match_confirmation_decision(
+                observation,
+                record.get("user_text"),
+            )
+            if confirmation is not None:
+                continuation_text = confirmation.summary
+                record["status"] = "needs_user_confirmation"
+                yield deps.sse(
+                    "display_segment",
+                    {"text": continuation_text},
+                )
+                yield done_event(
+                    {
+                        "turn_id": proposal_key,
+                        "proposal_id": proposal_key,
+                        "session_id": session_id,
+                        "text": continuation_text,
+                        "approved": True,
+                        "execution": execution,
+                        "verification": verification,
+                        "decision": confirmation.to_dict(),
+                        "observation": observation,
+                        **authorization_payload,
+                    },
+                )
+                return
             followup_text = deps.human_ops_continuation_prompt(
                 user_text=str(record.get("user_text") or ""),
                 proposal=proposal,
@@ -469,7 +884,13 @@ def stream_human_ops_proposal_decision(
                     "并把图片、执行结果、坐标上下文和结构化系统证据作为同一份上下文决定下一步。"
                 )
             try:
-                continuation_budget = 3
+                try:
+                    stored_react_budget = int(
+                        record.get("react_budget_remaining", 3)
+                    )
+                except (TypeError, ValueError):
+                    stored_react_budget = 3
+                continuation_budget = max(0, min(20, stored_react_budget))
                 correction_used = False
                 next_decision: BrainDecision | None = None
                 continuation_text = ""
@@ -489,7 +910,156 @@ def stream_human_ops_proposal_decision(
                             next_decision,
                             previous_proposal=proposal,
                             execution=execution,
+                            observation=observation,
+                            chat_send_transaction=(
+                                record.get("chat_send_transaction")
+                                if isinstance(
+                                    record.get("chat_send_transaction"),
+                                    dict,
+                                )
+                                else None
+                            ),
                         )
+                        next_payload = (
+                            next_decision.payload
+                            if isinstance(next_decision.payload, dict)
+                            else {}
+                        )
+                        next_arguments = (
+                            next_payload.get("arguments")
+                            if isinstance(next_payload.get("arguments"), dict)
+                            else {}
+                        )
+                        previous_action = str(
+                            proposal.payload.get("action_type") or ""
+                        ).strip()
+                        proposed_action = str(
+                            next_payload.get("action_type") or ""
+                        ).strip()
+                        proposed_key = str(
+                            next_arguments.get("key") or ""
+                        ).strip().lower()
+                        previous_arguments = (
+                            proposal.payload.get("arguments")
+                            if isinstance(proposal.payload.get("arguments"), dict)
+                            else {}
+                        )
+                        current_retry_key = _action_retry_key(
+                            proposal.payload
+                        )
+                        next_retry_key = _action_retry_key(
+                            next_payload
+                        )
+                        if (
+                            current_retry_key
+                            and next_retry_key == current_retry_key
+                            and not bool(
+                                execution.get(
+                                    "postcondition_verified"
+                                )
+                            )
+                        ):
+                            if continuation_budget <= 0:
+                                next_decision = deps.blocked_react_decision(
+                                    original_user_text,
+                                    next_decision,
+                                )
+                                continuation_text = next_decision.summary
+                                break
+                            continuation_budget -= 1
+                            yield deps.sse(
+                                "phase",
+                                {
+                                    "category": "planning",
+                                    "name": "brain_react",
+                                    "status": "running",
+                                    "text": (
+                                        "上一动作未验证生效，Brain 正在避免"
+                                        "重复同一目标"
+                                    ),
+                                },
+                            )
+                            followup_text = (
+                                "安全约束：上一动作只证明本机事件已投递，"
+                                "动作后的界面没有证明目标状态发生变化；"
+                                "当前提议又是完全相同的点击或输入目标。"
+                                "不得原样重复该动作。请先改变可能阻挡目标的"
+                                "界面状态（例如关闭浮层），改用重新观察后得到的"
+                                "其他语义入口，或在条件不足时返回 blocked。"
+                            )
+                            continue
+                        chat_send_transaction = (
+                            record.get("chat_send_transaction")
+                            if isinstance(
+                                record.get("chat_send_transaction"),
+                                dict,
+                            )
+                            else {}
+                        )
+                        expected_draft = str(
+                            chat_send_transaction.get("expected_text")
+                            or previous_arguments.get("text")
+                            or ""
+                        )
+                        expected_chat = str(
+                            next_arguments.get("intended_chat")
+                            or previous_arguments.get("intended_chat")
+                            or ""
+                        )
+                        expected_input_ref = (
+                            next_arguments.get("input_ax_ref")
+                            if isinstance(next_arguments.get("input_ax_ref"), dict)
+                            else previous_arguments.get("ax_ref")
+                            if isinstance(previous_arguments.get("ax_ref"), dict)
+                            else {}
+                        )
+                        if (
+                            (
+                                previous_action == "type_text"
+                                or bool(chat_send_transaction)
+                            )
+                            and proposed_action == "key_press"
+                            and proposed_key in {"enter", "return"}
+                            and expected_draft
+                            and not bool(execution.get("postcondition_verified"))
+                            and not observation_confirms_expected_draft(
+                                observation,
+                                expected_draft,
+                                expected_chat=expected_chat,
+                                input_ax_ref=expected_input_ref,
+                            )
+                        ):
+                            if continuation_budget <= 0:
+                                next_decision = deps.blocked_react_decision(
+                                    original_user_text,
+                                    next_decision,
+                                )
+                                continuation_text = next_decision.summary
+                                break
+                            continuation_budget -= 1
+                            yield deps.sse(
+                                "phase",
+                                {
+                                    "category": "verifying",
+                                    "name": "brain_react",
+                                    "status": "running",
+                                    "text": "草稿内容尚未验证，Brain 正在补充发送前证据",
+                                },
+                            )
+                            target_app = str(
+                                next_arguments.get("target_app")
+                                or previous_arguments.get("target_app")
+                                or execution.get("target_app")
+                                or ""
+                            ).strip()
+                            followup_text = (
+                                "安全约束：上一项只证明输入事件已投递，当前观察没有证明完整草稿"
+                                f"“{expected_draft}”出现在目标输入框中，因此不能提交 Enter/Return。"
+                                f"还必须同时证明当前会话是“{expected_chat}”。"
+                                "请先返回 observe，在同一界面重新读取目标会话、输入框和草稿；"
+                                f"target_app 保持为“{target_app}”，ax_query 应包含聊天输入框角色与草稿文字。"
+                            )
+                            continue
                         supported_action, unsupported_action = deps.simple_human_action_support(next_decision)
                         if not supported_action:
                             if continuation_budget <= 0:
@@ -520,6 +1090,41 @@ def stream_human_ops_proposal_decision(
                         )
                         if next_proposal_id in deps.pending_proposals:
                             deps.pending_proposals[next_proposal_id]["task_id"] = task_id
+                            deps.pending_proposals[next_proposal_id][
+                                "react_budget_remaining"
+                            ] = continuation_budget
+                            deps.pending_proposals[next_proposal_id][
+                                "action_budget_remaining"
+                            ] = int(
+                                record.get(
+                                    "action_budget_remaining",
+                                    FULL_AUTH_ACTION_LIMIT,
+                                )
+                            )
+                            deps.pending_proposals[next_proposal_id][
+                                "actions_executed"
+                            ] = int(record.get("actions_executed") or 0)
+                            chat_send_transaction = record.get(
+                                "chat_send_transaction"
+                            )
+                            if isinstance(chat_send_transaction, dict):
+                                deps.pending_proposals[next_proposal_id][
+                                    "chat_send_transaction"
+                                ] = {
+                                    **chat_send_transaction,
+                                    "input_ax_ref": deepcopy(
+                                        chat_send_transaction.get(
+                                            "input_ax_ref"
+                                        )
+                                        if isinstance(
+                                            chat_send_transaction.get(
+                                                "input_ax_ref"
+                                            ),
+                                            dict,
+                                        )
+                                        else {}
+                                    ),
+                                }
                         current_private_config = deps.normalize_private_config()
                         current_human_ops_config = (
                             current_private_config.get("human_ops", {})
@@ -605,6 +1210,14 @@ def stream_human_ops_proposal_decision(
                                 "observations": [],
                                 "unknowns": [str(exc)],
                             }
+                        confirmation = near_match_confirmation_decision(
+                            observation,
+                            original_user_text,
+                        )
+                        if confirmation is not None:
+                            next_decision = confirmation
+                            continuation_text = confirmation.summary
+                            break
                         observation_text = (
                             str(observation.get("text") or next_decision.summary or continuation_text).strip()
                             or "我看了一下屏幕。"
@@ -669,9 +1282,30 @@ def stream_human_ops_proposal_decision(
                     )
                     return
             except Exception as exc:
+                continuation_error = deps.sanitize_brain_error(exc, brain_config)
+                record["status"] = "continuation_failed"
+                execution = {
+                    **execution,
+                    "continuation_ok": False,
+                    "continuation_error": continuation_error,
+                }
+                final_text = (
+                    "动作已经执行，但后续任务推进失败："
+                    f"{continuation_error}"
+                )
+                yield deps.sse(
+                    "phase",
+                    {
+                        "category": "blocked",
+                        "name": "human_ops_continuation",
+                        "status": "failed",
+                        "text": final_text,
+                        "source": "human_ops",
+                    },
+                )
                 yield deps.sse(
                     "display_segment",
-                    {"text": f"动作已执行，但继续推进任务失败：{deps.sanitize_brain_error(exc, brain_config)}"},
+                    {"text": final_text},
                 )
         yield done_event(
             {

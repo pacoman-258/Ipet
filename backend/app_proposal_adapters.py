@@ -113,11 +113,15 @@ def with_inherited_enter_expected_text(
     *,
     previous_proposal: ReviewableProposal,
     execution: dict[str, Any],
+    observation: dict[str, Any] | None = None,
+    chat_send_transaction: dict[str, Any] | None = None,
 ) -> BrainDecision:
     return _human_ops_proposal_flow_helpers.with_inherited_enter_expected_text(
         decision,
         previous_proposal=previous_proposal,
         execution=execution,
+        observation=observation,
+        chat_send_transaction=chat_send_transaction,
     )
 
 

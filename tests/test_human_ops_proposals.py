@@ -60,6 +60,132 @@ class HumanOpsProposalTests(unittest.TestCase):
 
         self.assertEqual(inherited.payload["arguments"]["expected_text"], "收到，马上处理")
 
+    def test_chat_enter_inherits_verified_recipient_and_input_reference(self) -> None:
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "copied",
+        }
+        previous = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入回复",
+            payload={
+                "target_app": "WeChat",
+                "ax_ref": input_ref,
+                "text": "收到",
+            },
+        )
+        decision = BrainDecision.propose_act(
+            "key_press",
+            {"key": "enter", "target_app": "WeChat"},
+        )
+
+        inherited = with_inherited_enter_expected_text(
+            decision,
+            previous_proposal=previous,
+            execution={},
+            observation={"chat_context": {"contact": "目标会话"}},
+        )
+
+        arguments = inherited.payload["arguments"]
+        self.assertEqual(arguments["intended_chat"], "目标会话")
+        self.assertEqual(arguments["input_ax_ref"], input_ref)
+        self.assertEqual(arguments["expected_text"], "收到")
+
+    def test_chat_enter_cannot_override_previous_type_transaction(self) -> None:
+        previous_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "alice",
+        }
+        next_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 3],
+            "fingerprint": "bob",
+        }
+        previous = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入 Alice 的回复",
+            payload={
+                "target_app": "QQ",
+                "intended_chat": "Alice",
+                "ax_ref": previous_ref,
+                "text": "只发给 Alice",
+            },
+        )
+        decision = BrainDecision.propose_act(
+            "key_press",
+            {
+                "key": "enter",
+                "target_app": "WeChat",
+                "intended_chat": "Bob",
+                "input_ax_ref": next_ref,
+                "expected_text": "另一段文字",
+            },
+        )
+
+        inherited = with_inherited_enter_expected_text(
+            decision,
+            previous_proposal=previous,
+            execution={},
+        )
+
+        arguments = inherited.payload["arguments"]
+        self.assertEqual(arguments["target_app"], "QQ")
+        self.assertEqual(arguments["intended_chat"], "Alice")
+        self.assertEqual(arguments["input_ax_ref"], previous_ref)
+        self.assertEqual(arguments["expected_text"], "只发给 Alice")
+
+    def test_chat_enter_uses_persisted_transaction_after_intermediate_action(self) -> None:
+        alice_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "alice",
+        }
+        bob_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [0, 3],
+            "fingerprint": "bob",
+        }
+        intermediate = ReviewableProposal.act(
+            action_type="click",
+            summary="打开表情面板",
+            payload={"target_app": "QQ", "label": "表情"},
+        )
+        decision = BrainDecision.propose_act(
+            "key_press",
+            {
+                "key": "enter",
+                "target_app": "QQ",
+                "intended_chat": "Bob",
+                "input_ax_ref": bob_ref,
+                "expected_text": "发给 Bob",
+            },
+        )
+
+        inherited = with_inherited_enter_expected_text(
+            decision,
+            previous_proposal=intermediate,
+            execution={"clicked": True, "target_app": "QQ"},
+            chat_send_transaction={
+                "target_app": "QQ",
+                "intended_chat": "Alice",
+                "input_ax_ref": alice_ref,
+                "expected_text": "只发给 Alice",
+            },
+        )
+
+        arguments = inherited.payload["arguments"]
+        self.assertEqual(arguments["target_app"], "QQ")
+        self.assertEqual(arguments["intended_chat"], "Alice")
+        self.assertEqual(arguments["input_ax_ref"], alice_ref)
+        self.assertEqual(arguments["expected_text"], "只发给 Alice")
+
     def test_launch_app_proposal_is_reviewable_without_click_preview(self) -> None:
         proposal = build_human_ops_act_proposal(
             BrainDecision.propose_act("launch_app", {"app": "WeChat", "label": "WeChat"}),

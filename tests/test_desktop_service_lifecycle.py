@@ -194,6 +194,61 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
         self.assertIs(service.backend_process, fake_subprocess.process)
         self.assertTrue(service.backend_started_by_app)
 
+    def test_stale_local_backend_with_another_token_is_not_reused(self) -> None:
+        module = importlib.import_module("app.service_lifecycle")
+        fake_subprocess = _FakeSubprocess()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {"chat": {"backend_url": "http://127.0.0.1:8009"}}
+            service = module.DesktopServiceLifecycle(
+                config,
+                root_dir=root,
+                default_backend_url="http://127.0.0.1:8008",
+                default_asr_api_base_url="http://127.0.0.1:8012",
+                local_api_token_env="IPET_LOCAL_API_TOKEN",
+                local_api_token="new-token",
+                subprocess_module=fake_subprocess,
+                time_module=SimpleNamespace(sleep=lambda _seconds: None, perf_counter=lambda: 0.0),
+                is_backend_healthy=lambda url: url.endswith(":8009"),
+                is_backend_authorized=lambda _url: False,
+                is_backend_live=lambda _url: True,
+                is_asr_healthy=lambda _url: False,
+                is_local_service_url=lambda _url: True,
+                pick_backend_launch_url=lambda _url: "http://127.0.0.1:8010",
+                parse_service_host_port=lambda _url, *, default_port: ("127.0.0.1", 8010),
+                resolve_backend_python=lambda: "/fake/python",
+                resolve_asr_python=lambda: "/fake/asr-python",
+                service_log_path=lambda name: root / f"{name}.log",
+                print_func=lambda *_args, **_kwargs: None,
+            )
+
+            service.ensure_backend_service()
+
+        self.assertEqual(config["chat"]["backend_url"], "http://127.0.0.1:8010")
+        self.assertEqual(fake_subprocess.popen_calls[0]["cmd"][-3:], ["8010", "--log-level", "warning"])
+
+    def test_local_backend_reuse_probe_uses_the_process_token(self) -> None:
+        module = importlib.import_module("app.service_lifecycle")
+        requests_module = mock.Mock()
+        requests_module.get.return_value = SimpleNamespace(status_code=200)
+        service = module.DesktopServiceLifecycle(
+            {},
+            root_dir=ROOT_DIR,
+            default_backend_url="http://127.0.0.1:8008",
+            default_asr_api_base_url="http://127.0.0.1:8012",
+            local_api_token_env="IPET_LOCAL_API_TOKEN",
+            local_api_token="process-token",
+            requests_module=requests_module,
+        )
+
+        self.assertTrue(service._backend_accepts_local_token("http://127.0.0.1:8009/"))
+        requests_module.get.assert_called_once_with(
+            "http://127.0.0.1:8009/api/vision/context",
+            params={"include_image": "false", "lane": "active"},
+            headers={"X-Ipet-Local-Token": "process-token"},
+            timeout=0.75,
+        )
+
     def test_asr_uses_local_backend_shortcut_without_launching_process(self) -> None:
         module = importlib.import_module("app.service_lifecycle")
         fake_subprocess = _FakeSubprocess()
@@ -212,6 +267,7 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
             local_api_token="secret-token",
             subprocess_module=fake_subprocess,
             is_backend_healthy=lambda _url: True,
+            is_backend_authorized=lambda _url: True,
             is_backend_live=lambda _url: True,
             is_asr_healthy=lambda _url: False,
             is_local_service_url=lambda _url: True,

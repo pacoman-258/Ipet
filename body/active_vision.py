@@ -599,8 +599,141 @@ def _active_detail_frames_from_capture(frame_payload: dict, selected_candidate: 
     return [detail_payload]
 
 
+def _crop_application_frame_payload(
+    frame_payload: dict,
+    target_bounds: dict,
+    config: dict,
+) -> dict:
+    try:
+        bounds = {
+            key: int(round(float(target_bounds.get(key) or 0)))
+            for key in ("x", "y", "width", "height")
+        }
+    except (TypeError, ValueError):
+        return frame_payload
+    if bounds["width"] < 80 or bounds["height"] < 40:
+        return frame_payload
+    image = _decode_frame_image(str(frame_payload.get("data_url") or ""))
+    if image is None or image.isNull():
+        return frame_payload
+    display_bounds = _display_union_bounds(
+        frame_payload.get("display_layout")
+        if isinstance(frame_payload.get("display_layout"), list)
+        else None
+    )
+    if display_bounds["width"] <= 0 or display_bounds["height"] <= 0:
+        return frame_payload
+    left = max(display_bounds["x"], bounds["x"])
+    top = max(display_bounds["y"], bounds["y"])
+    right = min(
+        display_bounds["x"] + display_bounds["width"],
+        bounds["x"] + bounds["width"],
+    )
+    bottom = min(
+        display_bounds["y"] + display_bounds["height"],
+        bounds["y"] + bounds["height"],
+    )
+    if right - left < 80 or bottom - top < 40:
+        return frame_payload
+    scale_x = image.width() / max(1, display_bounds["width"])
+    scale_y = image.height() / max(1, display_bounds["height"])
+    crop_x = max(
+        0,
+        min(
+            image.width() - 1,
+            int(round((left - display_bounds["x"]) * scale_x)),
+        ),
+    )
+    crop_y = max(
+        0,
+        min(
+            image.height() - 1,
+            int(round((top - display_bounds["y"]) * scale_y)),
+        ),
+    )
+    crop_right = max(
+        crop_x + 1,
+        min(
+            image.width(),
+            int(round((right - display_bounds["x"]) * scale_x)),
+        ),
+    )
+    crop_bottom = max(
+        crop_y + 1,
+        min(
+            image.height(),
+            int(round((bottom - display_bounds["y"]) * scale_y)),
+        ),
+    )
+    try:
+        crop = image.copy(
+            crop_x,
+            crop_y,
+            crop_right - crop_x,
+            crop_bottom - crop_y,
+        )
+        mime_type, data_url, image_width, image_height = (
+            _screen_capture._encoded_frame_parts(
+                _screen_capture._encode_pixmap_frame(crop, config)
+            )
+        )
+    except Exception:
+        return frame_payload
+    cropped = dict(frame_payload)
+    cropped.update(
+        {
+            "mime_type": mime_type,
+            "data_url": data_url,
+            "frame_hash": _screen_capture._vision_hash_from_data_url(
+                data_url
+            ),
+            "visual_hash": _screen_capture._visual_hash_from_image_like(
+                crop
+            ),
+            "source_capture_scope": str(
+                frame_payload.get("capture_scope") or ""
+            )[:80],
+            "capture_scope": "application",
+            "capture_region": "target_application_window",
+            "source_frame_hash": str(
+                frame_payload.get("frame_hash") or ""
+            )[:120],
+            "display_count": 1,
+            "display_layout": [
+                {
+                    "x": left,
+                    "y": top,
+                    "width": right - left,
+                    "height": bottom - top,
+                    "name": "target_application_window",
+                    "device_pixel_ratio": 1.0,
+                }
+            ],
+        }
+    )
+    if image_width > 0 and image_height > 0:
+        cropped["image_width"] = image_width
+        cropped["image_height"] = image_height
+    return cropped
+
+
 def _primary_screen():
     return _screen_capture.load_qt_screen_capture_dependencies().q_gui_application.primaryScreen()
+
+
+def _flush_qt_window_state() -> None:
+    """Deliver a hide/show request before blocking the Qt UI thread."""
+
+    try:
+        application_type = (
+            _screen_capture.load_qt_screen_capture_dependencies()
+            .q_gui_application
+        )
+        application = application_type.instance()
+        if application is not None:
+            application.processEvents()
+    except Exception:
+        pass
 
 
 def _accessibility_frame_payload(
@@ -619,9 +752,17 @@ def _accessibility_frame_payload(
         else []
     )
     search = accessibility.get("search") if isinstance(accessibility.get("search"), dict) else {}
+    usable = bool(accessibility.get("usable"))
+    failure_reason = _clean_vision_text(
+        accessibility.get("reason") or "macOS Accessibility did not expose a usable application tree",
+        max_length=240,
+    )
+    accessibility_unknowns = (
+        [] if usable else [f"accessibility_unavailable: {failure_reason}"]
+    )
     trace = {
         "enabled": True,
-        "status": "success",
+        "status": "success" if usable else "partial",
         "mode": ACTIVE_VISION_SURVEY_MODE,
         "target_id": ACTIVE_VISION_SURVEY_MODE,
         "target_hint": target_hint,
@@ -637,7 +778,7 @@ def _accessibility_frame_payload(
         "click_point": {},
         "actions": [],
         "blocked_actions": [],
-        "unknowns": [],
+        "unknowns": accessibility_unknowns,
         "focus_result": {},
         "verify_result": {
             "status": "observed",
@@ -650,7 +791,7 @@ def _accessibility_frame_payload(
         "accessibility_attempt": {
             "status": str(accessibility.get("status") or ""),
             "supported": bool(accessibility.get("supported")),
-            "usable": bool(accessibility.get("usable")),
+            "usable": usable,
             "cache_hit": bool(search.get("cache_hit")),
         },
     }
@@ -672,7 +813,7 @@ def _accessibility_frame_payload(
         "accessibility": accessibility,
         "observe_answer": str(accessibility.get("text") or "").strip(),
         "observations": [dict(item) for item in observations if isinstance(item, dict)],
-        "unknowns": [],
+        "unknowns": list(accessibility_unknowns),
         "active_observation": trace,
     }
 
@@ -722,7 +863,24 @@ def capture_active_vision_frame_payload(
     except (TypeError, ValueError):
         accessibility_result_limit = 10
     accessibility_result_limit = max(1, min(16, accessibility_result_limit))
+    try:
+        accessibility_timeout_sec = float(
+            payload.get("accessibility_timeout_sec") or 4.0
+        )
+    except (TypeError, ValueError):
+        accessibility_timeout_sec = 4.0
+    accessibility_timeout_sec = max(0.5, min(6.0, accessibility_timeout_sec))
     capture_scope = "application" if target_app else "desktop"
+    target_surface_verified = bool(
+        target_app
+        and mode == ACTIVE_VISION_SURVEY_MODE
+        and payload.get("target_surface_verified") is True
+    )
+    target_bounds = (
+        payload.get("target_bounds")
+        if isinstance(payload.get("target_bounds"), dict)
+        else {}
+    )
     requested_actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
     if mode == ACTIVE_VISION_FOCUS_MODE and not requested_actions:
         requested_actions = [ACTIVE_VISION_FOCUS_MODE]
@@ -731,7 +889,15 @@ def capture_active_vision_frame_payload(
     if active_cfg.get("allowed_interaction") == "none":
         requested_actions = []
     click_policy = _clean_vision_text(payload.get("click_policy") or ACTIVE_VISION_CLICK_POLICY, max_length=80)
-    settle_ms = int(payload.get("settle_ms") or active_cfg["settle_ms"])
+    try:
+        settle_ms = int(
+            payload["settle_ms"]
+            if "settle_ms" in payload
+            else active_cfg["settle_ms"]
+        )
+    except (TypeError, ValueError):
+        settle_ms = int(active_cfg["settle_ms"])
+    settle_ms = max(0, min(2000, settle_ms))
     accessibility_attempt: dict[str, Any] = {}
     settled_before_capture = False
     if (
@@ -753,6 +919,7 @@ def capture_active_vision_frame_payload(
                 query=accessibility_query,
                 cache_mode=accessibility_cache_mode,
                 result_limit=accessibility_result_limit,
+                timeout_sec=accessibility_timeout_sec,
             )
             accessibility_attempt = candidate if isinstance(candidate, dict) else {}
         except Exception as exc:
@@ -762,7 +929,10 @@ def capture_active_vision_frame_payload(
                 "usable": False,
                 "reason": _clean_vision_text(exc, max_length=240),
             }
-        if bool(accessibility_attempt.get("usable")):
+        if (
+            bool(accessibility_attempt.get("usable"))
+            or payload.get("defer_visual_fallback") is True
+        ):
             return _accessibility_frame_payload(
                 accessibility_attempt,
                 target_app=target_app,
@@ -770,18 +940,24 @@ def capture_active_vision_frame_payload(
             )
     desktop_targets = payload.get("desktop_targets") if isinstance(payload.get("desktop_targets"), list) else []
     target_candidates = payload.get("target_candidates") if isinstance(payload.get("target_candidates"), list) else []
-    discovery = discover_active_vision_target_candidates(
-        desktop_targets=desktop_targets,
-        desktop_targets_provider=desktop_targets_provider,
-        dock_items_provider=dock_items_provider,
-        running_apps_provider=running_apps_provider,
-        target_candidates=target_candidates,
-        target_hint=target_hint,
-        platform_name=platform_name or sys.platform,
-    )
-    desktop_targets = discovery["desktop_targets"]
-    target_candidates = discovery["target_candidates"]
-    discovery_errors = discovery["discovery_errors"]
+    if target_surface_verified:
+        # The desktop router already activated and verified this application.
+        # Re-enumerating System Events, running apps, and the Dock cannot
+        # improve an application-scoped survey and costs several seconds.
+        discovery_errors = []
+    else:
+        discovery = discover_active_vision_target_candidates(
+            desktop_targets=desktop_targets,
+            desktop_targets_provider=desktop_targets_provider,
+            dock_items_provider=dock_items_provider,
+            running_apps_provider=running_apps_provider,
+            target_candidates=target_candidates,
+            target_hint=target_hint,
+            platform_name=platform_name or sys.platform,
+        )
+        desktop_targets = discovery["desktop_targets"]
+        target_candidates = discovery["target_candidates"]
+        discovery_errors = discovery["discovery_errors"]
     was_visible = False
     try:
         was_visible = bool(window.isVisible()) if hasattr(window, "isVisible") else False
@@ -795,6 +971,7 @@ def capture_active_vision_frame_payload(
         "target_hint": target_hint,
         "target_app": target_app,
         "capture_scope": capture_scope,
+        "target_surface_verified": target_surface_verified,
         "click_policy": ACTIVE_VISION_CLICK_POLICY,
         "desktop_targets": list(desktop_targets or [])[:12],
         "target_candidates": list(target_candidates or [])[:12],
@@ -818,10 +995,11 @@ def capture_active_vision_frame_payload(
         if accessibility_attempt
         else {},
     }
+    hidden_for_capture = bool(was_visible and hasattr(window, "hide"))
     try:
-        hidden_for_desktop_capture = capture_scope == "desktop" and was_visible and hasattr(window, "hide")
-        if hidden_for_desktop_capture:
+        if hidden_for_capture:
             window.hide()
+            _flush_qt_window_state()
         if mode == ACTIVE_VISION_FOCUS_MODE:
             interaction_trace = interaction_runner(
                 mode=mode,
@@ -835,7 +1013,10 @@ def capture_active_vision_frame_payload(
             )
             if isinstance(interaction_trace, dict):
                 trace.update({key: value for key, value in interaction_trace.items() if key != "data_url"})
-        if not settled_before_capture:
+        # A visual application capture must not contain Ipet's own chat/worklog
+        # window. Hiding the Qt host is asynchronous on macOS, so it needs its
+        # own compositor settle even when an earlier AX attempt already waited.
+        if hidden_for_capture or not settled_before_capture:
             try:
                 sleeper(max(0.0, min(2.0, settle_ms / 1000.0)))
             except Exception:
@@ -851,7 +1032,13 @@ def capture_active_vision_frame_payload(
         else:
             frame_payload = frame_encoder(screen, active_capture_cfg)
         frame_payload = normalizer(frame_payload)
-        if not target_candidates:
+        if capture_scope == "application" and target_bounds:
+            frame_payload = _crop_application_frame_payload(
+                frame_payload,
+                target_bounds,
+                active_capture_cfg,
+            )
+        if not target_candidates and not target_surface_verified:
             discovery = discover_active_vision_target_candidates(
                 desktop_targets=desktop_targets,
                 desktop_targets_provider=None,
@@ -886,8 +1073,9 @@ def capture_active_vision_frame_payload(
         trace["status"] = "error"
         raise
     finally:
-        if capture_scope == "desktop" and was_visible and hasattr(window, "show"):
+        if hidden_for_capture and hasattr(window, "show"):
             try:
                 window.show()
+                _flush_qt_window_state()
             except Exception:
                 pass

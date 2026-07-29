@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable
 
 from brain.decisions import BrainDecision, DecisionKind
@@ -28,6 +29,11 @@ def _default_intent_predicate(_text: str) -> bool:
     return False
 
 
+def _is_chat_target_app(value: object) -> bool:
+    key = "".join(str(value or "").casefold().split())
+    return key in {"qq", "腾讯qq", "wechat", "微信", "微信app"}
+
+
 def proposal_tool_label(proposal: ReviewableProposal) -> str:
     if proposal.proposal_type == "remember":
         operation = str(proposal.payload.get("operation") or "save").strip()
@@ -54,10 +60,13 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
         text = str(args.get("text") or "").strip()
         preview = text[:24] + ("..." if len(text) > 24 else "")
         ax_ref = args.get("ax_ref") if isinstance(args.get("ax_ref"), dict) else {}
+        verb = "清空" if args.get("replace_existing") is True and not text else (
+            "替换" if args.get("replace_existing") is True else "输入到"
+        )
         if ax_ref:
             role = str(ax_ref.get("role") or "AXElement").strip() or "AXElement"
-            return f"输入到 {label}（{role} 语义目标）: {preview}{target_suffix}"
-        return f"输入到 {label}: {preview}{target_suffix}"
+            return f"{verb} {label}（{role} 语义目标）: {preview}{target_suffix}"
+        return f"{verb} {label}: {preview}{target_suffix}"
     if action_type == "key_press":
         key = str(args.get("key") or "").strip().lower() or "enter"
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"
@@ -263,6 +272,8 @@ def with_inherited_enter_expected_text(
     *,
     previous_proposal: ReviewableProposal,
     execution: dict[str, Any],
+    observation: dict[str, Any] | None = None,
+    chat_send_transaction: dict[str, Any] | None = None,
 ) -> BrainDecision:
     if decision.kind != DecisionKind.PROPOSE_ACT:
         return decision
@@ -270,6 +281,38 @@ def with_inherited_enter_expected_text(
     action_type = str(payload.get("action_type") or "").strip()
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
     next_args = dict(arguments)
+    transaction = (
+        chat_send_transaction
+        if isinstance(chat_send_transaction, dict)
+        else {}
+    )
+    transaction_target_app = str(transaction.get("target_app") or "").strip()
+    transaction_chat = str(transaction.get("intended_chat") or "").strip()
+    transaction_ref = (
+        transaction.get("input_ax_ref")
+        if isinstance(transaction.get("input_ax_ref"), dict)
+        else {}
+    )
+    transaction_text = str(transaction.get("expected_text") or "")
+    requested_key = str(arguments.get("key") or "enter").strip().lower() or "enter"
+    if (
+        action_type == "key_press"
+        and requested_key in {"enter", "return"}
+        and _is_chat_target_app(transaction_target_app)
+        and transaction_chat
+        and transaction_ref
+        and transaction_text.strip()
+    ):
+        next_args.update(
+            {
+                "target_app": transaction_target_app,
+                "intended_chat": transaction_chat,
+                "input_ax_ref": deepcopy(transaction_ref),
+                "expected_text": transaction_text,
+            }
+        )
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     previous_args = proposal_arguments(previous_proposal)
     if action_type in {"click", "type_text", "key_press"} and not str(next_args.get("target_app") or "").strip():
         inherited_target_app = str(
@@ -281,6 +324,36 @@ def with_inherited_enter_expected_text(
         ).strip()
         if inherited_target_app:
             next_args["target_app"] = inherited_target_app
+    target_app = str(next_args.get("target_app") or "").strip()
+    observed = observation if isinstance(observation, dict) else {}
+    chat_context = (
+        observed.get("chat_context")
+        if isinstance(observed.get("chat_context"), dict)
+        else {}
+    )
+    intended_chat = str(
+        previous_args.get("intended_chat")
+        or execution.get("intended_chat")
+        or chat_context.get("contact")
+        or next_args.get("intended_chat")
+        or ""
+    ).strip()
+    if (
+        action_type in {"type_text", "key_press"}
+        and _is_chat_target_app(target_app)
+        and intended_chat
+    ):
+        next_args["intended_chat"] = intended_chat
+    if action_type == "key_press" and _is_chat_target_app(target_app):
+        previous_input_ref = (
+            previous_args.get("input_ax_ref")
+            if isinstance(previous_args.get("input_ax_ref"), dict)
+            else previous_args.get("ax_ref")
+            if isinstance(previous_args.get("ax_ref"), dict)
+            else {}
+        )
+        if isinstance(previous_input_ref, dict) and previous_input_ref:
+            next_args["input_ax_ref"] = deepcopy(previous_input_ref)
     if action_type != "key_press":
         if next_args == arguments:
             return decision
@@ -289,11 +362,6 @@ def with_inherited_enter_expected_text(
     key = str(arguments.get("key") or "enter").strip().lower() or "enter"
     if key not in {"enter", "return"}:
         return decision
-    if str(next_args.get("expected_text") or "").strip():
-        if next_args == arguments:
-            return decision
-        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
-        return BrainDecision.propose_act(action_type, next_args, goal=goal)
     previous_action_type = str(previous_proposal.payload.get("action_type") or "").strip()
     if previous_action_type != "type_text":
         if next_args == arguments:
@@ -307,5 +375,32 @@ def with_inherited_enter_expected_text(
         goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
         return BrainDecision.propose_act(action_type, next_args, goal=goal)
     next_args["expected_text"] = expected_text
+    previous_target_app = str(
+        execution.get("target_app")
+        or execution.get("app")
+        or previous_args.get("target_app")
+        or previous_args.get("app")
+        or ""
+    ).strip()
+    if previous_target_app:
+        next_args["target_app"] = previous_target_app
+    if _is_chat_target_app(previous_target_app):
+        previous_intended_chat = str(
+            previous_args.get("intended_chat")
+            or execution.get("intended_chat")
+            or chat_context.get("contact")
+            or ""
+        ).strip()
+        previous_input_ref = (
+            previous_args.get("input_ax_ref")
+            if isinstance(previous_args.get("input_ax_ref"), dict)
+            else previous_args.get("ax_ref")
+            if isinstance(previous_args.get("ax_ref"), dict)
+            else {}
+        )
+        if previous_intended_chat:
+            next_args["intended_chat"] = previous_intended_chat
+        if previous_input_ref:
+            next_args["input_ax_ref"] = deepcopy(previous_input_ref)
     goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
     return BrainDecision.propose_act(action_type, next_args, goal=goal)

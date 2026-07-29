@@ -284,6 +284,79 @@ class DesktopCommandClientTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_chat_message_transaction_fields_reach_desktop_executor(self) -> None:
+        client = self._import_client()
+        calls = []
+        input_ref = {
+            "app_id": "qq",
+            "role": "AXTextArea",
+            "path": [1, 2, 3],
+            "input_kind": "chat_message",
+            "fingerprint": "signed",
+        }
+
+        async def send_command(command_type, payload, *, timeout_sec):
+            calls.append((command_type, payload, timeout_sec))
+            return {"source": "desktop"}
+
+        typed = ReviewableProposal.act(
+            action_type="type_text",
+            summary="输入草稿",
+            payload={
+                "target_app": "QQ",
+                "ax_ref": input_ref,
+                "intended_chat": "莉霖澪",
+                "text": "IPET_AX_TEST_DO_NOT_SEND",
+                "replace_existing": True,
+                "label": "消息输入框",
+            },
+        )
+        pressed = ReviewableProposal.act(
+            action_type="key_press",
+            summary="发送草稿",
+            payload={
+                "target_app": "QQ",
+                "key": "enter",
+                "intended_chat": "莉霖澪",
+                "expected_text": "IPET_AX_TEST_DO_NOT_SEND",
+                "input_ax_ref": input_ref,
+                "label": "发送",
+            },
+        )
+
+        await client.perform_human_ops_action(typed, send_command=send_command)
+        await client.perform_human_ops_action(pressed, send_command=send_command)
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "human_ops_type_text",
+                    {
+                        "target_app": "QQ",
+                        "text": "IPET_AX_TEST_DO_NOT_SEND",
+                        "label": "消息输入框",
+                        "ax_ref": input_ref,
+                        "replace_existing": True,
+                        "intended_chat": "莉霖澪",
+                    },
+                    8,
+                ),
+                (
+                    "human_ops_key_press",
+                    {
+                        "target_app": "QQ",
+                        "key": "enter",
+                        "label": "发送",
+                        "intended_chat": "莉霖澪",
+                        "expected_text": "IPET_AX_TEST_DO_NOT_SEND",
+                        "input_ax_ref": input_ref,
+                    },
+                    8,
+                ),
+            ],
+        )
+
     async def test_backend_app_no_longer_inlines_desktop_response_polling(self) -> None:
         source = (ROOT_DIR / "backend" / "app.py").read_text(encoding="utf-8")
 

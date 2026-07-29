@@ -2146,11 +2146,23 @@ class NeoBackendContractTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         text_completion = SimpleNamespace(
             text="Propose typing",
             decision=BrainDecision.propose_act(
                 "type_text",
-                {"text": "收到，我马上处理。", "label": "微信聊天输入框", "target_app": "WeChat"},
+                {
+                    "text": "收到，我马上处理。",
+                    "label": "微信聊天输入框",
+                    "target_app": "WeChat",
+                    "intended_chat": "测试会话",
+                    "ax_ref": input_ref,
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2159,7 +2171,14 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose enter",
             decision=BrainDecision.propose_act(
                 "key_press",
-                {"key": "enter", "label": "发送消息", "target_app": "WeChat"},
+                {
+                    "key": "enter",
+                    "label": "发送消息",
+                    "target_app": "WeChat",
+                    "intended_chat": "测试会话",
+                    "expected_text": "收到，我马上处理。",
+                    "input_ax_ref": input_ref,
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2305,11 +2324,23 @@ class NeoBackendContractTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         completion = SimpleNamespace(
             text="Propose typing",
             decision=BrainDecision.propose_act(
                 "type_text",
-                {"text": "收到，我马上处理。", "label": "微信聊天输入框", "target_app": "WeChat"},
+                {
+                    "text": "收到，我马上处理。",
+                    "label": "微信聊天输入框",
+                    "target_app": "WeChat",
+                    "intended_chat": "测试会话",
+                    "ax_ref": input_ref,
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2360,6 +2391,12 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         draft_text = "收到，我下午3点带资料。"
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial = SimpleNamespace(
             text="Propose typing reply",
             decision=BrainDecision.propose_act(
@@ -2368,6 +2405,8 @@ class NeoBackendContractTests(unittest.TestCase):
                     "text": draft_text,
                     "label": "微信聊天输入框",
                     "target_app": "WeChat",
+                    "intended_chat": "张三",
+                    "ax_ref": input_ref,
                     "continue_after_approval": True,
                 },
                 goal={
@@ -2397,7 +2436,9 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         observe_result = {
             "text": f"微信聊天输入框中已出现草稿：{draft_text}。发送入口可用，也可以按回车发送。",
-            "observations": [{"claim": "输入框草稿可见，发送入口可用"}],
+            "observations": [
+                {"claim": f"输入框中完整显示草稿：{draft_text}，发送入口可用"}
+            ],
             "unknowns": [],
             "surface": {"kind": "wechat_gui", "region": "chat", "confidence": 0.76},
             "affordances": [
@@ -2466,6 +2507,12 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         sent_text = "收到，我下午3点带资料。"
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial = SimpleNamespace(
             text="Propose enter send",
             decision=BrainDecision.propose_act(
@@ -2474,7 +2521,9 @@ class NeoBackendContractTests(unittest.TestCase):
                     "key": "enter",
                     "label": "发送微信回复",
                     "target_app": "WeChat",
+                    "intended_chat": "张三",
                     "expected_text": sent_text,
+                    "input_ax_ref": input_ref,
                     "continue_after_approval": True,
                 },
                 goal={
@@ -2565,6 +2614,12 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         sent_text = "收到，我下午3点带资料。"
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial = SimpleNamespace(
             text="Propose enter send",
             decision=BrainDecision.propose_act(
@@ -2573,7 +2628,9 @@ class NeoBackendContractTests(unittest.TestCase):
                     "key": "enter",
                     "label": "发送微信回复",
                     "target_app": "WeChat",
+                    "intended_chat": "张三",
                     "expected_text": sent_text,
+                    "input_ax_ref": input_ref,
                 },
                 goal={
                     "objective": "根据张三聊天信息回复张三",
@@ -2658,6 +2715,12 @@ class NeoBackendContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         draft_text = "收到，我下午3点带资料。"
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial_launch = SimpleNamespace(
             text="Launch WeChat",
             decision=BrainDecision.propose_act(
@@ -2707,7 +2770,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Type reply",
             decision=BrainDecision.propose_act(
                 "type_text",
-                {"text": draft_text, "label": "微信聊天输入框"},
+                {
+                    "target_app": "WeChat",
+                    "ax_ref": input_ref,
+                    "intended_chat": "张三",
+                    "text": draft_text,
+                    "label": "微信聊天输入框",
+                },
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2779,12 +2848,21 @@ class NeoBackendContractTests(unittest.TestCase):
             "observations": [{"claim": "聊天输入框已聚焦"}],
             "unknowns": [],
             "surface": {"kind": "wechat_gui", "region": "chat", "confidence": 0.78},
-            "affordances": [{"kind": "chat_input", "supports": ["click", "type_text", "key_press"], "location": {"x": 760, "y": 905}}],
+            "affordances": [
+                {
+                    "kind": "chat_input",
+                    "supports": ["click", "type_text", "key_press"],
+                    "location": {"x": 760, "y": 905},
+                    "ax_ref": input_ref,
+                }
+            ],
             "chat_context": {"contact": "张三", "input_ready": True, "input_focused": True, "send_ready": True},
         }
         draft_observation = {
             "text": f"微信聊天输入框中已出现草稿：{draft_text}。发送入口可用，也可以按回车发送。",
-            "observations": [{"claim": "回复草稿完整可见"}],
+            "observations": [
+                {"claim": f"回复输入框中完整显示草稿：{draft_text}"}
+            ],
             "unknowns": [],
             "surface": {"kind": "wechat_gui", "region": "chat", "confidence": 0.78},
             "affordances": [
@@ -2892,6 +2970,12 @@ class NeoBackendContractTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
@@ -2918,6 +3002,9 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "text": "收到，我马上处理。",
                     "label": "微信聊天输入框",
+                    "target_app": "WeChat",
+                    "intended_chat": "测试联系人",
+                    "ax_ref": input_ref,
                     "continue_after_approval": True,
                 },
                 goal={
@@ -2931,9 +3018,10 @@ class NeoBackendContractTests(unittest.TestCase):
             model="neo-model",
         )
         observe_result = {
-            "text": "微信已经打开，当前联系人聊天输入框可见。",
+            "text": "微信已经打开，测试联系人聊天输入框可见。",
             "observations": [{"claim": "聊天输入框可见"}],
             "unknowns": [],
+            "chat_context": {"contact": "测试联系人", "input_ready": True},
         }
 
         with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(side_effect=[initial, followup])) as run_mock:
@@ -3085,6 +3173,12 @@ class NeoBackendContractTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        input_ref = {
+            "app_id": "wechat",
+            "role": "AXTextArea",
+            "path": [0, 2],
+            "fingerprint": "reviewed-input",
+        }
         initial = SimpleNamespace(
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
@@ -3110,6 +3204,9 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "text": "收到，我马上处理。",
                     "label": "微信聊天输入框",
+                    "target_app": "WeChat",
+                    "intended_chat": "测试联系人",
+                    "ax_ref": input_ref,
                     "continue_after_approval": True,
                 },
                 goal={
@@ -3123,9 +3220,10 @@ class NeoBackendContractTests(unittest.TestCase):
             model="neo-model",
         )
         observe_result = {
-            "text": "微信已经打开，当前联系人聊天输入框可见。",
+            "text": "微信已经打开，测试联系人聊天输入框可见。",
             "observations": [{"claim": "聊天输入框可见"}],
             "unknowns": [],
+            "chat_context": {"contact": "测试联系人", "input_ready": True},
         }
 
         with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(side_effect=[initial, followup])) as run_mock:

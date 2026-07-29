@@ -7,8 +7,48 @@ from typing import Any
 from brain.decisions import BrainDecision
 
 
+def _without_inline_media(value: Any) -> tuple[Any, int]:
+    omitted = 0
+
+    def scrub(item: Any) -> Any:
+        nonlocal omitted
+        if isinstance(item, dict):
+            result: dict[str, Any] = {}
+            for key, child in item.items():
+                key_text = str(key)
+                if key_text in {
+                    "data_url",
+                    "image_data_url",
+                    "screenshot_data_url",
+                }:
+                    omitted += 1
+                    continue
+                result[key_text] = scrub(child)
+            return result
+        if isinstance(item, list):
+            return [scrub(child) for child in item]
+        if isinstance(item, tuple):
+            return [scrub(child) for child in item]
+        if (
+            isinstance(item, str)
+            and item.casefold().startswith("data:")
+            and ";base64," in item[:160].casefold()
+        ):
+            omitted += 1
+            return "[inline media omitted]"
+        return item
+
+    return scrub(value), omitted
+
+
 def sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    payload: dict[str, Any] = data
+    if str(event or "").strip().casefold() == "done":
+        safe_payload, omitted = _without_inline_media(data)
+        payload = safe_payload if isinstance(safe_payload, dict) else {}
+        if omitted:
+            payload["inline_media_omitted_count"] = omitted
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def sanitize_brain_error(error: Exception | None, brain_config: dict[str, Any]) -> str:

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 import requests
 
+from app import desktop_runtime as _desktop_runtime
 from backend.environment import normalize_environment_config
 from body.screen_vision_controller import collect_screen_observations
 
@@ -31,10 +32,16 @@ def _ensure_local_api_token() -> str:
 
 
 def load_qtimer():
-    try:
-        from PySide6.QtCore import QTimer
-    except ImportError:
-        from PyQt6.QtCore import QTimer
+    if _desktop_runtime.prefer_pyqt_bindings(sys_platform=sys.platform):
+        try:
+            from PyQt6.QtCore import QTimer
+        except ImportError:
+            from PySide6.QtCore import QTimer
+    else:
+        try:
+            from PySide6.QtCore import QTimer
+        except ImportError:
+            from PyQt6.QtCore import QTimer
     return QTimer
 
 
@@ -128,6 +135,7 @@ class EnvironmentController:
         self._in_flight = False
         self._stop_event = threading.Event()
         self.last_error = ""
+        self._last_reported_error = ""
 
     def apply_config(self, config: dict[str, Any]) -> None:
         source = config if isinstance(config, dict) else {}
@@ -165,9 +173,12 @@ class EnvironmentController:
             url = f"{self._backend_url.rstrip('/')}/api/environment/events"
             self._post_event(url, payload, 2.0)
             self.last_error = ""
+            self._last_reported_error = ""
         except Exception as exc:
             self.last_error = str(exc)
-            print(f"环境元数据上传失败: {exc}")
+            if self.last_error != self._last_reported_error:
+                print(f"环境元数据上传失败: {exc}")
+                self._last_reported_error = self.last_error
         finally:
             with self._lock:
                 self._in_flight = False

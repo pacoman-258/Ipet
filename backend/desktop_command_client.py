@@ -140,6 +140,11 @@ async def perform_human_ops_action(
         command_payload: dict[str, Any] = {"target_app": target_app, "text": text, "label": label}
         if isinstance(args.get("ax_ref"), dict):
             command_payload["ax_ref"] = dict(args["ax_ref"])
+        if args.get("replace_existing") is True:
+            command_payload["replace_existing"] = True
+        intended_chat = str(args.get("intended_chat") or "").strip()
+        if intended_chat:
+            command_payload["intended_chat"] = intended_chat
         result = await send_command(
             "human_ops_type_text",
             command_payload,
@@ -162,10 +167,23 @@ async def perform_human_ops_action(
             raise RuntimeError("Human Ops key press requires target_app.")
         key = str(args.get("key") or "enter").strip().lower() or "enter"
         label = str(args.get("label") or args.get("target") or "当前焦点").strip() or "当前焦点"
+        command_payload: dict[str, Any] = {
+            "target_app": target_app,
+            "key": key,
+            "label": label,
+        }
+        intended_chat = str(args.get("intended_chat") or "").strip()
+        expected_text = str(args.get("expected_text") or "")
+        if intended_chat:
+            command_payload["intended_chat"] = intended_chat
+        if expected_text:
+            command_payload["expected_text"] = expected_text
+        if isinstance(args.get("input_ax_ref"), dict):
+            command_payload["input_ax_ref"] = dict(args["input_ax_ref"])
         result = await send_command(
             "human_ops_key_press",
-            {"target_app": target_app, "key": key, "label": label},
+            command_payload,
             timeout_sec=8,
         )
-        return {"pressed": True, "target_app": target_app, "key": key, "label": label, **result}
+        return {"pressed": True, **command_payload, **result}
     raise RuntimeError(f"unsupported human ops action: {action_type}")

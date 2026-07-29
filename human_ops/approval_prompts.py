@@ -54,9 +54,15 @@ def build_post_approval_observe_prompt(
         if action_type == "type_text":
             draft = str(args.get("text") or "").strip()
             draft_clause = f"刚才输入的草稿是“{draft}”。" if draft else ""
+            intended_chat = str(args.get("intended_chat") or "").strip()
+            chat_clause = (
+                f"获批的目标会话是“{intended_chat}”。"
+                if intended_chat
+                else ""
+            )
             return (
-                f"用户目标是“{task}”。刚才已执行获批动作：{label}。{draft_clause}"
-                "请观察执行后的屏幕状态：当前是否仍在目标应用或网页的目标联系人/会话里，"
+                f"用户目标是“{task}”。刚才已执行获批动作：{label}。{draft_clause}{chat_clause}"
+                "请观察执行后的屏幕状态：当前会话标题是否仍与获批目标完全一致，"
                 "聊天输入框中是否已经出现这段草稿，草稿文字是否完整，"
                 "以及当前可见的发送入口或其他相关 affordance。"
                 "请只用自然语言给出可见依据，不替 Brain 决定下一步动作。"

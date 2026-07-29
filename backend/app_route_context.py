@@ -148,11 +148,13 @@ class _LiveRouteDependencyContext:
             proposal,
         )
         self.human_ops_continuation_prompt = lambda **kwargs: self._call("_human_ops_continuation_prompt", **kwargs)
-        self.with_inherited_enter_expected_text = lambda decision, *, previous_proposal, execution: self._call(
+        self.with_inherited_enter_expected_text = lambda decision, *, previous_proposal, execution, observation=None, chat_send_transaction=None: self._call(
             "_with_inherited_enter_expected_text",
             decision,
             previous_proposal=previous_proposal,
             execution=execution,
+            observation=observation,
+            chat_send_transaction=chat_send_transaction,
         )
         self.request_native_approval = lambda proposal: self._call("_request_native_human_ops_approval", proposal)
         self.notify_human_ops_action = lambda proposal, *, task_id: self._call(

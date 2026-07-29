@@ -6,6 +6,26 @@ from typing import Any, Callable
 from brain.decisions import BrainDecision
 
 
+_DESKTOP_SURFACE_TARGETS = {
+    "desktop",
+    "screen",
+    "currentdesktop",
+    "currentscreen",
+    "currentapp",
+    "frontmostapp",
+    "activeapp",
+    "macosdesktop",
+    "桌面",
+    "屏幕",
+    "当前桌面",
+    "当前屏幕",
+    "当前应用",
+    "前台应用",
+    "整个桌面",
+    "所有应用",
+}
+
+
 @dataclass(frozen=True)
 class HumanOpsObserveDependencies:
     send_desktop_command: Callable[..., Any]
@@ -21,13 +41,34 @@ class HumanOpsObserveDependencies:
     observe_click_coordinate_status: Callable[..., dict[str, str]]
     goal_requests_click_coordinate_followup: Callable[[BrainDecision], bool]
     click_coordinate_observe_failure_text: Callable[[str], str]
+    enrich_observation_frame_with_local_ocr: Callable[
+        [dict[str, Any], str],
+        dict[str, Any],
+    ] = lambda frame, _query: frame
 
 
-def _accessibility_search_is_sufficient(accessibility: dict[str, Any]) -> bool:
-    search = accessibility.get("search") if isinstance(accessibility.get("search"), dict) else {}
-    # Older/custom AX providers do not yet report quality. Preserve their
-    # structured path; only an explicit negative result triggers pixel fallback.
-    return search.get("sufficient") is not False
+def _accessibility_search_needs_visual_fallback(
+    accessibility: dict[str, Any],
+) -> bool:
+    search = (
+        accessibility.get("search")
+        if isinstance(accessibility.get("search"), dict)
+        else {}
+    )
+    return (
+        search.get("sufficient") is False
+        and search.get("visual_fallback_required") is not False
+    )
+
+
+def _concrete_target_app(value: object) -> str:
+    target_app = " ".join(str(value or "").split())[:160]
+    key = "".join(
+        char
+        for char in target_app.casefold()
+        if char.isalnum()
+    )
+    return "" if key in _DESKTOP_SURFACE_TARGETS else target_app
 
 
 async def perform_human_ops_observe(
@@ -44,7 +85,7 @@ async def perform_human_ops_observe(
         }
     target = deps.observe_target_hint_from_decision(decision, "screen")
     decision_payload = decision.payload if isinstance(decision.payload, dict) else {}
-    target_app = str(decision_payload.get("target_app") or "").strip()
+    target_app = _concrete_target_app(decision_payload.get("target_app"))
     ax_query = str(decision_payload.get("ax_query") or "").strip()[:240]
     initial_ax_query = str(
         decision_payload.get("observe_prompt")
@@ -64,27 +105,40 @@ async def perform_human_ops_observe(
             {
                 "accessibility_query": ax_query or initial_ax_query,
                 "accessibility_cache_mode": "prefer_cache" if ax_query else "refresh",
-                "accessibility_result_limit": 10,
+                "accessibility_result_limit": 16,
+                # Music and other deep collection views regularly need just
+                # over four seconds to materialize their final AX child. Six
+                # seconds keeps exhaustive reads complete while the desktop
+                # router still has room for one focused retry.
+                "accessibility_timeout_sec": 6.0,
             }
         )
     result = await deps.send_desktop_command(
         "active_vision_capture",
         capture_payload,
-        timeout_sec=14,
+        timeout_sec=18 if target_app else 14,
     )
     frame = result.get("frame") if isinstance(result.get("frame"), dict) else {}
     accessibility = frame.get("accessibility") if isinstance(frame.get("accessibility"), dict) else {}
+    focus_verification = (
+        frame.get("focus_verification")
+        if isinstance(frame.get("focus_verification"), dict)
+        else {}
+    )
     if (
         target_app
         and bool(accessibility.get("usable"))
         and str(frame.get("capture_backend") or "") == "macos_accessibility"
-        and not _accessibility_search_is_sufficient(accessibility)
+        and _accessibility_search_needs_visual_fallback(accessibility)
+        # New desktop runtimes own the focused visual fallback atomically.
+        # A verified failure must not trigger a second 14-second command.
+        and not focus_verification
     ):
         visual_payload = {**capture_payload, "accessibility_enabled": False}
         visual_result = await deps.send_desktop_command(
             "active_vision_capture",
             visual_payload,
-            timeout_sec=14,
+            timeout_sec=18,
         )
         visual_frame = (
             visual_result.get("frame")
@@ -116,9 +170,27 @@ async def perform_human_ops_observe(
         }
         frame = visual_frame
     frame = deps.frame_with_observe_prompt(frame, decision, target)
+    if (
+        target_app
+        and str(frame.get("data_url") or "").startswith("data:image/")
+        and _accessibility_search_needs_visual_fallback(
+            frame.get("accessibility")
+            if isinstance(frame.get("accessibility"), dict)
+            else {}
+        )
+    ):
+        frame = deps.enrich_observation_frame_with_local_ocr(
+            frame,
+            ax_query or initial_ax_query,
+        )
     coordinate_context = deps.observe_coordinate_context_from_frame(frame)
     analyzer_config = deps.observe_model_analyzer_config(human_ops_config)
     accessibility = frame.get("accessibility") if isinstance(frame.get("accessibility"), dict) else {}
+    local_ocr_search = (
+        frame.get("local_ocr_search")
+        if isinstance(frame.get("local_ocr_search"), dict)
+        else {}
+    )
     if bool(accessibility.get("usable")) and str(frame.get("capture_backend") or "") == "macos_accessibility":
         result = {**result, "frame": frame}
         text = deps.observation_text_from_result(result) or str(accessibility.get("text") or "").strip()
@@ -138,6 +210,52 @@ async def perform_human_ops_observe(
             **({"ax_search": computer_use_context["ax_search"]} if computer_use_context.get("ax_search") else {}),
             "observations": frame.get("observations") if isinstance(frame.get("observations"), list) else [],
             "unknowns": unknowns,
+        }
+    if bool(local_ocr_search.get("sufficient")):
+        labels = [
+            str(item.get("label") or "").strip()
+            for item in (
+                local_ocr_search.get("matches")
+                if isinstance(local_ocr_search.get("matches"), list)
+                else []
+            )
+            if isinstance(item, dict) and str(item.get("label") or "").strip()
+        ][:1]
+        text = (
+            "本机 macOS Vision OCR 已在目标应用窗口中找到唯一关键词匹配："
+            + "、".join(labels)
+            + "。"
+        )
+        computer_use_context = deps.infer_computer_use_context(
+            text,
+            frame,
+            target,
+        )
+        return {
+            "text": text,
+            "frame": frame,
+            "trace": result.get("trace") if isinstance(result.get("trace"), dict) else {},
+            "analysis_route": "structured",
+            "coordinate_context": coordinate_context,
+            "surface": computer_use_context["surface"],
+            "affordances": computer_use_context["affordances"],
+            **(
+                {"chat_context": computer_use_context["chat_context"]}
+                if computer_use_context.get("chat_context")
+                else {}
+            ),
+            **(
+                {"ax_search": computer_use_context["ax_search"]}
+                if computer_use_context.get("ax_search")
+                else {}
+            ),
+            **(
+                {"visual_search": computer_use_context["visual_search"]}
+                if computer_use_context.get("visual_search")
+                else {}
+            ),
+            "observations": [],
+            "unknowns": [],
         }
     if not analyzer_config.get("enabled"):
         result = {**result, "frame": frame}
@@ -162,6 +280,7 @@ async def perform_human_ops_observe(
             "affordances": computer_use_context["affordances"],
             **({"chat_context": computer_use_context["chat_context"]} if computer_use_context.get("chat_context") else {}),
             **({"ax_search": computer_use_context["ax_search"]} if computer_use_context.get("ax_search") else {}),
+            **({"visual_search": computer_use_context["visual_search"]} if computer_use_context.get("visual_search") else {}),
             "observations": frame.get("observations") if isinstance(frame.get("observations"), list) else [],
             "unknowns": unknowns,
         }
@@ -190,6 +309,7 @@ async def perform_human_ops_observe(
         "affordances": computer_use_context["affordances"],
         **({"chat_context": computer_use_context["chat_context"]} if computer_use_context.get("chat_context") else {}),
         **({"ax_search": computer_use_context["ax_search"]} if computer_use_context.get("ax_search") else {}),
+        **({"visual_search": computer_use_context["visual_search"]} if computer_use_context.get("visual_search") else {}),
         "observations": frame.get("observations") if isinstance(frame.get("observations"), list) else [],
         "unknowns": unknowns,
         **({"coordinate_status": coordinate_status} if coordinate_status else {}),
