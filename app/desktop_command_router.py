@@ -694,6 +694,7 @@ class DesktopCommandRouter:
         focus: dict[str, object] = {}
         try:
             target_app = str(payload.get("target_app") or "").strip()
+            screen_capture_requested = payload.get("screen_capture_enabled", True) is not False
             accessibility_requested = bool(
                 target_app
                 and payload.get("accessibility_enabled", True) is not False
@@ -720,7 +721,7 @@ class DesktopCommandRouter:
                 if accessibility_requested
                 else payload
             )
-            if target_app and not accessibility_requested:
+            if target_app and not accessibility_requested and screen_capture_requested:
                 focus = focus_safely()
                 if (
                     focus.get("focused") is True
@@ -730,7 +731,20 @@ class DesktopCommandRouter:
                         **payload,
                         "target_surface_verified": True,
                     }
-            if (
+            if not screen_capture_requested and not accessibility_requested:
+                frame = {
+                    "capture_backend": "unavailable",
+                    "capture_scope": "application" if target_app else "desktop",
+                    "target_app": target_app,
+                    "active_observation": {
+                        "status": "partial",
+                        "target_app": target_app,
+                        "capture_scope": "application" if target_app else "desktop",
+                        "unknowns": ["screen_capture_disabled"],
+                        "actions": [],
+                    },
+                }
+            elif (
                 target_app
                 and not accessibility_requested
                 and (
@@ -861,7 +875,8 @@ class DesktopCommandRouter:
                     }
             visual_fallback_performed = False
             if (
-                accessibility_requested
+                screen_capture_requested
+                and accessibility_requested
                 and isinstance(frame, dict)
                 and str(frame.get("capture_backend") or "")
                 == "macos_accessibility"
@@ -931,7 +946,8 @@ class DesktopCommandRouter:
                         frame = visual_frame
                         visual_fallback_performed = True
             if (
-                accessibility_requested
+                screen_capture_requested
+                and accessibility_requested
                 and isinstance(frame, dict)
                 and str(frame.get("capture_backend") or "") != "macos_accessibility"
                 and not visual_fallback_performed

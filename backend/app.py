@@ -93,8 +93,6 @@ def _human_ops_proposal_flow_deps() -> _human_ops_proposal_flow_helpers.Proposal
         pending_proposals=HUMAN_OPS_PENDING_PROPOSALS,
         uuid_factory=lambda: uuid4().hex,
         time_func=time.time,
-        looks_like_desktop_action_request=_looks_like_desktop_action_request,
-        looks_like_chat_reply_request=_looks_like_chat_reply_request,
         goal_is_terminal=_goal_is_terminal,
         computer_use_context_text=_computer_use_context_text,
     )
@@ -386,22 +384,6 @@ def _proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> d
     return _human_ops_proposal_flow_helpers.proposal_event_payload(proposal_id, proposal)
 
 
-def _should_default_continue_after_approval(
-    user_text: str,
-    goal: dict[str, Any],
-    *,
-    action_type: str,
-    arguments: dict[str, Any],
-) -> bool:
-    return _human_ops_proposal_flow_helpers.should_default_continue_after_approval(
-        user_text,
-        goal,
-        action_type=action_type,
-        arguments=arguments,
-        deps=_human_ops_proposal_flow_deps(),
-    )
-
-
 def _create_human_ops_act_proposal(decision: BrainDecision, *, session_id: str, user_text: str) -> tuple[str, ReviewableProposal]:
     return _human_ops_proposal_flow_helpers.create_human_ops_act_proposal(
         decision,
@@ -525,7 +507,6 @@ def _post_approval_observe_prompt(user_text: str, proposal: ReviewableProposal) 
     return _human_ops_proposal_flow_helpers.post_approval_observe_prompt(
         user_text,
         proposal,
-        deps=_human_ops_proposal_flow_deps(),
     )
 
 

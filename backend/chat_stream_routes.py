@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, FastAPI
 from fastapi.responses import StreamingResponse
+from brain.llm import release_codex_task
 
 from .chat_stream_flow import ChatStreamFlowDependencies, stream_chat_response
 from .task_control import TASK_CONTROL
@@ -29,7 +30,10 @@ def create_chat_stream_router(deps: ChatStreamRouteDependencySource) -> APIRoute
     async def stop_chat_task_route(task_id: str) -> dict[str, Any]:
         resolved = _resolve_chat_stream_route_deps(deps)
         pending = getattr(resolved, "pending_proposals", {})
-        return TASK_CONTROL.stop(str(task_id or "").strip(), pending)
+        normalized_task_id = str(task_id or "").strip()
+        result = TASK_CONTROL.stop(normalized_task_id, pending)
+        await release_codex_task(normalized_task_id)
+        return result
 
     return router
 

@@ -4,7 +4,7 @@
       model_url: "",
       scale: 0.3,
       offset_x: 0,
-      offset_y: 40,
+      offset_y: 0,
       rotation: 0,
       opacity: 1,
       edit_mode: false,

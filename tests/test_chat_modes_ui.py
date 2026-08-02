@@ -256,8 +256,13 @@ class ChatModesUiTests(unittest.TestCase):
         self.assertIn('data-chat-mode="react"', source)
         self.assertIn('data-chat-mode="chat"', source)
         self.assertIn('data-chat-mode="skill"', source)
-        self.assertIn('data-memory-mode="persistent"', source)
-        self.assertIn('data-memory-mode="temporary"', source)
+        html_source = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertNotIn('data-memory-mode="persistent"', html_source)
+        self.assertNotIn('data-memory-mode="temporary"', html_source)
+        self.assertIn('id="pet-menu-chat"', html_source)
+        self.assertIn('id="pet-menu-temporary-chat"', html_source)
+        self.assertIn('await startConversation("persistent");', app_bootstrap_source)
+        self.assertIn('await startConversation("temporary");', app_bootstrap_source)
         self.assertIn(
             'chatModeButtons: Array.from(runtimeDocument.querySelectorAll(".chat-mode-btn[data-chat-mode]"))',
             source,

@@ -517,16 +517,19 @@ def _running_bundle_pid(profile: dict[str, Any]) -> int:
 
 
 def _target_app_pid(profile: dict[str, Any], runtime: "_AXRuntime", *, runner=subprocess.run) -> int:
-    focused_pid, focused_name = runtime.focused_application()
-    if focused_pid > 0 and _profile_matches_app_name(profile, focused_name):
-        return focused_pid
     profile_pid = _positive_pid(profile.get("pid"))
     if profile_pid > 0:
         return profile_pid
     bundle_pid = _running_bundle_pid(profile)
     if bundle_pid > 0:
         return bundle_pid
-    return _running_app_pid(profile, runner=runner)
+    running_pid = _running_app_pid(profile, runner=runner)
+    if running_pid > 0:
+        return running_pid
+    focused_pid, focused_name = runtime.focused_application()
+    if focused_pid > 0 and _profile_matches_app_name(profile, focused_name):
+        return focused_pid
+    return 0
 
 
 def _enumerate_running_ax_apps(
@@ -778,37 +781,27 @@ class _AXRuntime:
             pid = _positive_pid(application.processIdentifier())
             name = _clean_text(application.localizedName(), max_length=120)
         except Exception:
-            system_wide = int(self.ax.AXUIElementCreateSystemWide() or 0)
-            focused = ctypes.c_void_p()
-            if not system_wide:
-                return 0, ""
             try:
-                error = self.ax.AXUIElementCopyAttributeValue(
-                    self._pointer(system_wide),
-                    self._pointer(self._cf_string("AXFocusedApplication")),
-                    ctypes.byref(focused),
-                )
-                if error != 0 or not focused.value:
-                    return 0, ""
-                pid_value = ctypes.c_int()
-                if (
-                    self.ax.AXUIElementGetPid(
-                        focused,
-                        ctypes.byref(pid_value),
+                applications = (
+                    _active_macos.enumerate_active_vision_running_app_candidates(
+                        platform_name="darwin",
+                        include_hidden=True,
+                        limit=64,
                     )
-                    != 0
-                ):
-                    return 0, ""
-                pid = _positive_pid(pid_value.value)
+                )
+            except Exception:
+                return 0, ""
+            for item in applications if isinstance(applications, list) else []:
+                if not isinstance(item, dict) or not bool(item.get("frontmost")):
+                    continue
+                pid = _positive_pid(item.get("pid"))
                 name = _clean_text(
-                    self.attribute(focused, "AXTitle")
-                    or self.attribute(focused, "AXDescription"),
+                    item.get("app") or item.get("name") or item.get("title"),
                     max_length=120,
                 )
-            finally:
-                if focused.value:
-                    self.release(focused)
-                self.release(system_wide)
+                if pid > 0:
+                    return pid, name
+            return 0, ""
         return (pid, name) if pid > 0 else (0, "")
 
     def release(self, value: object) -> None:

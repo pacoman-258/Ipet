@@ -556,6 +556,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision=BrainDecision.observe(
                 "Dock Chrome",
                 observe_prompt="请找到 Dock 中 Chrome 图标的可点击中心点 macOS 屏幕坐标 x/y。",
+                require_coordinates=True,
                 goal={"objective": "打开 Dock 里的 Chrome", "status": "in_progress", "next": "observe"},
             ),
             provider="openai_compatible",
@@ -565,7 +566,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 382, "y": 930, "label": "Dock Chrome 图标", "target_app": "Finder"},
+                {
+                    "x": 382,
+                    "y": 930,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock Chrome 图标",
+                    "target_app": "Finder",
+                },
                 goal={"objective": "打开 Dock 里的 Chrome", "status": "handoff_review", "next": "human_ops_review"},
             ),
             provider="openai_compatible",
@@ -636,7 +643,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 382, "y": 930, "label": "Dock Chrome 图标", "target_app": "Finder"},
+                {
+                    "x": 382,
+                    "y": 930,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock Chrome 图标",
+                    "target_app": "Finder",
+                },
                 goal={"objective": "打开 Dock 里的 Chrome", "status": "handoff_review", "next": "human_ops_review"},
             ),
             provider="openai_compatible",
@@ -699,7 +712,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
 
-        self.assertEqual(run_mock.await_count, 4)
+        self.assertEqual(run_mock.await_count, 10)
         events = _sse_events(body)
         self.assertNotIn("approval_required", [name for name, _ in events])
         done = [data for name, data in events if name == "done"][-1]
@@ -708,25 +721,19 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertIn("还缺少", done["text"])
 
     def test_open_target_request_does_not_override_brain_surface_choice(self) -> None:
-        self.assertTrue(backend_app._looks_like_desktop_action_request("打开微信"))
-        self.assertFalse(backend_app._looks_like_click_request("打开微信"))
         model_decision = BrainDecision.observe("screen")
 
         decision = backend_app._coerce_decision_for_human_ops("打开 B 站并观看视频", model_decision)
 
         self.assertIs(decision, model_decision)
 
-    def test_wechat_reply_request_is_desktop_action_without_forcing_click_coordinates(self) -> None:
+    def test_wechat_reply_words_do_not_force_click_coordinates(self) -> None:
         user_text = "根据张三的微信聊天信息回复张三"
-
-        self.assertTrue(backend_app._looks_like_desktop_action_request(user_text))
-        self.assertFalse(backend_app._looks_like_click_request(user_text))
-
         prompt = backend_app._default_observe_prompt_for_request(user_text, user_text)
 
         self.assertIn("微信", prompt)
-        self.assertIn("联系人", prompt)
-        self.assertIn("可见消息", prompt)
+        self.assertIn("可见证据", prompt)
+        self.assertIn("文字", prompt)
         self.assertIn("可操作入口", prompt)
         self.assertIn("不替 Brain 选择固定操作顺序", prompt)
         self.assertNotIn("可点击中心点", prompt)
@@ -768,6 +775,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     BrainDecision.observe(
                         "打开微信",
                         observe_prompt="请找到打开微信的可点击入口，并给出可点击中心点的 macOS 屏幕坐标 x 和 y。",
+                        require_coordinates=True,
                     ),
                     {
                         "observe_screen": True,
@@ -793,6 +801,7 @@ class NeoBackendContractTests(unittest.TestCase):
         prompt = backend_app._observe_prompt_from_decision(
             BrainDecision.observe(
                 "screen",
+                require_coordinates=True,
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "in_progress",
@@ -850,6 +859,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 backend_app._perform_human_ops_observe(
                     BrainDecision.observe(
                         "screen",
+                        require_coordinates=True,
                         goal={
                             "objective": "打开微信并回复张三",
                             "status": "in_progress",
@@ -903,6 +913,7 @@ class NeoBackendContractTests(unittest.TestCase):
     def test_goal_objective_stays_target_hint_for_screen_observe_fallbacks(self) -> None:
         decision = BrainDecision.observe(
             "screen",
+            require_coordinates=True,
             goal={
                 "objective": "打开微信并回复张三",
                 "status": "in_progress",
@@ -994,6 +1005,7 @@ class NeoBackendContractTests(unittest.TestCase):
             {
                 "active_observation": {
                     "target_hint": "打开微信",
+                    "require_coordinates": True,
                     "screen_bounds": {"x": 0, "y": 0, "width": 1470, "height": 956},
                 }
             },
@@ -1012,6 +1024,7 @@ class NeoBackendContractTests(unittest.TestCase):
             {
                 "active_observation": {
                     "target_hint": "打开微信",
+                    "require_coordinates": True,
                     "screen_bounds": {"x": 0, "y": 0, "width": 1470, "height": 956},
                     "target_candidates": [
                         {"source": "running_app", "app": "WeChat", "title": "WeChat"},
@@ -1149,7 +1162,7 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Observe WeChat",
-            decision=BrainDecision.observe("打开微信"),
+            decision=BrainDecision.observe("打开微信", require_coordinates=True),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -1157,7 +1170,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose open WeChat",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 520, "y": 930, "label": "Dock 微信图标"},
+                {
+                    "x": 520,
+                    "y": 930,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock 微信图标",
+                    "target_app": "Finder",
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -1212,7 +1231,7 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Observe hidden Dock",
-            decision=BrainDecision.observe("打开微信"),
+            decision=BrainDecision.observe("打开微信", require_coordinates=True),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -1223,6 +1242,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "x": 735,
                     "y": 954,
+                    "coordinate_space": "macos_screen_points",
                     "label": "屏幕底边（显示隐藏 Dock）",
                     "target_app": "Finder",
                     "continue_after_approval": True,
@@ -1293,6 +1313,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Observe screen",
             decision=BrainDecision.observe(
                 "screen",
+                require_coordinates=True,
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "in_progress",
@@ -1311,6 +1332,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "x": 735,
                     "y": 954,
+                    "coordinate_space": "macos_screen_points",
                     "label": "屏幕底边（显示隐藏 Dock）",
                     "target_app": "Finder",
                     "continue_after_approval": True,
@@ -1416,6 +1438,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision = BrainDecision.observe(
                 "点击 Dock 栏里的设置",
                 observe_prompt="我需要找到 Dock 栏里的设置应用的位置，请观看屏幕图像并用自然语言告诉我可点击中心坐标。",
+                require_coordinates=True,
             )
             result = asyncio.run(backend_app._perform_human_ops_observe(decision, observe_config))
 
@@ -1445,6 +1468,7 @@ class NeoBackendContractTests(unittest.TestCase):
             BrainDecision.observe(
                 "Dock 设置",
                 observe_prompt="请找到 Dock 设置图标，并返回可点击中心坐标。",
+                require_coordinates=True,
             ),
             "点击 Dock 设置",
         )
@@ -1506,13 +1530,23 @@ class NeoBackendContractTests(unittest.TestCase):
                     decision=BrainDecision.observe(
                         "Dock 设置",
                         observe_prompt="请找到 Dock 系统设置图标，并给出可点击中心坐标。",
+                        require_coordinates=True,
                     ),
                     provider="openai_compatible",
                     model="neo-model",
                 )
             return SimpleNamespace(
                 text="Propose converted click",
-                decision=BrainDecision.propose_act("click", {"x": 364, "y": 907, "label": "Dock 系统设置"}),
+                decision=BrainDecision.propose_act(
+                    "click",
+                    {
+                        "x": 364,
+                        "y": 907,
+                        "coordinate_space": "macos_screen_points",
+                        "label": "Dock 系统设置",
+                        "target_app": "Finder",
+                    },
+                ),
                 provider="openai_compatible",
                 model="neo-model",
             )
@@ -1684,6 +1718,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     BrainDecision.observe(
                         "点击 Dock 栏里的设置",
                         observe_prompt="我需要找到 Dock 栏里的设置应用的位置，请用自然语言告诉我坐标。",
+                        require_coordinates=True,
                     ),
                     {"observe_screen": True, "observe_model": {"enabled": False}},
                 )
@@ -1776,6 +1811,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     BrainDecision.observe(
                         "点击 Dock 栏里的微信",
                         observe_prompt="请给出微信图标可点击中心点的完整 x 和 y 坐标。",
+                        require_coordinates=True,
                     ),
                     {
                         "observe_screen": True,
@@ -1812,6 +1848,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision=BrainDecision.observe(
                 "点击 Dock 栏里的微信",
                 observe_prompt="请给出微信图标可点击中心点的完整 x 和 y 坐标。",
+                require_coordinates=True,
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -1891,6 +1928,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision=BrainDecision.observe(
                 "Dock 设置",
                 observe_prompt="我需要找到 Dock 栏里的设置应用的位置，请观看屏幕图像并用自然语言告诉我可点击中心坐标。",
+                require_coordinates=True,
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -1951,7 +1989,7 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Observe Dock settings",
-            decision=BrainDecision.observe("Dock 设置"),
+            decision=BrainDecision.observe("Dock 设置", require_coordinates=True),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -1994,7 +2032,7 @@ class NeoBackendContractTests(unittest.TestCase):
         )
         completion = SimpleNamespace(
             text="Observe Dock settings",
-            decision=BrainDecision.observe("Dock 设置"),
+            decision=BrainDecision.observe("Dock 设置", require_coordinates=True),
             provider="openai_compatible",
             model="neo-model",
         )
@@ -2046,6 +2084,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 "Dock 设置",
                 observe_prompt="请找到 Dock 中系统设置图标的可点击中心点。",
                 target_app="Finder",
+                require_coordinates=True,
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2059,7 +2098,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 452, "y": 1187, "label": "Dock 系统设置", "target_app": "Finder"},
+                {
+                    "x": 452,
+                    "y": 1187,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock 系统设置",
+                    "target_app": "Finder",
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2107,7 +2152,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 120, "y": 240, "label": "发送按钮", "target_app": "WeChat"},
+                {
+                    "x": 120,
+                    "y": 240,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "发送按钮",
+                    "target_app": "WeChat",
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
@@ -2281,7 +2332,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click WeChat in Dock",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 520, "y": 930, "label": "Dock 微信图标", "target_app": "Finder"},
+                {
+                    "x": 520,
+                    "y": 930,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Dock 微信图标",
+                    "target_app": "Finder",
+                },
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2304,7 +2361,7 @@ class NeoBackendContractTests(unittest.TestCase):
 
         self.assertEqual(run_mock.await_count, 2)
         correction_prompt = run_mock.await_args_list[1].kwargs["user_text"]
-        self.assertIn("click missing complete x/y", correction_prompt)
+        self.assertIn("click requires ax_ref or x+y+coordinate_space", correction_prompt)
         approvals = [data for name, data in _sse_events(body) if name == "approval_required"]
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["action_type"], "click")
@@ -2354,7 +2411,16 @@ class NeoBackendContractTests(unittest.TestCase):
         with mock.patch.object(
             backend_app,
             "_send_desktop_command",
-            new=mock.AsyncMock(return_value={"typed": True, "text": "收到，我马上处理。"}),
+            new=mock.AsyncMock(
+                return_value={
+                    "typed": True,
+                    "text": "收到，我马上处理。",
+                    "focused": True,
+                    "postcondition_verified": True,
+                    "ax_target_verified": True,
+                    "ax_action_performed": True,
+                }
+            ),
         ) as command_mock:
             with self.client.stream(
                 "POST",
@@ -2375,7 +2441,8 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(args[1]["text"], "收到，我马上处理。")
         done = [data for name, data in _sse_events(approved_body) if name == "done"][-1]
         self.assertEqual(done["execution"]["typed"], True)
-        self.assertIn("已执行输入", done["text"])
+        self.assertEqual(done["verification"]["status"], "verified")
+        self.assertIn("验证通过", done["text"])
 
     def test_human_ops_type_text_continuation_observes_draft_then_requests_enter(self) -> None:
         backend_app.CONFIG_PATH.write_text(
@@ -2600,7 +2667,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(done["text"], "已回复张三。")
         self.assertEqual(done["decision"]["payload"]["goal"]["status"], "done")
 
-    def test_human_ops_enter_send_defaults_continue_even_when_goal_points_to_verify_result(self) -> None:
+    def test_human_ops_enter_send_explicitly_continues_when_goal_points_to_stop(self) -> None:
         backend_app.CONFIG_PATH.write_text(
             json.dumps(
                 {
@@ -2631,6 +2698,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     "intended_chat": "张三",
                     "expected_text": sent_text,
                     "input_ax_ref": input_ref,
+                    "continue_after_approval": True,
                 },
                 goal={
                     "objective": "根据张三聊天信息回复张三",
@@ -2740,7 +2808,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click Zhang San thread",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 240, "y": 310, "label": "张三聊天条目"},
+                {
+                    "x": 240,
+                    "y": 310,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "张三聊天条目",
+                    "target_app": "WeChat",
+                },
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2755,7 +2829,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click input",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 760, "y": 905, "label": "微信聊天输入框"},
+                {
+                    "x": 760,
+                    "y": 905,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "微信聊天输入框",
+                    "target_app": "WeChat",
+                },
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2791,7 +2871,12 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Press enter",
             decision=BrainDecision.propose_act(
                 "key_press",
-                {"key": "enter", "label": "发送微信回复"},
+                {
+                    "key": "enter",
+                    "label": "发送微信回复",
+                    "target_app": "WeChat",
+                    "continue_after_approval": True,
+                },
                 goal={
                     "objective": "打开微信并根据张三聊天信息回复张三",
                     "status": "handoff_review",
@@ -2918,7 +3003,11 @@ class NeoBackendContractTests(unittest.TestCase):
             with self.client.stream(
                 "POST",
                 "/api/chat/stream",
-                json={"text": "打开微信并根据张三聊天信息回复张三", "session_id": "neo-full-wechat-chain"},
+                json={
+                    "text": "打开微信并根据张三聊天信息回复张三",
+                    "session_id": "neo-full-wechat-chain",
+                    "max_reasoning_steps": 20,
+                },
             ) as resp:
                 self.assertEqual(resp.status_code, 200)
                 body = resp.read().decode("utf-8")
@@ -3096,7 +3185,7 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click contact without coordinates",
             decision=BrainDecision.propose_act(
                 "click",
-                {"label": "张三聊天条目"},
+                {"label": "张三聊天条目", "target_app": "WeChat"},
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "handoff_review",
@@ -3111,7 +3200,13 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Click contact with coordinates",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 240, "y": 310, "label": "张三聊天条目"},
+                {
+                    "x": 240,
+                    "y": 310,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "张三聊天条目",
+                    "target_app": "WeChat",
+                },
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "handoff_review",
@@ -3154,7 +3249,7 @@ class NeoBackendContractTests(unittest.TestCase):
 
         self.assertEqual(run_mock.await_count, 3)
         correction_prompt = run_mock.await_args_list[2].kwargs["user_text"]
-        self.assertIn("click missing complete x/y", correction_prompt)
+        self.assertIn("click requires ax_ref or x+y+coordinate_space", correction_prompt)
         approvals = [data for name, data in _sse_events(approved_body) if name == "approval_required"]
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0]["preview"]["x"], 240)
@@ -3258,7 +3353,7 @@ class NeoBackendContractTests(unittest.TestCase):
         self.assertEqual(approvals[0]["action_type"], "type_text")
         self.assertNotIn("done", [name for name, _ in _sse_events(approved_body)])
 
-    def test_post_approval_observe_prompt_for_wechat_reply_reads_chat_context(self) -> None:
+    def test_post_approval_click_prompt_does_not_infer_chat_verification_from_user_text(self) -> None:
         backend_app.CONFIG_PATH.write_text(
             json.dumps(
                 {
@@ -3279,6 +3374,7 @@ class NeoBackendContractTests(unittest.TestCase):
                     "target_app": "WeChat",
                     "x": 240,
                     "y": 310,
+                    "coordinate_space": "macos_screen_points",
                     "label": "张三聊天条目",
                     "continue_after_approval": True,
                 },
@@ -3338,11 +3434,10 @@ class NeoBackendContractTests(unittest.TestCase):
 
         observe_decision = observe_mock.await_args.args[0]
         prompt = observe_decision.payload["observe_prompt"]
-        self.assertIn("张三", prompt)
-        self.assertIn("最近聊天内容", prompt)
-        self.assertIn("聊天输入框", prompt)
-        self.assertIn("聚焦", prompt)
-        self.assertIn("发送入口", prompt)
+        self.assertIn("刚才获批动作执行后的屏幕状态", prompt)
+        self.assertIn("原始用户目标", prompt)
+        self.assertNotIn("最近聊天内容", prompt)
+        self.assertNotIn("聊天输入框", prompt)
 
     def test_human_ops_approval_continuation_reacts_through_observe_to_next_action(self) -> None:
         backend_app.CONFIG_PATH.write_text(
@@ -3381,6 +3476,7 @@ class NeoBackendContractTests(unittest.TestCase):
             decision=BrainDecision.observe(
                 "微信 张三",
                 observe_prompt="请观察微信窗口，找到联系人张三的聊天条目或搜索框，并给出可操作入口。",
+                require_coordinates=True,
                 goal={
                     "objective": "打开微信并回复张三",
                     "status": "in_progress",
@@ -3398,7 +3494,9 @@ class NeoBackendContractTests(unittest.TestCase):
                 {
                     "x": 240,
                     "y": 310,
+                    "coordinate_space": "macos_screen_points",
                     "label": "张三聊天条目",
+                    "target_app": "WeChat",
                     "continue_after_approval": True,
                 },
                 goal={
@@ -3491,12 +3589,25 @@ class NeoBackendContractTests(unittest.TestCase):
             text="Propose click",
             decision=BrainDecision.propose_act(
                 "click",
-                {"x": 12, "y": 34, "label": "Codex", "target_app": "Codex"},
+                {
+                    "x": 12,
+                    "y": 34,
+                    "coordinate_space": "macos_screen_points",
+                    "label": "Codex",
+                    "target_app": "Codex",
+                },
             ),
             provider="openai_compatible",
             model="neo-model",
         )
-        click_result = {"ok": True, "clicked": True, "x": 12, "y": 34}
+        click_result = {
+            "ok": True,
+            "clicked": True,
+            "focused": True,
+            "postcondition_verified": True,
+            "x": 12,
+            "y": 34,
+        }
 
         with mock.patch.object(backend_app, "run_brain_turn", new=mock.AsyncMock(return_value=completion)):
             with self.client.stream("POST", "/api/chat/stream", json={"text": "点一下", "session_id": "neo-click-approve"}) as resp:
@@ -3519,7 +3630,8 @@ class NeoBackendContractTests(unittest.TestCase):
         done = [data for name, data in events if name == "done"][-1]
         self.assertEqual(done["proposal_id"], proposal_id)
         self.assertEqual(done["execution"]["clicked"], True)
-        self.assertIn("已执行点击", done["text"])
+        self.assertEqual(done["verification"]["status"], "verified")
+        self.assertIn("验证通过", done["text"])
 
     def test_chat_stream_retry_truncates_persisted_branch_before_append(self) -> None:
         backend_app.TOPIC_STORE.create_topic(topic_id="neo-retry")

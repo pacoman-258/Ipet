@@ -7,11 +7,11 @@ import textwrap
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import backend.app as backend_app
 from brain.decisions import BrainDecision
 from human_ops.approvals import ReviewableProposal
-from human_ops.proposals import should_default_continue_after_approval as pure_default_continue
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -23,8 +23,6 @@ def _deps(module: Any, **overrides: Any) -> Any:
         "pending_proposals": {},
         "uuid_factory": lambda: "proposal-fixed",
         "time_func": lambda: 123.5,
-        "looks_like_desktop_action_request": lambda text: "微信" in text or "打开" in text,
-        "looks_like_chat_reply_request": lambda text: "回复" in text or "聊天" in text,
         "goal_is_terminal": lambda status: status in {"done", "blocked", "need_user"},
         "computer_use_context_text": lambda observation: f"Structured context: {observation.get('surface', 'unknown')}",
     }
@@ -59,7 +57,6 @@ class BackendHumanOpsProposalFlowTests(unittest.TestCase):
             "_coerce_int": "coerce_int",
             "_proposal_tool_label": "proposal_tool_label",
             "_proposal_event_payload": "proposal_event_payload",
-            "_should_default_continue_after_approval": "should_default_continue_after_approval",
             "_create_human_ops_act_proposal": "create_human_ops_act_proposal",
             "_proposal_arguments": "proposal_arguments",
             "_proposal_continue_after_approval": "proposal_continue_after_approval",
@@ -119,40 +116,54 @@ class BackendHumanOpsProposalFlowTests(unittest.TestCase):
         self.assertEqual(pending["proposal-123"]["status"], "pending")
         self.assertTrue(proposal.payload["arguments"]["continue_after_approval"])
 
-    def test_default_continue_matches_human_ops_semantics_with_injected_predicates(self) -> None:
+    def test_chat_keywords_do_not_override_terminal_structured_next_step(self) -> None:
         flow = self._flow()
         deps = _deps(flow)
-        goal = {"objective": "回复张三", "status": "in_progress", "stage": "verify_result", "next": "done"}
-        arguments = {"key": "enter", "label": "发送消息", "expected_text": "收到"}
-
-        expected = pure_default_continue(
-            "帮我回复张三",
-            goal,
-            action_type="key_press",
-            arguments=arguments,
-            looks_like_desktop_action_request=deps.looks_like_desktop_action_request,
-            looks_like_chat_reply_request=deps.looks_like_chat_reply_request,
-            goal_is_terminal=deps.goal_is_terminal,
+        decision = BrainDecision.propose_act(
+            "key_press",
+            {
+                "target_app": "WeChat",
+                "key": "enter",
+                "label": "发送消息",
+                "expected_text": "收到",
+            },
+            goal={"objective": "回复张三", "status": "in_progress", "next": "done"},
         )
-        actual = flow.should_default_continue_after_approval(
-            "帮我回复张三",
-            goal,
-            action_type="key_press",
-            arguments=arguments,
+
+        _, proposal = flow.create_human_ops_act_proposal(
+            decision,
+            session_id="session-1",
+            user_text="帮我回复张三并发送消息",
             deps=deps,
         )
 
-        self.assertTrue(actual)
-        self.assertEqual(actual, expected)
-        self.assertFalse(
-            flow.should_default_continue_after_approval(
-                "帮我回复张三",
-                {"objective": "回复张三", "status": "done", "stage": "verify_result"},
-                action_type="key_press",
-                arguments=arguments,
-                deps=deps,
-            )
+        self.assertNotIn("continue_after_approval", proposal.payload["arguments"])
+
+    def test_memory_text_cannot_override_the_structured_category(self) -> None:
+        flow = self._flow()
+        pending: dict[str, dict[str, Any]] = {}
+        deps = _deps(flow, pending_proposals=pending)
+        memory_store = mock.Mock()
+        memory_store.find_correction_target.return_value = None
+        decision = BrainDecision.propose_remember(
+            "preference",
+            "请记住我不想忘记家人的生日。",
         )
+
+        proposal_id, proposal = flow.create_human_ops_memory_proposal(
+            decision,
+            session_id="session-1",
+            user_text="请记住我不想忘记家人的生日。",
+            turn_id="turn-1",
+            origin="explicit",
+            retention_days=365,
+            memory_store=memory_store,
+            deps=deps,
+        )
+
+        self.assertEqual(proposal_id, "proposal-fixed")
+        self.assertEqual(proposal.payload["operation"], "save")
+        memory_store.find_forget_target.assert_not_called()
 
     def test_continuation_prompt_injects_computer_use_context(self) -> None:
         flow = self._flow()
@@ -175,19 +186,17 @@ class BackendHumanOpsProposalFlowTests(unittest.TestCase):
         self.assertIn("草稿已经在输入框里", prompt)
         self.assertIn("context for wechat", prompt)
         self.assertIn("请独立判断原始目标是否已经完成", prompt)
-        self.assertIn("不是固定流程", prompt)
         self.assertIn("不要把任何动作类型套进预设顺序", prompt)
 
-    def test_post_approval_observe_prompt_uses_injected_chat_intent(self) -> None:
+    def test_post_approval_observe_prompt_uses_structured_chat_intent(self) -> None:
         flow = self._flow()
-        deps = _deps(flow, looks_like_chat_reply_request=lambda text: "张三" in text)
         proposal = ReviewableProposal.act(
             action_type="type_text",
             summary="Ipet 想输入到聊天框：收到",
-            payload={"text": "收到，马上处理", "label": "聊天框"},
+            payload={"text": "收到，马上处理", "label": "聊天框", "intended_chat": "张三"},
         )
 
-        prompt = flow.post_approval_observe_prompt("帮我回复张三", proposal, deps=deps)
+        prompt = flow.post_approval_observe_prompt("帮我回复张三", proposal)
 
         self.assertIn("刚才输入的草稿是“收到，马上处理”", prompt)
         self.assertIn("聊天输入框中是否已经出现这段草稿", prompt)

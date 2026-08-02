@@ -1247,6 +1247,41 @@ class MacOSAccessibilityTests(unittest.TestCase):
         with mock.patch.dict("sys.modules", {"AppKit": appkit}):
             self.assertEqual(runtime.focused_application(), (777, "Ipet"))
 
+    def test_frontmost_app_fallback_uses_process_metadata_without_ax(self) -> None:
+        runtime = object.__new__(_AXRuntime)
+
+        with mock.patch.dict("sys.modules", {"AppKit": None}), mock.patch.object(
+            macos_ax._active_macos,
+            "enumerate_active_vision_running_app_candidates",
+            return_value=[
+                {
+                    "app": "Ipet",
+                    "pid": "777",
+                    "frontmost": True,
+                }
+            ],
+        ):
+            self.assertEqual(runtime.focused_application(), (777, "Ipet"))
+
+    def test_resolved_profile_pid_does_not_probe_frontmost_ax(self) -> None:
+        profile = {**resolve_macos_ax_app("WeChat"), "pid": 888}
+        runtime = SimpleNamespace(
+            focused_application=lambda: self.fail(
+                "a resolved target PID must not probe the frontmost AX application"
+            )
+        )
+
+        self.assertEqual(
+            _target_app_pid(
+                profile,
+                runtime,
+                runner=lambda *_args, **_kwargs: self.fail(
+                    "a resolved target PID must not fall back to process search"
+                ),
+            ),
+            888,
+        )
+
     def test_background_app_pid_prefers_bundle_gui_process_over_pgrep(self) -> None:
         application = SimpleNamespace(
             processIdentifier=lambda: 888,

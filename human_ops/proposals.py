@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable
 
+from brain.contracts import is_terminal_goal_status
 from brain.decisions import BrainDecision, DecisionKind
 
 from .approvals import ReviewableProposal
@@ -10,8 +11,9 @@ from .filesystem_actions import filesystem_action_label
 from .playwright_actions import playwright_action_label
 from .previews import red_dot_click_preview
 
-IntentPredicate = Callable[[str], bool]
 TerminalPredicate = Callable[[str], bool]
+
+_TERMINAL_NEXT_STEPS = {"", "done", "stop", "blocked", "need_user"}
 
 
 def _coerce_int(value: Any, fallback: int = 0) -> int:
@@ -22,11 +24,7 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
 
 
 def _default_goal_is_terminal(status: str) -> bool:
-    return str(status or "").strip() in {"done", "blocked", "need_user"}
-
-
-def _default_intent_predicate(_text: str) -> bool:
-    return False
+    return is_terminal_goal_status(status)
 
 
 def _is_chat_target_app(value: object) -> bool:
@@ -144,13 +142,8 @@ def build_human_ops_memory_proposal(
 
 
 def should_default_continue_after_approval(
-    user_text: str,
     goal: dict[str, Any],
     *,
-    action_type: str,
-    arguments: dict[str, Any],
-    looks_like_desktop_action_request: IntentPredicate | None = None,
-    looks_like_chat_reply_request: IntentPredicate | None = None,
     goal_is_terminal: TerminalPredicate | None = None,
 ) -> bool:
     if not isinstance(goal, dict) or not goal:
@@ -159,36 +152,13 @@ def should_default_continue_after_approval(
     status = str(goal.get("status") or "").strip()
     if is_terminal(status):
         return False
-    action = str(action_type or "").strip()
-    args = arguments if isinstance(arguments, dict) else {}
-    key = str(args.get("key") or "").strip().lower()
-    label = str(args.get("label") or args.get("target") or "").strip().lower()
-    objective = str(goal.get("objective") or "")
-    intent_text = f"{user_text} {objective}"
-    looks_like_chat = looks_like_chat_reply_request or _default_intent_predicate
-    looks_like_desktop = looks_like_desktop_action_request or _default_intent_predicate
-    if (
-        action == "key_press"
-        and key in {"enter", "return"}
-        and looks_like_chat(intent_text)
-        and (str(args.get("expected_text") or "").strip() or "发送" in label or "send" in label)
-    ):
-        return True
-    stage = str(goal.get("stage") or "").strip()
-    next_step = str(goal.get("next") or "").strip()
-    if stage in {"verify_result", "done"} or next_step in {"stop", "done"}:
-        return False
-    if not stage and not next_step:
-        return False
-    return looks_like_desktop(intent_text) or looks_like_chat(intent_text)
+    next_step = str(goal.get("next") or "").strip().casefold()
+    return next_step not in _TERMINAL_NEXT_STEPS
 
 
 def build_human_ops_act_proposal(
     decision: BrainDecision,
     *,
-    user_text: str,
-    looks_like_desktop_action_request: IntentPredicate | None = None,
-    looks_like_chat_reply_request: IntentPredicate | None = None,
     goal_is_terminal: TerminalPredicate | None = None,
 ) -> ReviewableProposal:
     payload = decision.payload if isinstance(decision.payload, dict) else {}
@@ -197,12 +167,7 @@ def build_human_ops_act_proposal(
     proposal_payload = dict(arguments)
     goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else {}
     if "continue_after_approval" not in proposal_payload and should_default_continue_after_approval(
-        user_text,
         goal,
-        action_type=action_type,
-        arguments=arguments,
-        looks_like_desktop_action_request=looks_like_desktop_action_request,
-        looks_like_chat_reply_request=looks_like_chat_reply_request,
         goal_is_terminal=goal_is_terminal,
     ):
         proposal_payload["continue_after_approval"] = True

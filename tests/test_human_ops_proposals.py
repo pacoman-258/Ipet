@@ -7,6 +7,7 @@ from human_ops.proposals import (
     proposal_arguments,
     proposal_continue_after_approval,
     proposal_event_payload,
+    should_default_continue_after_approval,
     with_inherited_enter_expected_text,
 )
 
@@ -25,12 +26,7 @@ class HumanOpsProposalTests(unittest.TestCase):
             goal=goal,
         )
 
-        proposal = build_human_ops_act_proposal(
-            decision,
-            user_text="帮我打开微信并回复消息",
-            looks_like_desktop_action_request=lambda text: "微信" in text,
-            looks_like_chat_reply_request=lambda text: "回复" in text,
-        )
+        proposal = build_human_ops_act_proposal(decision)
 
         args = proposal_arguments(proposal)
         self.assertTrue(args["continue_after_approval"])
@@ -43,6 +39,30 @@ class HumanOpsProposalTests(unittest.TestCase):
         self.assertEqual(payload["tools"][0]["summary"], "点击 Dock 微信图标 (12, 31)")
         self.assertEqual(payload["preview"]["x"], 12)
         self.assertEqual(payload["preview"]["y"], 31)
+
+    def test_structured_goal_controls_continuation_without_keyword_routing(self) -> None:
+        self.assertTrue(
+            should_default_continue_after_approval(
+                {"status": "handoff_review", "next": "inspect_result"}
+            )
+        )
+        self.assertFalse(
+            should_default_continue_after_approval(
+                {"objective": "回复并发送消息", "status": "in_progress", "next": "done"}
+            )
+        )
+
+    def test_explicit_continuation_false_overrides_nonterminal_next_step(self) -> None:
+        proposal = build_human_ops_act_proposal(
+            BrainDecision.propose_act(
+                "launch_app",
+                {"app": "WeChat", "continue_after_approval": False},
+                goal={"status": "handoff_review", "next": "observe"},
+            )
+        )
+
+        self.assertFalse(proposal_continue_after_approval(proposal))
+        self.assertIs(proposal.payload["arguments"]["continue_after_approval"], False)
 
     def test_enter_expected_text_inherits_previous_type_text(self) -> None:
         previous = ReviewableProposal.act(
@@ -189,7 +209,6 @@ class HumanOpsProposalTests(unittest.TestCase):
     def test_launch_app_proposal_is_reviewable_without_click_preview(self) -> None:
         proposal = build_human_ops_act_proposal(
             BrainDecision.propose_act("launch_app", {"app": "WeChat", "label": "WeChat"}),
-            user_text="打开微信",
         )
 
         payload = proposal_event_payload("launch-1", proposal)
@@ -205,7 +224,6 @@ class HumanOpsProposalTests(unittest.TestCase):
                 "click",
                 {"target_app": "Music", "ax_ref": ax_ref, "label": "播放"},
             ),
-            user_text="播放音乐",
         )
 
         payload = proposal_event_payload("ax-click-1", proposal)
@@ -220,7 +238,6 @@ class HumanOpsProposalTests(unittest.TestCase):
                 "playwright",
                 {"profile": "个人", "operation": "open", "url": "https://www.youtube.com", "label": "YouTube"},
             ),
-            user_text="打开 YouTube",
         )
 
         payload = proposal_event_payload("pw-1", proposal)

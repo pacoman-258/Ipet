@@ -21,7 +21,6 @@ class NeoAspectDecisionTests(unittest.TestCase):
         self.assertTrue(BrainDecision.propose_act("type_text", {"text": "你好"}).requires_review)
         self.assertTrue(BrainDecision.propose_act("key_press", {"key": "enter"}).requires_review)
         self.assertTrue(BrainDecision.propose_remember("preference", "用户喜欢简洁回答").requires_review)
-        self.assertTrue(BrainDecision.propose_learn_skill("Use Codex", ["打开 Codex"]).requires_review)
 
     def test_decision_rejects_unknown_kind(self) -> None:
         with self.assertRaises(ValueError):
@@ -33,7 +32,7 @@ class NeoAspectDecisionTests(unittest.TestCase):
         self.assertEqual(DecisionKind.OBSERVE.value, "observe")
         self.assertEqual(DecisionKind.PROPOSE_ACT.value, "propose_act")
         self.assertEqual(DecisionKind.PROPOSE_REMEMBER.value, "propose_remember")
-        self.assertEqual(DecisionKind.PROPOSE_LEARN_SKILL.value, "propose_learn_skill")
+        self.assertNotIn("propose_learn_skill", {kind.value for kind in DecisionKind})
         self.assertEqual(DecisionKind.STOP.value, "stop")
 
 

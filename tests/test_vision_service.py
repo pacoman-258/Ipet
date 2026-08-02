@@ -9,7 +9,6 @@ from backend.vision import (
     VisionService,
     build_grounded_context_prefix,
     normalize_vision_config,
-    should_force_grounding,
 )
 
 
@@ -275,24 +274,17 @@ class VisionServiceTests(unittest.TestCase):
         self.assertFalse(service.status()["has_frame"])
         self.assertFalse(service.context(include_image=True)["available"])
 
-    def test_should_inject_respects_policy_and_request_text(self) -> None:
+    def test_should_inject_respects_policy_and_explicit_request_state(self) -> None:
         service = VisionService({"enabled": True, "inject_policy": "when_requested"}, now=lambda: 10.0)
         service.update_frame({"mime_type": "image/jpeg", "data_url": "data:image/jpeg;base64,abc"})
-        self.assertFalse(service.should_inject("你好，普通聊天"))
-        self.assertTrue(service.should_inject("请看一下当前屏幕"))
+        self.assertFalse(service.should_inject(requested=False))
+        self.assertTrue(service.should_inject(requested=True))
 
         service.configure({"enabled": True, "inject_policy": "always_summary"})
-        self.assertTrue(service.should_inject("你好，普通聊天"))
+        self.assertTrue(service.should_inject(requested=False))
 
         service.configure({"enabled": True, "inject_policy": "off"})
-        self.assertFalse(service.should_inject("请看屏幕"))
-
-    def test_force_grounding_detects_visual_questions_and_config(self) -> None:
-        self.assertTrue(should_force_grounding("你看到当前窗口了吗？", {"enabled": True}))
-        self.assertFalse(should_force_grounding("普通聊天", {"enabled": True}))
-        self.assertTrue(should_force_grounding("普通聊天", {"enabled": True, "force_grounding": True}))
-        self.assertTrue(should_force_grounding("普通聊天", {"enabled": True, "grounding_mode": "always"}))
-        self.assertFalse(should_force_grounding("你看到什么", {"enabled": True, "grounding_mode": "off"}))
+        self.assertFalse(service.should_inject(requested=True))
 
     def test_forced_prefix_refuses_when_frame_has_no_observations(self) -> None:
         service = VisionService({"enabled": True}, now=lambda: 10.0)

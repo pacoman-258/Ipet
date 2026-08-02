@@ -208,8 +208,8 @@ class EnvironmentServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(history[0], {"role": "system", "content": "用户不喜欢被催促。"})
-        self.assertEqual(history[1]["content"], "message-3")
-        self.assertEqual(len(history), 13)
+        self.assertEqual(history[1]["content"], "message-11")
+        self.assertEqual(len(history), 5)
         self.assertEqual(memory_queries[0][0], "test_failed Terminal")
 
 

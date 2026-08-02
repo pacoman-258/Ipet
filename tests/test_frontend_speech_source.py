@@ -59,13 +59,13 @@ class FrontendSpeechSourceTests(unittest.TestCase):
         self.assertIn('state.chat?.tts_provider === "qwen_tts_local"', source)
         self.assertIn('return "TTS异常";', source)
 
-    def test_qwen_tts_uses_pcm_stream_with_a_small_playback_buffer(self) -> None:
+    def test_qwen_tts_uses_the_cancellable_audio_file_path(self) -> None:
         source = SPEECH_JS.read_text(encoding="utf-8")
-        self.assertIn('`${backend}/api/tts/stream`', source)
-        self.assertIn("function decodePCM16LE(base64PCM)", source)
-        self.assertIn("async function createQwenStreamPlayback", source)
-        self.assertIn("if (pendingDuration >= 0.96)", source)
-        self.assertIn("await requestQwenStreamChunk(nextItem, abortController);", source)
+        self.assertIn('`${backend}/api/tts`', source)
+        self.assertIn("provider: state.chat.tts_provider", source)
+        self.assertIn("preparedAudioQueue.push(prepared);", source)
+        self.assertNotIn('`${backend}/api/tts/stream`', source)
+        self.assertNotIn("requestQwenStreamChunk", source)
 
     def test_speech_starts_per_sentence_and_prepares_the_next_audio_while_playing(self) -> None:
         source = SPEECH_JS.read_text(encoding="utf-8")

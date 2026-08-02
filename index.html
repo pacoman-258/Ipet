@@ -22,10 +22,6 @@
   <link rel="stylesheet" href="./frontend/index.css" />
 </head>
 <body>
-  <div id="window-background">
-    <img id="window-background-image" alt="" />
-    <div id="window-background-overlay"></div>
-  </div>
   <canvas id="canvas"></canvas>
   <div id="shell-app">
     <div id="shell-chrome">
@@ -65,7 +61,35 @@
     <div id="error"></div>
   </div>
   <div id="window-frame"></div>
+  <nav id="pet-context-menu" aria-label="桌宠菜单" aria-hidden="true" tabindex="-1">
+    <div class="pet-menu-tabs" role="menu">
+      <button id="pet-menu-chat" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 0">
+        <span class="pet-menu-icon" aria-hidden="true">✦</span>
+        <span><strong>对话</strong><small>开启会保存的新话题</small></span>
+      </button>
+      <button id="pet-menu-temporary-chat" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 1">
+        <span class="pet-menu-icon" aria-hidden="true">○</span>
+        <span><strong>临时对话</strong><small>只保留在本次运行中</small></span>
+      </button>
+      <button id="pet-menu-history" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 2">
+        <span class="pet-menu-icon" aria-hidden="true">↶</span>
+        <span><strong>对话历史</strong><small>查看与切换已有话题</small></span>
+      </button>
+      <button id="pet-menu-settings" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 3">
+        <span class="pet-menu-icon" aria-hidden="true">◇</span>
+        <span><strong>设置</strong><small>打开 WebUI 配置页</small></span>
+      </button>
+    </div>
+    <div class="pet-menu-window-actions">
+      <button id="pet-menu-minimize" type="button">隐藏</button>
+      <button id="pet-menu-close" type="button">退出</button>
+    </div>
+  </nav>
   <div id="chat-panel">
+    <div id="window-background" aria-hidden="true">
+      <img id="window-background-image" alt="" />
+      <div id="window-background-overlay"></div>
+    </div>
     <div id="chat-header">
       <span id="chat-title">桌宠对话</span>
       <div class="chat-header-actions">
@@ -77,8 +101,6 @@
       <button class="chat-mode-btn is-active" data-chat-mode="react">ReAct 模式</button>
       <button class="chat-mode-btn" data-chat-mode="chat">聊天模式</button>
       <button class="chat-mode-btn" data-chat-mode="skill">技能模式</button>
-      <button class="chat-mode-btn is-active" data-memory-mode="persistent">保存</button>
-      <button class="chat-mode-btn" data-memory-mode="temporary">临时</button>
     </div>
     <div id="chat-history-drawer">
       <div class="chat-history-head">

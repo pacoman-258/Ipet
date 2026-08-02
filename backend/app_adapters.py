@@ -12,30 +12,6 @@ from . import react_prompts as _react_prompt_helpers
 from .vision_analyzer import VisionAnalyzer as _DefaultVisionAnalyzer
 
 
-def _looks_like_desktop_observe_request(user_text: str) -> bool:
-    return _computer_use_context_helpers._looks_like_desktop_observe_request(user_text)
-
-
-def _looks_like_desktop_action_request(user_text: str) -> bool:
-    return _computer_use_context_helpers._looks_like_desktop_action_request(user_text)
-
-
-def _looks_like_app_launch_request(user_text: str) -> bool:
-    return _computer_use_context_helpers._looks_like_app_launch_request(user_text)
-
-
-def _app_launch_target(user_text: str) -> str:
-    return _computer_use_context_helpers._app_launch_target(user_text)
-
-
-def _looks_like_chat_reply_request(user_text: str) -> bool:
-    return _computer_use_context_helpers._looks_like_chat_reply_request(user_text)
-
-
-def _looks_like_click_request(user_text: str) -> bool:
-    return _computer_use_context_helpers._looks_like_click_request(user_text)
-
-
 _COORDINATE_X_RE = _computer_use_context_helpers._COORDINATE_X_RE
 _COORDINATE_Y_RE = _computer_use_context_helpers._COORDINATE_Y_RE
 
@@ -125,21 +101,7 @@ def _observation_has_reviewable_click_affordance(observation: dict[str, Any]) ->
 
 def _observe_decision_requests_click(decision: BrainDecision) -> bool:
     payload = decision.payload if isinstance(decision.payload, dict) else {}
-    goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else {}
-    text = " ".join(
-        str(part or "")
-        for part in (
-            decision.summary,
-            payload.get("target"),
-            payload.get("observe_prompt"),
-            payload.get("question"),
-            goal.get("objective"),
-            goal.get("stage"),
-            goal.get("missing"),
-            goal.get("next"),
-        )
-    )
-    return _looks_like_click_request(text)
+    return payload.get("require_coordinates") is True
 
 
 def _click_coordinate_clarification_text(observation_text: str) -> str:
@@ -150,11 +112,10 @@ def _click_coordinate_observe_failure_text(observation_text: str) -> str:
     return _react_prompt_helpers._click_coordinate_observe_failure_text(observation_text)
 
 
-def _fallback_after_observe_brain_error(observation_text: str, user_text: str) -> str:
+def _fallback_after_observe_brain_error(observation_text: str, require_coordinates: bool = False) -> str:
     return _react_prompt_helpers._fallback_after_observe_brain_error(
         observation_text,
-        user_text,
-        looks_like_click_request=_looks_like_click_request,
+        require_coordinates,
     )
 
 
@@ -352,7 +313,6 @@ async def _perform_human_ops_observe(decision: BrainDecision, human_ops_config: 
             frame_with_observe_prompt=_frame_with_observe_prompt,
             observe_coordinate_context_from_frame=_observe_coordinate_context_from_frame,
             observe_model_analyzer_config=_observe_model_analyzer_config,
-            looks_like_click_request=_looks_like_click_request,
             infer_computer_use_context=_infer_computer_use_context,
             enrich_observation_frame_with_model=_enrich_observation_frame_with_model,
             observation_text_from_result=_observation_text_from_result,
@@ -405,11 +365,6 @@ APP_COMPAT_EXPORTS: dict[str, Any] = {
         "_infer_contact_label",
         "_infer_recent_chat_messages",
         "_label_aliases",
-        "_looks_like_app_launch_request",
-        "_looks_like_chat_reply_request",
-        "_looks_like_click_request",
-        "_looks_like_desktop_action_request",
-        "_looks_like_desktop_observe_request",
         "_looks_like_visual_observation_failure",
         "_observation_has_reviewable_click_affordance",
         "_observation_text_from_result",

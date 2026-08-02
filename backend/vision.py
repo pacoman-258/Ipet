@@ -72,34 +72,6 @@ ALLOWED_MIME_TYPES = {"image/jpeg", "image/png"}
 VISION_ANALYZER_PROVIDERS = {"none", "macos_vision_ocr", "openai_compatible_vlm", "local_vlm", "google_aistudio_vlm"}
 VISION_ANALYZER_IMAGE_DETAILS = {"low", "high", "auto"}
 VISION_ACTIVE_INTERACTION_LEVELS = {"light", "none"}
-VISION_REQUEST_KEYWORDS = (
-    "屏幕",
-    "截图",
-    "画面",
-    "视觉",
-    "看一下",
-    "看看",
-    "看到",
-    "看见",
-    "看得见",
-    "当前界面",
-    "当前窗口",
-    "窗口",
-    "浏览器",
-    "网站",
-    "网页",
-    "页面",
-    "image",
-    "screen",
-    "screenshot",
-    "visual",
-    "look",
-    "see",
-    "browser",
-    "website",
-    "webpage",
-    "web page",
-)
 NON_VISUAL_OBSERVATION_SOURCES = {"macos-system-events"}
 NON_VISUAL_OBSERVATION_REGIONS = {"macos menu bar left"}
 
@@ -246,20 +218,6 @@ def normalize_vision_config(config: Any) -> dict[str, Any]:
     }
     normalized["persist_frames"] = False
     return normalized
-
-
-def _looks_like_visual_request(text: str) -> bool:
-    normalized = str(text or "").lower()
-    return any(keyword in normalized for keyword in VISION_REQUEST_KEYWORDS)
-
-
-def should_force_grounding(text: str, config: Any) -> bool:
-    vision_cfg = normalize_vision_config(config)
-    if vision_cfg["grounding_mode"] == "off":
-        return False
-    if vision_cfg["force_grounding"] or vision_cfg["grounding_mode"] == "always":
-        return True
-    return _looks_like_visual_request(text)
 
 
 def _sanitize_observations(value: Any) -> list[dict[str, Any]]:
@@ -1071,7 +1029,7 @@ class VisionService:
         self._last_error = self._last_failure_unknowns[0] if self._last_failure_unknowns else ""
         return self.status()
 
-    def should_inject(self, text: str) -> bool:
+    def should_inject(self, *, requested: bool = False) -> bool:
         if not self._config["enabled"]:
             return False
         if self._config["inject_policy"] == "off":
@@ -1080,4 +1038,4 @@ class VisionService:
             return False
         if self._config["inject_policy"] == "always_summary":
             return True
-        return _looks_like_visual_request(text)
+        return bool(requested)

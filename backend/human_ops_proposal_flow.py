@@ -4,6 +4,7 @@ from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
+from brain.contracts import validate_decision_payload
 from brain.decisions import BrainDecision, DecisionKind
 from backend.ipet_memory_store import IpetMemoryStore, build_memory_candidate, infer_follow_up_at
 from human_ops.approval_prompts import (
@@ -18,7 +19,6 @@ from human_ops.proposals import (
     proposal_continue_after_approval as human_ops_proposal_continue_after_approval,
     proposal_event_payload as human_ops_proposal_event_payload,
     proposal_tool_label as human_ops_proposal_tool_label,
-    should_default_continue_after_approval as human_ops_should_default_continue_after_approval,
     with_inherited_enter_expected_text as human_ops_with_inherited_enter_expected_text,
 )
 
@@ -28,8 +28,6 @@ class HumanOpsProposalFlowDependencies:
     pending_proposals: MutableMapping[str, dict[str, Any]]
     uuid_factory: Callable[[], str]
     time_func: Callable[[], float]
-    looks_like_desktop_action_request: Callable[[str], bool]
-    looks_like_chat_reply_request: Callable[[str], bool]
     goal_is_terminal: Callable[[str], bool]
     computer_use_context_text: Callable[[dict[str, Any]], str]
 
@@ -49,25 +47,6 @@ def proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> di
     return human_ops_proposal_event_payload(proposal_id, proposal)
 
 
-def should_default_continue_after_approval(
-    user_text: str,
-    goal: dict[str, Any],
-    *,
-    action_type: str,
-    arguments: dict[str, Any],
-    deps: HumanOpsProposalFlowDependencies,
-) -> bool:
-    return human_ops_should_default_continue_after_approval(
-        user_text,
-        goal,
-        action_type=action_type,
-        arguments=arguments,
-        looks_like_desktop_action_request=deps.looks_like_desktop_action_request,
-        looks_like_chat_reply_request=deps.looks_like_chat_reply_request,
-        goal_is_terminal=deps.goal_is_terminal,
-    )
-
-
 def create_human_ops_act_proposal(
     decision: BrainDecision,
     *,
@@ -77,9 +56,6 @@ def create_human_ops_act_proposal(
 ) -> tuple[str, ReviewableProposal]:
     proposal = build_human_ops_act_proposal(
         decision,
-        user_text=user_text,
-        looks_like_desktop_action_request=deps.looks_like_desktop_action_request,
-        looks_like_chat_reply_request=deps.looks_like_chat_reply_request,
         goal_is_terminal=deps.goal_is_terminal,
     )
     proposal_id = str(deps.uuid_factory())
@@ -107,20 +83,24 @@ def create_human_ops_memory_proposal(
     if isinstance(decision_or_candidate, BrainDecision):
         if decision_or_candidate.kind != DecisionKind.PROPOSE_REMEMBER:
             raise ValueError("Brain 没有提出长期记忆审批。")
+        valid, reason = validate_decision_payload(
+            decision_or_candidate.kind.value,
+            decision_or_candidate.payload,
+        )
+        if not valid:
+            raise ValueError(f"记忆决定不符合 schema：{reason}。")
         category = str(decision_or_candidate.payload.get("category") or "general").strip()
         memory_text = str(decision_or_candidate.payload.get("text") or "").strip()
         normalized_category = category.casefold()
-        if normalized_category in {"forget", "delete", "忘记", "删除"} or any(
-            cue in memory_text.casefold() for cue in ("忘记", "删除记忆", "不要再记", "forget")
-        ):
+        if normalized_category == "forget":
             target = memory_store.find_forget_target(memory_text)
             proposal = build_human_ops_memory_proposal(operation="forget", target=target)
-        elif normalized_category in {"resolve", "complete", "完成", "已完成"}:
+        elif normalized_category == "resolve":
             target = memory_store.find_forget_target(memory_text)
             if target is None or target.get("kind") != "open_loop":
                 raise ValueError("找不到要完成的开放事项。")
             proposal = build_human_ops_memory_proposal(operation="resolve", target=target)
-        elif normalized_category in {"snooze", "later", "稍后", "延后"}:
+        elif normalized_category == "snooze":
             target = memory_store.find_forget_target(memory_text)
             if target is None or target.get("kind") != "open_loop":
                 raise ValueError("找不到要延后的开放事项。")
@@ -213,11 +193,5 @@ def human_ops_continuation_prompt(
 def post_approval_observe_prompt(
     user_text: str,
     proposal: ReviewableProposal,
-    *,
-    deps: HumanOpsProposalFlowDependencies,
 ) -> str:
-    return build_post_approval_observe_prompt(
-        user_text,
-        proposal,
-        looks_like_chat_reply_request=deps.looks_like_chat_reply_request,
-    )
+    return build_post_approval_observe_prompt(user_text, proposal)

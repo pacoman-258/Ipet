@@ -5,7 +5,7 @@ import hashlib
 import re
 from typing import Any, Callable
 
-from .vision import should_force_grounding
+from .vision import normalize_vision_config
 
 
 DEFAULT_ACTIVE_OBSERVATION_CONFIG: dict[str, Any] = {
@@ -769,7 +769,15 @@ def decide_active_observation(
     else:
         fallback_reason = "fallback"
 
-    needs_observation = bool(force) or should_force_grounding(text, vision_config)
+    vision_cfg = normalize_vision_config(vision_config)
+    configured_grounding = bool(
+        vision_cfg["grounding_mode"] != "off"
+        and (
+            vision_cfg["force_grounding"]
+            or vision_cfg["grounding_mode"] == "always"
+        )
+    )
+    needs_observation = bool(force) or configured_grounding
     mode = "focus_target" if target_hint and target_hint != ACTIVE_SURVEY_TARGET_ID else ACTIVE_SURVEY_TARGET_ID
     target_id = _clean_text(target_hint if mode == "focus_target" else ACTIVE_SURVEY_TARGET_ID, max_length=120)
     actions = ["focus_target"] if needs_observation and mode == "focus_target" and active_cfg["allowed_interaction"] != "none" else []

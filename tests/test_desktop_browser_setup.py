@@ -48,6 +48,10 @@ class _FakeBrowser:
         self.customContextMenuRequested = _Signal()
         self.loadFinished = _Signal()
         self.mouse_tracking_values: list[bool] = []
+        self.attributes: list[tuple[object, object]] = []
+        self.auto_fill_background_values: list[bool] = []
+        self.style_sheets: list[str] = []
+        self.sizes: list[tuple[int, int]] = []
         self.context_menu_policies: list[object] = []
         self.event_filters: list[object] = []
         self.urls: list[object] = []
@@ -60,6 +64,18 @@ class _FakeBrowser:
 
     def setMouseTracking(self, enabled: bool) -> None:
         self.mouse_tracking_values.append(enabled)
+
+    def setAttribute(self, attribute, enabled: bool) -> None:
+        self.attributes.append((attribute, enabled))
+
+    def setAutoFillBackground(self, enabled: bool) -> None:
+        self.auto_fill_background_values.append(enabled)
+
+    def setStyleSheet(self, value: str) -> None:
+        self.style_sheets.append(value)
+
+    def resize(self, width: int, height: int) -> None:
+        self.sizes.append((width, height))
 
     def setContextMenuPolicy(self, policy) -> None:
         self.context_menu_policies.append(policy)
@@ -92,6 +108,9 @@ class _FakeQt:
     class ContextMenuPolicy:
         CustomContextMenu = "custom-context-menu"
 
+    class WidgetAttribute:
+        WA_TranslucentBackground = "translucent-background"
+
 
 class _FakeWebAttribute:
     LocalContentCanAccessFileUrls = "local-file"
@@ -112,6 +131,12 @@ class _Owner:
 
     def setCentralWidget(self, widget) -> None:
         self.central_widgets.append(widget)
+
+    def width(self) -> int:
+        return 420
+
+    def height(self) -> int:
+        return 640
 
     def show_context_menu(self, pos) -> None:
         del pos
@@ -202,6 +227,9 @@ class DesktopBrowserSetupTests(unittest.TestCase):
         self.assertTrue(result.event_filter_installed)
         self.assertIs(browser.parent, owner)
         self.assertEqual(browser.mouse_tracking_values, [True])
+        self.assertEqual(browser.attributes, [])
+        self.assertEqual(browser.auto_fill_background_values, [])
+        self.assertEqual(browser.style_sheets, [])
         self.assertEqual(browser.page_obj.background_colors, [("color", (1, 2, 3, 4))])
         self.assertEqual(
             browser.settings_obj.attributes,
@@ -223,6 +251,7 @@ class DesktopBrowserSetupTests(unittest.TestCase):
         self.assertEqual(result.channel.registrations, [("qtBridge", bridge)])
         self.assertEqual(browser.page_obj.web_channels, [result.channel])
         self.assertEqual(owner.central_widgets, [browser])
+        self.assertEqual(browser.sizes, [(420, 640)])
         self.assertEqual(browser.loadFinished.connections, [owner.on_web_loaded])
         self.assertEqual(browser.urls, [("local-file-url", expected_url)])
 
@@ -250,6 +279,34 @@ class DesktopBrowserSetupTests(unittest.TestCase):
         self.assertEqual(created[0].event_filters, [])
         self.assertEqual(application.event_filters, [])
         self.assertFalse(hasattr(created[0].page_obj, "featurePermissionRequested"))
+
+    def test_setup_makes_the_web_view_translucent_for_a_transparent_page(self) -> None:
+        module = self._module()
+        owner = _Owner()
+        created: list[_FakeBrowser] = []
+        dependencies = self._dependencies(
+            module,
+            created=created,
+            application=_FakeApplication(),
+        )
+        dependencies = module.DesktopBrowserSetupDependencies(
+            **{
+                **dependencies.__dict__,
+                "background_color": lambda: (0, 0, 0, 0),
+            }
+        )
+
+        module.setup_desktop_browser(
+            owner,
+            bridge=object(),
+            root_dir=ROOT_DIR,
+            dependencies=dependencies,
+        )
+
+        browser = created[0]
+        self.assertEqual(browser.attributes, [("translucent-background", True)])
+        self.assertEqual(browser.auto_fill_background_values, [False])
+        self.assertEqual(browser.style_sheets, ["background: transparent;"])
 
     def test_desktop_pet_init_delegates_browser_setup(self) -> None:
         source = _desktop_pet_init_source()

@@ -12,6 +12,8 @@
     const streamChat = typeof deps.streamChat === "function" ? deps.streamChat : async () => {};
     const stopSpeaking = typeof deps.stopSpeaking === "function" ? deps.stopSpeaking : () => {};
     const enqueueTTSChunk = typeof deps.enqueueTTSChunk === "function" ? deps.enqueueTTSChunk : () => {};
+    const showContextMenuAt =
+      typeof deps.showContextMenuAt === "function" ? deps.showContextMenuAt : () => false;
     const setPendingConfig = typeof deps.setPendingConfig === "function" ? deps.setPendingConfig : () => {};
     const getCurrentModel =
       typeof petSceneController.getCurrentModel === "function" ? () => petSceneController.getCurrentModel() : () => null;
@@ -52,6 +54,7 @@
       getState() {
         return { ...state };
       },
+      showContextMenuAt,
       openChat,
       closeChat,
       async sendChat(text) {

@@ -18,6 +18,7 @@ from backend.chat_stream_flow import (
     with_observation_target_app,
 )
 from backend.observe_context import normalize_observed_click_coordinates
+from backend.task_control import TASK_CONTROL
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -105,10 +106,9 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             "run_brain_turn": run_brain_turn,
             "decision_from_completion": lambda completion: completion.decision,
             "sanitize_brain_error": lambda exc, _config: str(exc),
-            "fallback_after_observe_brain_error": lambda observation_text, _user_text: observation_text,
-            "looks_like_click_request": lambda _text: False,
+            "fallback_after_observe_brain_error": lambda observation_text, _required: observation_text,
+            "observe_decision_requests_click": lambda decision: decision.payload.get("require_coordinates") is True,
             "click_coordinate_clarification_text": lambda observation_text: observation_text,
-            "looks_like_desktop_action_request": lambda _text: False,
             "coerce_decision_for_human_ops": lambda _user_text, decision: decision,
             "decision_kind": lambda decision: decision.kind
             if isinstance(decision.kind, DecisionKind)
@@ -386,6 +386,104 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("conversation_history", calls[1])
 
+    async def test_action_like_explanation_say_does_not_trigger_keyword_correction(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            decision = BrainDecision.say("可以在系统设置里按这些步骤操作。")
+            return SimpleNamespace(
+                text=decision.summary,
+                decision=decision,
+                provider="test",
+                model="brain",
+            )
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {
+                    "model_endpoint": "https://llm.example",
+                    "model_name": "brain",
+                },
+                "human_ops": {},
+            },
+            run_brain_turn=run_brain_turn,
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {
+                    "text": "请解释如何打开系统设置",
+                    "session_id": "explain-system-settings",
+                },
+                deps,
+            )
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(events[-1][1]["text"], "可以在系统设置里按这些步骤操作。")
+        self.assertNotIn(
+            "brain_react",
+            [payload.get("name") for name, payload in events if name == "phase"],
+        )
+
+    async def test_explicit_in_progress_say_gets_one_consistency_correction(self) -> None:
+        topic_store = TopicStoreSpy()
+        calls = 0
+
+        async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            decision = (
+                BrainDecision.say(
+                    "还在处理中。",
+                    goal={"objective": "完成操作", "status": "in_progress", "next": "observe"},
+                )
+                if calls == 1
+                else BrainDecision.say(
+                    "目前无法继续。",
+                    goal={"objective": "完成操作", "status": "blocked", "next": "stop"},
+                )
+            )
+            return SimpleNamespace(
+                text=decision.summary,
+                decision=decision,
+                provider="test",
+                model="brain",
+            )
+
+        deps = self._dependencies(
+            topic_store,
+            normalize_private_config=lambda: {
+                "brain": {
+                    "model_endpoint": "https://llm.example",
+                    "model_name": "brain",
+                },
+                "human_ops": {},
+            },
+            run_brain_turn=run_brain_turn,
+            goal_status=lambda decision, *, operation_request: str(
+                (decision.payload.get("goal") or {}).get("status") or ""
+            ),
+        )
+
+        events = await _collect_events(
+            stream_chat_response(
+                {"text": "完成操作", "session_id": "explicit-in-progress"},
+                deps,
+            )
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertIn(
+            "brain_react",
+            [payload.get("name") for name, payload in events if name == "phase"],
+        )
+        self.assertEqual(events[-1][1]["decision"]["payload"]["goal"]["status"], "blocked")
+
     async def test_configured_react_budget_allows_more_than_three_followups(self) -> None:
         topic_store = TopicStoreSpy()
         calls = 0
@@ -418,7 +516,6 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
                 "human_ops": {},
             },
             run_brain_turn=run_brain_turn,
-            looks_like_desktop_action_request=lambda _text: True,
             goal_status=lambda decision, *, operation_request: str(
                 (decision.payload.get("goal") or {}).get("status") or ""
             ),
@@ -429,7 +526,7 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "text": "完成复杂桌面任务",
                     "session_id": "configured-react-budget",
-                    "max_reasoning_steps": 4,
+                    "max_reasoning_steps": 5,
                 },
                 deps,
             )
@@ -533,9 +630,15 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
 
         deps = self._dependencies(
             topic_store,
+            normalize_private_config=lambda: {
+                "brain": {
+                    "model_endpoint": "https://llm.example",
+                    "model_name": "brain",
+                },
+                "human_ops": {},
+            },
             run_brain_turn=run_brain_turn,
             perform_human_ops_observe=perform_observe,
-            looks_like_desktop_action_request=lambda _text: True,
         )
 
         events = await _collect_events(
@@ -604,7 +707,6 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             },
             run_brain_turn=run_brain_turn,
             perform_human_ops_observe=perform_observe,
-            looks_like_desktop_action_request=lambda _text: True,
             create_human_ops_act_proposal=create_proposal,
             proposal_event_payload=lambda proposal_id, _proposal: {"proposal_id": proposal_id},
             normalize_observed_click_coordinates=normalize_observed_click_coordinates,
@@ -661,7 +763,6 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
                 "human_ops": {"authorization_mode": "full", "require_act_review": False},
             },
             run_brain_turn=run_brain_turn,
-            looks_like_desktop_action_request=lambda _text: True,
             create_human_ops_act_proposal=create_proposal,
             pending_proposals=pending,
             stream_authorized_proposal=stream_authorized,
@@ -681,7 +782,8 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(streamed, ["full-proposal"])
         self.assertEqual(pending["full-proposal"]["task_id"], "task-full-auth")
-        self.assertEqual(pending["full-proposal"]["react_budget_remaining"], 9)
+        self.assertNotIn("react_budget_remaining", pending["full-proposal"])
+        self.assertEqual(TASK_CONTROL.remaining_budget("task-full-auth"), 8)
         self.assertNotIn("approval_required", [name for name, _payload in events])
         self.assertTrue(events[-1][1]["auto_authorized"])
 
@@ -782,6 +884,7 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             user_text: str,
             request_system_prompt: str = "",
+            **_kwargs: Any,
         ) -> Any:
             calls.append(f"{request_system_prompt}:{user_text}")
             return SimpleNamespace(

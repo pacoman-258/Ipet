@@ -21,7 +21,6 @@ def _deps(**overrides):
         "frame_with_observe_prompt": lambda frame, _decision, _user_text: dict(frame),
         "observe_coordinate_context_from_frame": lambda _frame: "coordinate context",
         "observe_model_analyzer_config": lambda _config: {"enabled": False},
-        "looks_like_click_request": lambda _text: False,
         "infer_computer_use_context": lambda _text, _frame=None, _target_hint="": {
             "surface": {"kind": "unknown"},
             "affordances": [],
@@ -196,18 +195,59 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertNotIn("backend.app", source)
         self.assertNotIn("from . import app", source)
 
-    def test_observe_screen_disabled_returns_permission_message_without_capture(self) -> None:
+    def test_all_observation_permissions_disabled_returns_without_capture(self) -> None:
         result = asyncio.run(
             perform_human_ops_observe(
                 BrainDecision.observe("screen"),
-                {"observe_screen": False},
+                {"observe_screen": False, "accessibility": False},
                 deps=_deps(),
             )
         )
 
-        self.assertIn("观察权限", result["text"])
+        self.assertIn("均已关闭", result["text"])
         self.assertEqual(result["observations"], [])
-        self.assertIn("observe_screen disabled", result["unknowns"])
+        self.assertIn("screen capture and accessibility disabled", result["unknowns"])
+
+    def test_screen_capture_disabled_still_allows_application_accessibility(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_accessibility",
+                    "accessibility": {
+                        "usable": True,
+                        "text": "已读取目标应用结构",
+                        "search": {"sufficient": True},
+                    },
+                    "observations": [],
+                }
+            }
+        )
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("读取按钮", target_app="QQ", ax_query="AXButton"),
+                {"observe_screen": False, "accessibility": True},
+                deps=_deps(send_desktop_command=send_mock),
+            )
+        )
+
+        payload = send_mock.await_args.args[1]
+        self.assertFalse(payload["screen_capture_enabled"])
+        self.assertTrue(payload["accessibility_enabled"])
+        self.assertEqual(result["analysis_route"], "structured")
+        self.assertEqual(result["route_decision"]["selected"], "ax")
+
+    def test_screen_capture_disabled_requires_app_for_accessibility(self) -> None:
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe("screen"),
+                {"observe_screen": False, "accessibility": True},
+                deps=_deps(),
+            )
+        )
+
+        self.assertIn("需要指定一个明确的目标应用", result["text"])
+        self.assertIn("accessibility observation requires target_app", result["unknowns"])
 
     def test_sends_active_vision_capture_with_target_hint_and_long_timeout(self) -> None:
         send_mock = mock.AsyncMock(
@@ -359,7 +399,6 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
                 deps=_deps(
                     send_desktop_command=send_desktop_command,
                     observe_target_hint_from_decision=lambda _decision, fallback="screen": "点击 Dock 栏里的设置",
-                    looks_like_click_request=lambda text: "点击" in text,
                 ),
             )
         )
@@ -367,6 +406,11 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertIn("由 Brain 模型直接观察", result["text"])
         self.assertEqual(result["analysis_route"], "brain")
         self.assertEqual(result["unknowns"], [])
+        self.assertEqual(result["route_decision"]["selected"], "brain_vision")
+        self.assertEqual(
+            result["route_decision"]["attempted"],
+            ["screenshot", "brain_vision"],
+        )
 
     def test_structured_accessibility_observation_skips_image_analyzer(self) -> None:
         send_mock = mock.AsyncMock(
@@ -406,6 +450,8 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
         self.assertEqual(result["analysis_route"], "structured")
         self.assertEqual(result["surface"]["kind"], "wechat_gui")
         self.assertEqual(result["text"], "AX 读取成功")
+        self.assertEqual(result["route_decision"]["selected"], "ax")
+        self.assertEqual(result["route_decision"]["outcome"], "usable")
         analyzer.assert_not_called()
 
     def test_insufficient_ax_search_keeps_structure_and_falls_back_to_screenshot(self) -> None:
@@ -570,6 +616,64 @@ class HumanOpsObserveSplitTests(unittest.TestCase):
                 "data:image/"
             )
         )
+        self.assertEqual(result["route_decision"]["selected"], "local_ocr")
+        self.assertEqual(result["route_decision"]["outcome"], "usable")
+
+    def test_non_actionable_local_ocr_does_not_short_circuit_click_vision(self) -> None:
+        send_mock = mock.AsyncMock(
+            return_value={
+                "frame": {
+                    "capture_backend": "macos_screencapture",
+                    "data_url": "data:image/png;base64,AA==",
+                    "accessibility": {
+                        "usable": True,
+                        "search": {
+                            "sufficient": False,
+                            "visual_fallback_required": True,
+                            "insufficiency_reason": "no_reviewable_actionable_match",
+                        },
+                    },
+                }
+            }
+        )
+
+        result = asyncio.run(
+            perform_human_ops_observe(
+                BrainDecision.observe(
+                    "screen",
+                    target_app="Music",
+                    ax_query="当前歌曲名称",
+                ),
+                {"observe_screen": True, "observe_model": {"enabled": False}},
+                deps=_deps(
+                    send_desktop_command=send_mock,
+                    observe_decision_requests_click=lambda _decision: True,
+                    enrich_observation_frame_with_local_ocr=lambda frame, _query: {
+                        **frame,
+                        "local_ocr_analysis": {
+                            "provider": "macos_vision_ocr",
+                            "status": "ok",
+                        },
+                        "local_ocr_search": {
+                            "available": True,
+                            "matched_count": 1,
+                            "best_match_count": 1,
+                            "sufficient": True,
+                            "actionable": False,
+                            "matches": [{"label": "当前歌曲"}],
+                        },
+                    },
+                ),
+            )
+        )
+
+        self.assertEqual(result["analysis_route"], "brain")
+        self.assertEqual(result["route_decision"]["selected"], "brain_vision")
+        self.assertEqual(
+            result["route_decision"]["attempted"],
+            ["ax", "screenshot", "local_ocr", "brain_vision"],
+        )
+        self.assertFalse(result["route_decision"]["ocr_actionable"])
 
     def test_near_match_ambiguity_stays_structured_without_screenshot(self) -> None:
         send_mock = mock.AsyncMock(

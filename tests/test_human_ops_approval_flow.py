@@ -9,6 +9,7 @@ from brain.decisions import BrainDecision
 from backend.task_control import TASK_CONTROL, TaskStopped
 from human_ops.approvals import ReviewableProposal
 from human_ops.approval_flow import (
+    FULL_AUTH_ACTION_LIMIT,
     HumanOpsApprovalFlowDependencies,
     _action_retry_key,
     execution_verification,
@@ -363,7 +364,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
             return {"text": "观察完成。", "observations": [], "unknowns": []}
 
-        async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
+        async def run_brain_turn(_config: dict[str, Any], *, user_text: str, **_kwargs: Any):
             return SimpleNamespace(text="完成。", decision=BrainDecision.say("完成。", goal={"status": "done"}))
 
         next_proposal = ReviewableProposal.act(
@@ -485,6 +486,63 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("记住了", events[-1][1]["text"])
         self.assertEqual(exchanges[0]["session_id"], "friend")
 
+    async def test_action_verification_runs_without_post_action_brain_continuation(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="click",
+            summary="Ipet 想点击：确认按钮",
+            payload={
+                "target_app": "Settings",
+                "x": 120,
+                "y": 240,
+                "coordinate_space": "macos_screen_points",
+                "label": "确认按钮",
+            },
+        )
+        pending = {
+            "verify-only": {
+                "proposal": proposal,
+                "session_id": "verify-session",
+                "user_text": "点击确认按钮",
+                "status": "pending",
+            }
+        }
+        calls = {"observe": 0, "brain": 0}
+
+        async def perform_action(_proposal: ReviewableProposal) -> dict[str, Any]:
+            return {"clicked": True, "focused": True, "target_app": "Settings"}
+
+        async def perform_observe(_decision: BrainDecision, _config: dict[str, Any]) -> dict[str, Any]:
+            calls["observe"] += 1
+            return {
+                "text": "确认对话框已经消失。",
+                "observations": [{"claim": "确认对话框已经消失"}],
+                "unknowns": [],
+            }
+
+        async def reject_brain(*_args: Any, **_kwargs: Any) -> Any:
+            calls["brain"] += 1
+            self.fail("continue_after_approval=false must not call Brain")
+
+        deps = self._dependencies(
+            pending,
+            perform_human_ops_action=perform_action,
+            perform_human_ops_observe=perform_observe,
+            proposal_continue_after_approval=lambda _proposal: False,
+            run_brain_turn=reject_brain,
+        )
+
+        events = await _collect_events(
+            stream_human_ops_proposal_decision("verify-only", {"approved": True}, deps)
+        )
+
+        self.assertEqual(calls, {"observe": 1, "brain": 0})
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["verification"]["status"], "insufficient")
+        self.assertEqual(events[-1][1]["observation"]["text"], "确认对话框已经消失。")
+        self.assertIn("human_ops_structured_verify", [
+            payload.get("name") for name, payload in events if name == "phase"
+        ])
+
     async def test_approve_continuation_uses_injected_dependencies_and_emits_next_approval(self) -> None:
         proposal = ReviewableProposal.act(
             action_type="type_text",
@@ -499,7 +557,13 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "status": "pending",
             }
         }
-        calls: dict[str, Any] = {"action": 0, "observe": 0, "brain_prompt": "", "create": None}
+        calls: dict[str, Any] = {
+            "action": 0,
+            "observe": 0,
+            "brain_prompt": "",
+            "brain_profile": "",
+            "create": None,
+        }
 
         async def perform_action(approved_proposal: ReviewableProposal) -> dict[str, Any]:
             calls["action"] += 1
@@ -529,8 +593,9 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "unknowns": [],
             }
 
-        async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
+        async def run_brain_turn(_config: dict[str, Any], *, user_text: str, **kwargs: Any):
             calls["brain_prompt"] = user_text
+            calls["brain_profile"] = kwargs.get("prompt_profile")
             return SimpleNamespace(
                 text="按回车发送",
                 decision=BrainDecision.propose_act(
@@ -571,6 +636,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["action"], 1)
         self.assertEqual(calls["observe"], 1)
         self.assertIn("目标会话的聊天框中可见完整草稿", calls["brain_prompt"])
+        self.assertEqual(calls["brain_profile"], "agent")
         created_decision, session_id, user_text = calls["create"]
         self.assertEqual(created_decision.payload["action_type"], "key_press")
         self.assertEqual(session_id, "neo-session")
@@ -691,7 +757,6 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "session_id": "repeat-session",
                 "user_text": "进入目标会话",
                 "status": "pending",
-                "react_budget_remaining": 2,
             }
         }
         brain_prompts: list[str] = []
@@ -711,6 +776,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
             _config: dict[str, Any],
             *,
             user_text: str,
+            **_kwargs: Any,
         ) -> Any:
             brain_prompts.append(user_text)
             if len(brain_prompts) == 1:
@@ -787,7 +853,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        async def run_brain_turn(_config: dict[str, Any], *, user_text: str):
+        async def run_brain_turn(_config: dict[str, Any], *, user_text: str, **_kwargs: Any):
             return SimpleNamespace(
                 text="继续点击",
                 decision=BrainDecision.propose_act(
@@ -954,7 +1020,6 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "session_id": "draft-session",
                 "user_text": "在目标会话发送测试草稿",
                 "status": "pending",
-                "react_budget_remaining": 5,
             }
         }
         observe_calls = 0
@@ -1008,6 +1073,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
             _config: dict[str, Any],
             *,
             user_text: str,
+            **_kwargs: Any,
         ) -> Any:
             brain_prompts.append(user_text)
             if len(brain_prompts) == 2:
@@ -1093,7 +1159,6 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "task_id": "auto-task",
                 "status": "pending",
                 "authorization_mode": "full",
-                "react_budget_remaining": 7,
             }
         }
         calls: list[tuple[str, str]] = []
@@ -1175,9 +1240,10 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending["auto-first"]["status"], "executed")
         self.assertEqual(pending["auto-second"]["status"], "executed")
         self.assertEqual(pending["auto-second"]["authorization_mode"], "full")
-        self.assertEqual(pending["auto-second"]["react_budget_remaining"], 7)
-        self.assertEqual(pending["auto-first"]["action_budget_remaining"], 23)
-        self.assertEqual(pending["auto-second"]["action_budget_remaining"], 22)
+        self.assertNotIn("react_budget_remaining", pending["auto-second"])
+        self.assertNotIn("action_budget_remaining", pending["auto-first"])
+        self.assertNotIn("action_budget_remaining", pending["auto-second"])
+        self.assertEqual(TASK_CONTROL.remaining_budget("auto-task"), 8)
         self.assertEqual(pending["auto-second"]["actions_executed"], 2)
         self.assertNotIn("approval_required", [name for name, _payload in events])
         self.assertTrue(events[-1][1]["auto_authorized"])
@@ -1200,7 +1266,7 @@ class HumanOpsApprovalFlowTests(unittest.IsolatedAsyncioTestCase):
                 "task_id": "loop-task",
                 "status": "pending",
                 "authorization_mode": "full",
-                "action_budget_remaining": 3,
+                "actions_executed": FULL_AUTH_ACTION_LIMIT - 3,
             }
         }
         calls: list[str] = []

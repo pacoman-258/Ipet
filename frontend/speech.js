@@ -31,7 +31,6 @@
     let ttsSynthesizing = false;
     let ttsAbortController = null;
     let activePlaybackSettler = null;
-    let activeStreamPlayback = null;
     let speechRunId = 0;
     let streamFinished = false;
     let pendingSpeakBuffer = "";
@@ -67,8 +66,6 @@
       discardPreparedAudio();
       ttsAbortController?.abort();
       ttsAbortController = null;
-      activeStreamPlayback?.stop();
-      activeStreamPlayback = null;
       pendingSpeakBuffer = "";
       pendingSpeakExpr = null;
       ttsPlaying = false;
@@ -102,9 +99,6 @@
       discardPreparedAudio();
       ttsAbortController?.abort();
       ttsAbortController = null;
-      activeStreamPlayback?.stop();
-      activeStreamPlayback = null;
-      primeQwenStreamAudio();
     }
 
     function markStreamFinished() {
@@ -134,10 +128,6 @@
         return "TTS异常";
       }
       return `TTS 失败：${detail}`;
-    }
-
-    function usesQwenTTSStream() {
-      return state.chat?.tts_provider === "qwen_tts_local";
     }
 
     function discardPreparedAudio() {
@@ -356,299 +346,6 @@
       }
     }
 
-    function primeQwenStreamAudio() {
-      if (!usesQwenTTSStream()) {
-        return;
-      }
-      try {
-        const AudioContextCtor = runtimeWindow.AudioContext || runtimeWindow.webkitAudioContext;
-        if (!AudioContextCtor) {
-          return;
-        }
-        let nextAudioContext = currentAudioContext();
-        if (!nextAudioContext) {
-          nextAudioContext = new AudioContextCtor();
-          saveAudioContext(nextAudioContext);
-        }
-        if (nextAudioContext.state === "suspended") {
-          nextAudioContext.resume?.().catch(() => {});
-        }
-      } catch (_) {
-        // The streaming request reports a single TTS error if Web Audio is unavailable.
-      }
-    }
-
-    function decodePCM16LE(base64PCM) {
-      const decodeBase64 = runtimeWindow.atob || globalThis.atob;
-      if (typeof decodeBase64 !== "function") {
-        throw new Error("浏览器不支持 PCM 流式音频");
-      }
-      const raw = decodeBase64(String(base64PCM || ""));
-      if (raw.length % 2) {
-        throw new Error("PCM 数据长度异常");
-      }
-      const samples = new Float32Array(raw.length / 2);
-      for (let i = 0; i < raw.length; i += 2) {
-        let value = raw.charCodeAt(i) | (raw.charCodeAt(i + 1) << 8);
-        if (value >= 0x8000) {
-          value -= 0x10000;
-        }
-        samples[i / 2] = value / 32768;
-      }
-      return samples;
-    }
-
-    function startQwenStreamLipSync(playback) {
-      const data = new Uint8Array(playback.analyser.fftSize);
-      const tick = () => {
-        if (activeStreamPlayback !== playback || playback.stopped) {
-          stopLipSyncLoop();
-          return;
-        }
-        playback.analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const n = (data[i] - 128) / 128;
-          sum += n * n;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const lipSyncGain = Math.max(0.5, Number(state.chat?.lip_sync_gain || 1));
-        setMouthOpen(clamp(rms * (4.8 + lipSyncGain * 1.8), 0, 1));
-        lipsyncRAF = requestAnimationFrameSafe(tick);
-      };
-      tick();
-    }
-
-    async function createQwenStreamPlayback(item, runId) {
-      primeQwenStreamAudio();
-      const context = currentAudioContext();
-      if (!context || typeof context.createBuffer !== "function") {
-        throw new Error("浏览器不支持 PCM 流式音频");
-      }
-      if (context.state === "suspended") {
-        await context.resume?.();
-      }
-      if (mediaSource) {
-        try {
-          mediaSource.disconnect();
-        } catch (_) {}
-        mediaSource = null;
-      }
-
-      const streamAnalyser = context.createAnalyser();
-      streamAnalyser.fftSize = 2048;
-      streamAnalyser.connect(context.destination);
-      analyser = streamAnalyser;
-
-      const pending = [];
-      const sources = new Set();
-      let pendingDuration = 0;
-      let nextStartTime = 0;
-      let started = false;
-      let ended = false;
-      let completed = false;
-      let resolvePlayback = () => {};
-      const waitForPlayback = new Promise((resolve) => {
-        resolvePlayback = resolve;
-      });
-
-      const playback = {
-        analyser: streamAnalyser,
-        stopped: false,
-        enqueue(samples, sampleRate) {
-          if (playback.stopped || !samples?.length) {
-            return;
-          }
-          const chunk = { samples, sampleRate };
-          if (!started) {
-            pending.push(chunk);
-            pendingDuration += samples.length / sampleRate;
-            // Qwen currently generates slower than playback.  This small lead
-            // avoids an audible gap right after the first PCM packet.
-            if (pendingDuration >= 0.96) {
-              startPlayback();
-            }
-            return;
-          }
-          scheduleChunk(chunk);
-        },
-        finish() {
-          ended = true;
-          if (!started && pending.length) {
-            startPlayback();
-          }
-          if (!started && !sources.size) {
-            completePlayback();
-          }
-        },
-        stop() {
-          if (playback.stopped) {
-            return;
-          }
-          playback.stopped = true;
-          ended = true;
-          pending.length = 0;
-          for (const source of sources) {
-            try {
-              source.stop();
-            } catch (_) {}
-          }
-          sources.clear();
-          completePlayback();
-        },
-        waitForPlayback,
-      };
-
-      function completePlayback() {
-        if (completed) {
-          return;
-        }
-        completed = true;
-        try {
-          streamAnalyser.disconnect();
-        } catch (_) {}
-        if (analyser === streamAnalyser) {
-          analyser = null;
-        }
-        if (activeStreamPlayback === playback) {
-          activeStreamPlayback = null;
-          ttsPlaying = false;
-          stopLipSyncLoop();
-        }
-        resolvePlayback();
-      }
-
-      function scheduleChunk(chunk) {
-        const audioBuffer = context.createBuffer(1, chunk.samples.length, chunk.sampleRate);
-        audioBuffer.copyToChannel(chunk.samples, 0);
-        const source = context.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(streamAnalyser);
-        const startAt = Math.max(nextStartTime, context.currentTime + 0.025);
-        nextStartTime = startAt + audioBuffer.duration;
-        sources.add(source);
-        source.addEventListener("ended", () => {
-          sources.delete(source);
-          if (ended && !sources.size) {
-            completePlayback();
-          }
-        }, { once: true });
-        source.start(startAt);
-      }
-
-      function startPlayback() {
-        if (started || playback.stopped || runId !== speechRunId) {
-          return;
-        }
-        started = true;
-        ttsPlaying = true;
-        setChatState("speaking");
-        if (state.chat.expression_mode && item.expr) {
-          triggerExpressionSafe(item.expr);
-        }
-        startQwenStreamLipSync(playback);
-        for (const chunk of pending.splice(0)) {
-          scheduleChunk(chunk);
-        }
-        pendingDuration = 0;
-      }
-
-      return playback;
-    }
-
-    async function requestQwenStreamChunk(item, abortController) {
-      const backend = String(state.chat?.backend_url || "").replace(/\/$/, "");
-      if (!backend) {
-        throw new Error(ttsFailureMessage("后端地址未配置"));
-      }
-      let reader = null;
-      let playback = null;
-      let sawAudio = false;
-      let sampleRate = 24000;
-      try {
-        const resp = await fetchFn(`${backend}/api/tts/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: abortController.signal,
-          body: JSON.stringify({
-            text: item.text,
-            voice: state.chat.voice || "zh-CN-XiaoxiaoNeural",
-            rate: toRateString(state.chat.rate_pct),
-            volume: "+0%",
-            provider: "qwen_tts_local",
-            provider_url: state.chat.tts_provider_url || "",
-          }),
-        });
-        if (!resp.ok) {
-          let detail = `HTTP ${resp.status}`;
-          try {
-            const errData = await resp.json();
-            detail = errData?.detail || detail;
-          } catch (_) {}
-          throw new Error(ttsFailureMessage(detail));
-        }
-        if (!resp.body || typeof resp.body.getReader !== "function") {
-          throw new Error(ttsFailureMessage("后端未返回流式音频"));
-        }
-        const TextDecoderCtor = runtimeWindow.TextDecoder || globalThis.TextDecoder;
-        if (!TextDecoderCtor) {
-          throw new Error(ttsFailureMessage("浏览器不支持流式响应"));
-        }
-        playback = await createQwenStreamPlayback(item, item.runId);
-        activeStreamPlayback = playback;
-        reader = resp.body.getReader();
-        const decoder = new TextDecoderCtor();
-        let pendingText = "";
-        const consumeLine = (rawLine) => {
-          const line = String(rawLine || "").trim();
-          if (!line) {
-            return;
-          }
-          const packet = JSON.parse(line);
-          if (packet.type === "meta" && Number(packet.sample_rate) > 0) {
-            sampleRate = Number(packet.sample_rate);
-          } else if (packet.type === "audio") {
-            const samples = decodePCM16LE(packet.pcm_s16le_base64);
-            if (samples.length) {
-              sawAudio = true;
-              playback.enqueue(samples, sampleRate);
-            }
-          } else if (packet.type === "error") {
-            throw new Error(ttsFailureMessage(packet.detail || "本地模型生成失败"));
-          }
-        };
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-          pendingText += decoder.decode(value, { stream: true });
-          let splitAt = pendingText.indexOf("\n");
-          while (splitAt >= 0) {
-            consumeLine(pendingText.slice(0, splitAt));
-            pendingText = pendingText.slice(splitAt + 1);
-            splitAt = pendingText.indexOf("\n");
-          }
-        }
-        pendingText += decoder.decode();
-        consumeLine(pendingText);
-        if (!sawAudio) {
-          throw new Error(ttsFailureMessage("本地模型未返回音频"));
-        }
-        if (item.runId !== speechRunId) {
-          playback.stop();
-          return;
-        }
-        playback.finish();
-        await playback.waitForPlayback;
-      } catch (error) {
-        playback?.stop();
-        throw error;
-      } finally {
-        reader?.releaseLock?.();
-      }
-    }
-
     async function requestTTSChunk(item, abortController) {
       const backend = String(state.chat?.backend_url || "").replace(/\/$/, "");
       if (!backend) {
@@ -706,12 +403,6 @@
       ttsSynthesizing = true;
       setChatState("tts");
       try {
-        if (usesQwenTTSStream()) {
-          // The model has one inference lock, so keep this awaited: it avoids
-          // competing sentences and preserves their spoken order.
-          await requestQwenStreamChunk(nextItem, abortController);
-          return;
-        }
         const prepared = await requestTTSChunk(nextItem, abortController);
         if (runId === speechRunId) {
           preparedAudioQueue.push(prepared);

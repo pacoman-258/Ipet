@@ -5,90 +5,6 @@ import re
 from typing import Any
 
 
-_DESKTOP_ACTION_TERMS = (
-    "点击",
-    "点一下",
-    "点开",
-    "打开",
-    "启动",
-    "切到",
-    "选择",
-    "按下",
-    "播放",
-    "暂停",
-    "下一首",
-    "上一首",
-)
-_DESKTOP_TARGET_TERMS = (
-    "dock",
-    "程序坞",
-    "app",
-    "应用",
-    "窗口",
-    "按钮",
-    "图标",
-    "输入框",
-    "设置",
-    "音乐",
-    "歌曲",
-    "歌单",
-    "访达",
-    "文件",
-)
-_DESKTOP_EXPLANATION_TERMS = ("怎么", "如何", "为什么", "原理", "介绍", "解释")
-_APP_LAUNCH_TERMS = ("打开", "启动", "切到", "open ", "launch ")
-_CHAT_REPLY_ACTION_TERMS = ("回复", "回消息", "发送", "发给", "输入", "键入", "打字")
-_CHAT_SURFACE_TERMS = ("微信", "wechat", "qq", "聊天", "联系人", "会话", "消息", "私信")
-_COMMON_APP_LABELS = (
-    "微信",
-    "wechat",
-    "qq",
-    "音乐",
-    "music",
-    "chrome",
-    "safari",
-    "系统设置",
-    "设置",
-    "finder",
-    "访达",
-)
-_APP_LAUNCH_ALIASES = {
-    "微信": "WeChat",
-    "wechat": "WeChat",
-    "qq": "QQ",
-    "腾讯qq": "QQ",
-    "音乐": "Music",
-    "苹果音乐": "Music",
-    "apple music": "Music",
-    "music": "Music",
-    "网易云音乐": "NeteaseMusic",
-    "网易云": "NeteaseMusic",
-    "腾讯会议": "TencentMeeting",
-    "库乐队": "GarageBand",
-    "keynote讲演": "Keynote",
-    "numbers表格": "Numbers",
-    "pages文稿": "Pages",
-    "safari浏览器": "Safari",
-    "imovie 剪辑": "iMovie",
-    "imovie剪辑": "iMovie",
-    "谷歌浏览器": "Google Chrome",
-    "google chrome": "Google Chrome",
-    "chrome": "Google Chrome",
-    "苹果浏览器": "Safari",
-    "safari": "Safari",
-    "系统设置": "System Settings",
-    "设置": "System Settings",
-    "访达": "Finder",
-    "finder": "Finder",
-}
-_DESKTOP_OBSERVE_TERMS = (
-    "看屏幕",
-    "观察屏幕",
-    "看看屏幕",
-    "读屏幕",
-    "当前屏幕",
-    "屏幕上",
-)
 _MEDIA_PLAYBACK_TERMS = (
     "播放",
     "继续播放",
@@ -97,20 +13,7 @@ _MEDIA_PLAYBACK_TERMS = (
     "resume",
     "pause",
 )
-_ACTION_CLAUSE_TERMS = tuple(
-    dict.fromkeys(
-        (
-            *_DESKTOP_ACTION_TERMS,
-            *_CHAT_REPLY_ACTION_TERMS,
-            "click",
-            "open ",
-            "launch ",
-            "play",
-            "resume",
-            "pause",
-        )
-    )
-)
+_ACTION_CLAUSE_TERMS = _MEDIA_PLAYBACK_TERMS
 _NEGATED_ACTION_MARKERS = (
     "不允许",
     "不要",
@@ -177,20 +80,6 @@ def _positive_action_intent_text(value: object) -> str:
     return " ".join(positive_text.split())
 
 
-def _chat_action_intent_text(value: object) -> str:
-    text = _positive_action_intent_text(value)
-    for pattern in (
-        r"输入\s*(?:框|栏|区域|控件|能力|状态)",
-        r"(?:是否|能否)\s*(?:可)?输入",
-        r"可输入",
-        r"发送\s*(?:按钮|入口|控件|能力|状态|操作)",
-        r"(?:是否|能否)\s*(?:可)?发送",
-        r"可发送",
-    ):
-        text = re.sub(pattern, " ", text)
-    return " ".join(text.split())
-
-
 def _media_playback_requested(query: object) -> bool:
     intent_text = _positive_action_intent_text(query)
     chinese_intent = re.sub(
@@ -216,71 +105,6 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
         return int(round(float(value)))
     except (TypeError, ValueError):
         return fallback
-
-
-def _looks_like_desktop_action_request(user_text: str) -> bool:
-    text = _positive_action_intent_text(user_text)
-    if not text:
-        return False
-    if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
-        return False
-    has_action = any(
-        term in text
-        for term in _DESKTOP_ACTION_TERMS
-        if term not in _MEDIA_PLAYBACK_TERMS
-    ) or _media_playback_requested(text)
-    has_target = any(term in text for term in _DESKTOP_TARGET_TERMS)
-    return (has_action and (has_target or _looks_like_app_launch_request(text))) or _looks_like_chat_reply_request(text)
-
-
-def _looks_like_desktop_observe_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
-    return bool(text) and any(term in text for term in _DESKTOP_OBSERVE_TERMS)
-
-
-def _looks_like_app_launch_request(user_text: str) -> bool:
-    text = _positive_action_intent_text(user_text)
-    if not text:
-        return False
-    if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
-        return False
-    if not any(term in text for term in _APP_LAUNCH_TERMS):
-        return False
-    if any(label in text for label in _COMMON_APP_LABELS):
-        return True
-    for term in ("打开", "启动", "切到"):
-        if term in text:
-            tail = text.split(term, 1)[1].strip(" ：:，,。 ")
-            return 0 < len(tail) <= 80
-    return any(text.startswith(term) and len(text.replace(term, "").strip()) > 0 for term in ("open ", "launch "))
-
-
-def _app_launch_target(user_text: str) -> str:
-    text = str(user_text or "").strip()
-    match = re.search(r"(?i)(?:打开|启动|切到|open\s+|launch\s+)([^，,。；;\n]{1,80})", text)
-    if not match:
-        return ""
-    target = re.split(r"(?:然后|并且|并|再|后)", match.group(1), maxsplit=1)[0]
-    target = re.sub(r"(?i)(?:这个|一下|应用程序|应用|app)$", "", target.strip(" \t：:‘’“”\"'"))
-    normalized = target.strip().lower()
-    return _APP_LAUNCH_ALIASES.get(normalized, target.strip())
-
-
-def _looks_like_chat_reply_request(user_text: str) -> bool:
-    text = _chat_action_intent_text(user_text)
-    if not text:
-        return False
-    if any(term in text for term in _DESKTOP_EXPLANATION_TERMS) and not any(prefix in text for prefix in ("帮我", "请", "试试")):
-        return False
-    return any(term in text for term in _CHAT_REPLY_ACTION_TERMS) and any(term in text for term in _CHAT_SURFACE_TERMS)
-
-
-def _looks_like_click_request(user_text: str) -> bool:
-    text = _positive_action_intent_text(user_text)
-    explicit_click = any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
-        target in text for target in _DESKTOP_TARGET_TERMS
-    )
-    return explicit_click
 
 
 def _has_partial_coordinate_pair(text: str) -> bool:
@@ -1047,7 +871,7 @@ def _infer_computer_use_context(observation_text: str, frame: dict[str, Any] | N
     can_try_reveal_dock = dock_negative or (
         _looks_like_visual_observation_failure(text) and _has_captured_screen_frame(active, frame_data)
     )
-    if can_try_reveal_dock and app_label and _looks_like_desktop_action_request(hint) and not any(
+    if can_try_reveal_dock and app_label and active.get("require_coordinates") is True and not any(
         item.get("kind") == "app_icon" for item in affordances
     ):
         screen_bounds = active.get("screen_bounds") if isinstance(active.get("screen_bounds"), dict) else {}
@@ -1198,7 +1022,29 @@ def _computer_use_context_text(observation: dict[str, Any] | None) -> str:
     chat_context = data.get("chat_context") if isinstance(data.get("chat_context"), dict) else {}
     ax_search = data.get("ax_search") if isinstance(data.get("ax_search"), dict) else {}
     visual_search = data.get("visual_search") if isinstance(data.get("visual_search"), dict) else {}
-    if not surface and not affordances and not chat_context and not ax_search and not visual_search:
+    route_decision = (
+        data.get("route_decision")
+        if isinstance(data.get("route_decision"), dict)
+        else {}
+    )
+    route_history = (
+        [
+            dict(item)
+            for item in data.get("route_history")[-4:]
+            if isinstance(item, dict)
+        ]
+        if isinstance(data.get("route_history"), list)
+        else []
+    )
+    if (
+        not surface
+        and not affordances
+        and not chat_context
+        and not ax_search
+        and not visual_search
+        and not route_decision
+        and not route_history
+    ):
         return ""
     return "Structured computer-use context:\n" + json.dumps(
         {
@@ -1207,6 +1053,8 @@ def _computer_use_context_text(observation: dict[str, Any] | None) -> str:
             "chat_context": chat_context,
             "ax_search": ax_search,
             "visual_search": visual_search,
+            "route_decision": route_decision,
+            "route_history": route_history,
         },
         ensure_ascii=False,
         sort_keys=True,

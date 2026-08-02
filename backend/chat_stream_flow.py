@@ -6,12 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import uuid4
 
+from brain.contracts import action_scope
 from brain.decisions import BrainDecision, DecisionKind
-from brain.llm import ENDPOINTLESS_PROVIDERS, BrainLLMError
+from brain.llm import ENDPOINTLESS_PROVIDERS, BrainLLMError, release_codex_task
 from human_ops.approval_flow import near_match_confirmation_decision
 from human_ops.authorization import AUTHORIZATION_MODE_FULL, full_authorization_enabled
 
-from .task_control import TASK_CONTROL
+from .task_control import DEFAULT_TASK_BUDGET, TASK_CONTROL, TaskBudgetExhausted
 
 
 MAX_RECENT_CONVERSATION_MESSAGES = 20
@@ -206,10 +207,9 @@ class ChatStreamFlowDependencies:
     run_brain_turn: Callable[..., Awaitable[Any]]
     decision_from_completion: Callable[[Any], BrainDecision]
     sanitize_brain_error: Callable[[Exception, dict[str, Any]], str]
-    fallback_after_observe_brain_error: Callable[[str, str], str]
-    looks_like_click_request: Callable[[str], bool]
+    fallback_after_observe_brain_error: Callable[[str, bool], str]
+    observe_decision_requests_click: Callable[[BrainDecision], bool]
     click_coordinate_clarification_text: Callable[[str], str]
-    looks_like_desktop_action_request: Callable[[str], bool]
     coerce_decision_for_human_ops: Callable[[str, BrainDecision], BrainDecision]
     decision_kind: Callable[[BrainDecision], DecisionKind]
     decision_goal: Callable[[BrainDecision], dict[str, Any]]
@@ -255,7 +255,11 @@ async def stream_chat_response(
     except (TypeError, ValueError):
         retry_from_assistant_turn = 0
     turn_id = str(request_payload.get("task_id") or uuid4().hex).strip() or uuid4().hex
-    TASK_CONTROL.start(turn_id, session_id)
+    TASK_CONTROL.start(
+        turn_id,
+        session_id,
+        budget_total=request_payload.get("max_reasoning_steps", DEFAULT_TASK_BUDGET),
+    )
     TASK_CONTROL.bind_current_task(turn_id)
     private_config = deps.normalize_private_config()
     raw_brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
@@ -270,6 +274,8 @@ async def stream_chat_response(
     except (TypeError, ValueError):
         memory_retention_days = 365
     memory_mode = "temporary" if memory_config.get("conversation_saving") is False else requested_memory_mode
+    chat_mode = str(request_payload.get("chat_mode") or "react").strip().lower()
+    initial_prompt_profile = "chat" if chat_mode == "chat" else "agent"
     proactive_reply_context = ""
     if text:
         try:
@@ -288,7 +294,9 @@ async def stream_chat_response(
 
     async def run_brain(**kwargs: Any) -> Any:
         TASK_CONTROL.check(turn_id, next_action="Brain 调用")
-        completion = await deps.run_brain_turn(brain_config, **kwargs)
+        if not TASK_CONTROL.consume_budget(turn_id, "brain"):
+            raise TaskBudgetExhausted("task step budget exhausted")
+        completion = await deps.run_brain_turn(brain_config, task_id=turn_id, **kwargs)
         TASK_CONTROL.check(turn_id, next_action="处理 Brain 结果")
         usage = completion.usage if isinstance(getattr(completion, "usage", None), dict) else {}
         for key, value in usage.items():
@@ -319,6 +327,7 @@ async def stream_chat_response(
             brain_kwargs: dict[str, Any] = {
                 "user_text": text,
                 "request_system_prompt": str(request_payload.get("system_prompt") or ""),
+                "prompt_profile": initial_prompt_profile,
             }
             if conversation_history:
                 brain_kwargs["conversation_history"] = conversation_history
@@ -330,7 +339,7 @@ async def stream_chat_response(
             brain_call_succeeded = True
             decision = deps.decision_from_completion(completion)
             return str(completion.text or decision.summary), completion.provider, completion.model, decision
-        except BrainLLMError as exc:
+        except (BrainLLMError, TaskBudgetExhausted) as exc:
             detail = deps.sanitize_brain_error(exc, brain_config)
             reply = f"Brain 调用失败：{detail}"
             return reply, provider_hint, model, BrainDecision.say(reply)
@@ -433,15 +442,9 @@ async def stream_chat_response(
                 deps.mark_memory_recalled(memory_id, str(reply or decision.summary))
             except Exception:
                 continue
-    try:
-        configured_react_budget = int(request_payload.get("max_reasoning_steps", 3))
-    except (TypeError, ValueError):
-        configured_react_budget = 3
-    react_budget = max(1, min(20, configured_react_budget))
     correction_used = False
     react_trace: list[dict[str, Any]] = []
     last_observation: dict[str, Any] | None = None
-    operation_request = deps.looks_like_desktop_action_request(text)
 
     while True:
         TASK_CONTROL.check(turn_id, next_action="ReAct 后续步骤")
@@ -495,11 +498,10 @@ async def stream_chat_response(
         if decision_kind == DecisionKind.PROPOSE_ACT:
             supported_action, unsupported_action = deps.simple_human_action_support(decision)
             if not supported_action:
-                if react_budget <= 0:
+                if TASK_CONTROL.remaining_budget(turn_id) <= 0:
                     decision = deps.blocked_react_decision(text, decision)
                     reply = decision.summary
                     break
-                react_budget -= 1
                 yield deps.sse(
                     "phase",
                     {
@@ -513,18 +515,28 @@ async def stream_chat_response(
                     user_text=text,
                     decision=decision,
                     unsupported_action=unsupported_action,
-                    remaining_budget=react_budget,
+                    remaining_budget=max(0, TASK_CONTROL.remaining_budget(turn_id) - 1),
                 )
                 try:
+                    invalid_action_type = str(decision.payload.get("action_type") or "").strip()
+                    invalid_scope = action_scope(invalid_action_type)
+                    correction_profile = (
+                        "file"
+                        if invalid_scope == "file"
+                        else "desktop"
+                        if invalid_scope in {"desktop", "browser"}
+                        else initial_prompt_profile
+                    )
                     completion = await run_brain(
                         user_text=followup_text,
                         request_system_prompt=str(request_payload.get("system_prompt") or ""),
+                        prompt_profile=correction_profile,
                     )
                     decision = deps.decision_from_completion(completion)
                     reply = str(completion.text or decision.summary)
                     provider = completion.provider
                     used_model = completion.model
-                except BrainLLMError as exc:
+                except (BrainLLMError, TaskBudgetExhausted) as exc:
                     detail = deps.sanitize_brain_error(exc, brain_config)
                     reply = f"Brain ReAct 调用失败：{detail}"
                     decision = BrainDecision.say(
@@ -540,7 +552,6 @@ async def stream_chat_response(
             )
             if proposal_id in deps.pending_proposals:
                 deps.pending_proposals[proposal_id]["task_id"] = turn_id
-                deps.pending_proposals[proposal_id]["react_budget_remaining"] = react_budget
             if full_authorization_enabled(human_ops_config) and deps.stream_authorized_proposal is not None:
                 if proposal_id in deps.pending_proposals:
                     deps.pending_proposals[proposal_id]["authorization_mode"] = AUTHORIZATION_MODE_FULL
@@ -561,7 +572,7 @@ async def stream_chat_response(
             return
 
         if decision_kind == DecisionKind.THINK:
-            if react_budget <= 0:
+            if TASK_CONTROL.remaining_budget(turn_id) <= 0:
                 decision = deps.blocked_react_decision(text, decision)
                 reply = decision.summary
                 break
@@ -574,22 +585,22 @@ async def stream_chat_response(
                     "text": "Brain 正在规划下一步",
                 },
             )
-            react_budget -= 1
             followup_text = deps.react_followup_prompt(
                 user_text=text,
                 decision=decision,
-                remaining_budget=react_budget,
+                remaining_budget=max(0, TASK_CONTROL.remaining_budget(turn_id) - 1),
             )
             try:
                 completion = await run_brain(
                     user_text=followup_text,
                     request_system_prompt=str(request_payload.get("system_prompt") or ""),
+                    prompt_profile=initial_prompt_profile,
                 )
                 decision = deps.decision_from_completion(completion)
                 reply = str(completion.text or decision.summary)
                 provider = completion.provider
                 used_model = completion.model
-            except BrainLLMError as exc:
+            except (BrainLLMError, TaskBudgetExhausted) as exc:
                 detail = deps.sanitize_brain_error(exc, brain_config)
                 reply = f"Brain ReAct 调用失败：{detail}"
                 decision = BrainDecision.say(
@@ -601,6 +612,10 @@ async def stream_chat_response(
 
         if decision_kind == DecisionKind.OBSERVE:
             TASK_CONTROL.check(turn_id, next_action="Observe 分析")
+            if not TASK_CONTROL.consume_budget(turn_id, "observe"):
+                decision = deps.blocked_react_decision(text, decision)
+                reply = decision.summary
+                break
             yield deps.sse(
                 "phase",
                 {
@@ -625,6 +640,10 @@ async def stream_chat_response(
                     "observations": [],
                     "unknowns": [str(exc)],
                 }
+            observation = TASK_CONTROL.learn_observation_route(
+                turn_id,
+                observation,
+            )
             last_observation = observation
             confirmation = near_match_confirmation_decision(
                 observation,
@@ -645,8 +664,9 @@ async def stream_chat_response(
             coordinate_context = str(observation.get("coordinate_context") or "").strip()
             coordinate_status = observation.get("coordinate_status") if isinstance(observation.get("coordinate_status"), dict) else {}
             coordinate_incomplete = str(coordinate_status.get("status") or "") == "incomplete"
+            require_coordinates = deps.observe_decision_requests_click(decision)
             if (
-                deps.looks_like_click_request(text)
+                require_coordinates
                 and (coordinate_incomplete or deps.has_partial_coordinate_pair(observation_text))
                 and not deps.observation_has_reviewable_click_affordance(observation)
             ):
@@ -662,15 +682,14 @@ async def stream_chat_response(
                     },
                 )
                 break
-            if react_budget <= 0:
+            if TASK_CONTROL.remaining_budget(turn_id) <= 0:
                 decision = deps.blocked_react_decision(text, decision)
                 reply = decision.summary
                 break
-            react_budget -= 1
             followup_text = deps.react_followup_prompt(
                 user_text=text,
                 decision=decision,
-                remaining_budget=react_budget,
+                remaining_budget=max(0, TASK_CONTROL.remaining_budget(turn_id) - 1),
                 observation_text=observation_text,
                 coordinate_context=coordinate_context,
                 computer_use_context=deps.computer_use_context_text(observation),
@@ -681,10 +700,11 @@ async def stream_chat_response(
                     user_text=followup_text,
                     request_system_prompt=str(request_payload.get("system_prompt") or ""),
                     image_data_url=brain_image_data_url,
+                    prompt_profile=initial_prompt_profile,
                 )
                 decision = deps.decision_from_completion(completion)
                 if not str(completion.text or "").strip() and not str(decision.summary or "").strip():
-                    reply = deps.fallback_after_observe_brain_error(observation_text, text)
+                    reply = deps.fallback_after_observe_brain_error(observation_text, require_coordinates)
                     decision = BrainDecision.say(
                         reply,
                         goal={
@@ -699,7 +719,7 @@ async def stream_chat_response(
                 reply = str(completion.text or decision.summary)
                 provider = completion.provider
                 used_model = completion.model
-            except BrainLLMError as exc:
+            except (BrainLLMError, TaskBudgetExhausted) as exc:
                 if brain_image_data_url:
                     detail = deps.sanitize_brain_error(exc, brain_config)
                     reply = (
@@ -708,7 +728,7 @@ async def stream_chat_response(
                     )
                     missing = ["支持图片输入的 Brain 模型或独立 observe 模型"]
                 else:
-                    reply = deps.fallback_after_observe_brain_error(observation_text, text)
+                    reply = deps.fallback_after_observe_brain_error(observation_text, require_coordinates)
                     missing = ["Brain 后续整理结果"]
                 decision = BrainDecision.say(
                     reply,
@@ -722,8 +742,8 @@ async def stream_chat_response(
                 )
                 break
             except Exception as exc:
-                if deps.looks_like_click_request(text):
-                    reply = deps.fallback_after_observe_brain_error(observation_text, text)
+                if require_coordinates:
+                    reply = deps.fallback_after_observe_brain_error(observation_text, True)
                 else:
                     detail = deps.sanitize_brain_error(exc, brain_config)
                     reply = f"Brain 读取 observe 结果失败：{detail}"
@@ -740,14 +760,17 @@ async def stream_chat_response(
                 break
             continue
 
-        status = deps.goal_status(decision, operation_request=operation_request)
-        if decision_kind in {DecisionKind.SAY, DecisionKind.STOP} and operation_request and not deps.goal_is_terminal(status):
-            if correction_used or react_budget <= 0:
+        status = deps.goal_status(decision, operation_request=False)
+        if (
+            decision_kind in {DecisionKind.SAY, DecisionKind.STOP}
+            and status
+            and not deps.goal_is_terminal(status)
+        ):
+            if correction_used or TASK_CONTROL.remaining_budget(turn_id) <= 0:
                 decision = deps.blocked_react_decision(text, decision)
                 reply = decision.summary
                 break
             correction_used = True
-            react_budget -= 1
             yield deps.sse(
                 "phase",
                 {
@@ -760,19 +783,20 @@ async def stream_chat_response(
             followup_text = deps.react_followup_prompt(
                 user_text=text,
                 decision=decision,
-                remaining_budget=react_budget,
+                remaining_budget=max(0, TASK_CONTROL.remaining_budget(turn_id) - 1),
                 correction=True,
             )
             try:
                 completion = await run_brain(
                     user_text=followup_text,
                     request_system_prompt=str(request_payload.get("system_prompt") or ""),
+                    prompt_profile=initial_prompt_profile,
                 )
                 decision = deps.decision_from_completion(completion)
                 reply = str(completion.text or decision.summary)
                 provider = completion.provider
                 used_model = completion.model
-            except BrainLLMError as exc:
+            except (BrainLLMError, TaskBudgetExhausted) as exc:
                 detail = deps.sanitize_brain_error(exc, brain_config)
                 reply = f"Brain ReAct 调用失败：{detail}"
                 decision = BrainDecision.say(
@@ -881,4 +905,5 @@ async def stream_chat_response(
         done_payload["react_trace"] = react_trace
     if usage_totals:
         done_payload["usage"] = usage_totals
+    await release_codex_task(turn_id)
     yield deps.sse("done", done_payload)

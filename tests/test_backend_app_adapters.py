@@ -13,9 +13,6 @@ class BackendAppAdaptersSplitTests(unittest.TestCase):
         from backend import app_adapters
 
         expected_names = (
-            "_looks_like_desktop_observe_request",
-            "_looks_like_desktop_action_request",
-            "_looks_like_click_request",
             "_default_observe_prompt_for_request",
             "_observe_prompt_from_decision",
             "_frame_with_observe_prompt",
@@ -31,24 +28,12 @@ class BackendAppAdaptersSplitTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIs(getattr(backend_app, name), getattr(app_adapters, name))
 
-    def test_computer_use_intent_adapter_delegates_to_context_module(self) -> None:
-        from backend import app_adapters
-        from backend import computer_use_context
-
-        with mock.patch.object(
-            computer_use_context,
-            "_looks_like_desktop_action_request",
-            return_value=True,
-        ) as delegated:
-            self.assertTrue(app_adapters._looks_like_desktop_action_request("打开微信"))
-
-        delegated.assert_called_once_with("打开微信")
-
     def test_observe_prompt_and_result_adapters_keep_representative_behavior(self) -> None:
         from backend import app_adapters
 
         decision = BrainDecision.observe(
             "screen",
+            require_coordinates=True,
             goal={
                 "objective": "打开微信",
                 "status": "in_progress",
@@ -65,6 +50,7 @@ class BackendAppAdaptersSplitTests(unittest.TestCase):
 
         self.assertIn("微信图标", prompt)
         self.assertEqual(frame["active_observation"]["target_hint"], "打开微信")
+        self.assertIs(frame["active_observation"]["require_coordinates"], True)
         self.assertEqual(text, "Dock 中可见微信图标。")
 
     def test_human_ops_observe_adapter_uses_patched_backend_app_send_command(self) -> None:

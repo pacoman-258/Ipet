@@ -75,6 +75,7 @@ class ObserveContextTests(unittest.TestCase):
     def test_goal_missing_coordinates_narrows_observe_prompt(self) -> None:
         decision = BrainDecision.observe(
             "screen",
+            require_coordinates=True,
             goal={
                 "objective": "打开微信",
                 "status": "in_progress",
@@ -99,11 +100,12 @@ class ObserveContextTests(unittest.TestCase):
 
         self.assertNotIn("可点击中心点", prompt)
         self.assertNotIn("x 和 y", prompt)
-        self.assertIn("主要可见内容", prompt)
+        self.assertIn("相关的可见证据", prompt)
 
     def test_frame_with_observe_prompt_preserves_goal_objective_for_screen_target(self) -> None:
         decision = BrainDecision.observe(
             "screen",
+            require_coordinates=True,
             goal={
                 "objective": "打开微信并回复张三",
                 "status": "in_progress",
@@ -124,6 +126,7 @@ class ObserveContextTests(unittest.TestCase):
         active = enriched["active_observation"]
         self.assertEqual(active["target_hint"], "打开微信并回复张三")
         self.assertIn("微信图标", active["observe_prompt"])
+        self.assertIs(active["require_coordinates"], True)
         self.assertEqual(active["coordinate_space"], "macos_screen_points")
 
     def test_observe_model_analyzer_config_clamps_and_defaults_timeout(self) -> None:

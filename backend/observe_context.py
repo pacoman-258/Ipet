@@ -13,13 +13,6 @@ def _coerce_int(value: Any, fallback: int = 0) -> int:
     return _computer_use_context_helpers._coerce_int(value, fallback)
 
 
-def _looks_like_click_request(user_text: str) -> bool:
-    text = str(user_text or "").strip().lower()
-    return any(term in text for term in ("点击", "点一下", "点开", "click")) and any(
-        target in text for target in _computer_use_context_helpers._DESKTOP_TARGET_TERMS
-    )
-
-
 def image_resolution_from_frame(frame: dict[str, Any]) -> dict[str, int]:
     width = _coerce_int(frame.get("image_width") or frame.get("width"))
     height = _coerce_int(frame.get("image_height") or frame.get("height"))
@@ -182,20 +175,11 @@ def normalize_observed_click_coordinates(
 
 def default_observe_prompt_for_request(user_text: str, target: str) -> str:
     text = str(user_text or target or "").strip()
-    if _looks_like_click_request(text):
-        return f"我需要找到“{text or target}”对应的可点击目标。请观看屏幕截图，用自然语言告诉我它是否可见、可见依据，以及可点击中心点的 macOS 屏幕坐标 x 和 y。"
-    if _computer_use_context_helpers._looks_like_chat_reply_request(text):
-        return (
-            f"我需要完成“{text or target}”这个聊天回复任务。请观察当前屏幕，用自然语言说明当前属于哪个应用、网页或聊天界面，"
-            "与目标相关的联系人、会话、可见消息和可操作入口有哪些。只报告可见证据，不替 Brain 选择固定操作顺序。"
-        )
-    if any(term in text for term in ("读", "文字", "内容", "写着", "显示")):
-        return f"我需要读取当前屏幕中和“{text or target}”相关的可见文字和内容。请只根据截图用自然语言回答。"
-    if any(term in text for term in ("是否", "有没有", "状态", "成功", "失败", "完成")):
-        return f"我需要判断当前屏幕状态是否满足“{text or target}”。请根据可见界面给出结论和依据。"
-    if any(term in text.lower() for term in ("dock", "程序坞", "app", "应用", "按钮", "图标", "窗口", "输入框")):
-        return f"我需要找到屏幕上和“{text or target}”相关的界面目标。请描述它的位置、可见文字或图标依据；不需要输出 JSON。"
-    return f"我需要了解当前屏幕和“{text or target or '当前任务'}”相关的主要可见内容。请概括窗口、文字和状态。"
+    return (
+        f"请观察当前屏幕与“{text or target or '当前任务'}”相关的可见证据。"
+        "用自然语言报告相关窗口、文字、状态和可操作入口；只报告实际可见内容，"
+        "不替 Brain 选择固定操作顺序，也不输出 JSON。"
+    )
 
 
 def goal_text_for_observe(decision: BrainDecision) -> str:
@@ -214,26 +198,8 @@ def goal_text_for_observe(decision: BrainDecision) -> str:
 
 
 def goal_requests_click_coordinate_followup(decision: BrainDecision) -> bool:
-    text = goal_text_for_observe(decision).lower()
-    if not text:
-        return False
-    wants_coordinates = any(term in text for term in ("坐标", "中心点", "x/y", "x 和 y", "coordinate"))
-    wants_click = any(
-        term in text
-        for term in (
-            "click",
-            "点击",
-            "click_to_open",
-            "launch_app",
-            "打开",
-            "图标",
-            "dock",
-            "程序坞",
-            "按钮",
-            "输入框",
-        )
-    )
-    return wants_coordinates and wants_click
+    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    return payload.get("require_coordinates") is True
 
 
 def coordinate_followup_target_from_goal(decision: BrainDecision, user_text: str, target: str) -> str:
@@ -287,6 +253,8 @@ def frame_with_observe_prompt(frame: dict[str, Any], decision: BrainDecision, us
     target_hint = observe_target_hint_from_decision(decision, user_text)
     active["target_hint"] = target_hint
     active["observe_prompt"] = observe_prompt_from_decision(decision, target_hint)
+    if goal_requests_click_coordinate_followup(decision):
+        active["require_coordinates"] = True
     image_resolution = image_resolution_from_frame(enriched)
     if image_resolution:
         active["image_resolution"] = image_resolution

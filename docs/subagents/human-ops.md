@@ -9,7 +9,7 @@ Own reviewable operations: approval prompts, rejection handling, execution recor
 - an action can touch the screen, keyboard, clipboard, files, processes, configuration, network, or durable user data
 - proposal payloads, red-dot click previews, or approval endpoints change
 - rejection guidance or execution result reporting changes
-- safety policy around `act`, `remember`, or `learn_skill` changes
+- safety policy around `act` or `remember` changes
 
 ## Do Not Lead When
 

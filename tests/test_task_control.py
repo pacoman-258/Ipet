@@ -7,6 +7,20 @@ from backend.task_control import LocalTaskControl, TaskStopped
 
 
 class LocalTaskControlTests(unittest.TestCase):
+    def test_one_budget_counts_every_expensive_task_phase(self) -> None:
+        control = LocalTaskControl()
+        record = control.start("task-budget", "session", budget_total=3)
+
+        self.assertTrue(control.consume_budget("task-budget", "brain:initial"))
+        self.assertTrue(control.consume_budget("task-budget", "observe"))
+        self.assertTrue(control.consume_budget("task-budget", "brain:correction"))
+        self.assertFalse(control.consume_budget("task-budget", "brain:continuation"))
+        self.assertEqual(control.remaining_budget("task-budget"), 0)
+        self.assertEqual(
+            [item["phase"] for item in record.budget_trace],
+            ["brain:initial", "observe", "brain:correction"],
+        )
+
     def test_stop_cancels_bound_non_atomic_task(self) -> None:
         async def scenario() -> bool:
             control = LocalTaskControl()
@@ -78,3 +92,29 @@ class LocalTaskControlTests(unittest.TestCase):
 
         self.assertEqual(result["completed"], ["已执行：打开应用"])
         self.assertEqual(result["uncertain"], ["原子动作可能已经发生：发送按键"])
+
+    def test_route_learning_compacts_repeated_redacted_outcomes(self) -> None:
+        control = LocalTaskControl()
+        control.start("task-a", "session")
+        observation = {
+            "text": "需要视觉降级",
+            "route_decision": {
+                "selected": "brain_vision",
+                "reason": "screenshot_requires_brain_vision",
+                "outcome": "pending_model",
+                "intent": "click",
+                "target_app": "Music",
+                "attempted": ["ax", "screenshot", "local_ocr", "brain_vision"],
+                "query_fingerprint": "abc123",
+                "ax_insufficiency_reason": "no_semantic_match",
+                "raw_screen_text": "must not persist",
+            },
+        }
+
+        first = control.learn_observation_route("task-a", observation)
+        second = control.learn_observation_route("task-a", observation)
+
+        self.assertEqual(len(second["route_history"]), 1)
+        self.assertEqual(second["route_history"][0]["repeat_count"], 2)
+        self.assertNotIn("raw_screen_text", str(second["route_history"]))
+        self.assertEqual(first["route_history"][0]["query_fingerprint"], "abc123")

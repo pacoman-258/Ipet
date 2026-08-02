@@ -14,6 +14,7 @@ class ActiveVisionDecisionTests(unittest.TestCase):
         decision = decide_active_observation(
             "浏览器打开的是什么网站？",
             {"enabled": True, "active_observation": {"enabled": True}},
+            force=True,
             decider=lambda _text, _config: "not json",
         )
 
@@ -29,6 +30,19 @@ class ActiveVisionDecisionTests(unittest.TestCase):
 
         self.assertFalse(decision["needs_observation"])
         self.assertEqual(decision["actions"], [])
+
+    def test_visual_wording_does_not_override_explicit_grounding_state(self) -> None:
+        automatic = decide_active_observation(
+            "请看看浏览器当前页面",
+            {"enabled": True},
+        )
+        configured = decide_active_observation(
+            "普通聊天",
+            {"enabled": True, "grounding_mode": "always"},
+        )
+
+        self.assertFalse(automatic["needs_observation"])
+        self.assertTrue(configured["needs_observation"])
 
     def test_normalize_active_observation_restricts_actions_to_light(self) -> None:
         config = normalize_active_observation_config(

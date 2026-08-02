@@ -37,6 +37,7 @@ from app.pet_bridge import create_pet_bridge_class
 from app.native_approval_notifications import NativeApprovalNotificationController
 from app.qt_bindings import load_qt_bindings
 from app.settings_window import SettingsWindowController
+from app.window_regions import WindowRegionController
 from backend.environment import DEFAULT_ENVIRONMENT_CONFIG, normalize_environment_config
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
 from body import live2d_assets as _live2d_assets
@@ -152,6 +153,7 @@ QGuiApplication = _QT_BINDINGS.QGuiApplication
 QImage = _QT_BINDINGS.QImage
 QPainter = _QT_BINDINGS.QPainter
 QPixmap = _QT_BINDINGS.QPixmap
+QRegion = _QT_BINDINGS.QRegion
 QWebChannel = _QT_BINDINGS.QWebChannel
 QWebEnginePage = _QT_BINDINGS.QWebEnginePage
 QWebEngineSettings = _QT_BINDINGS.QWebEngineSettings
@@ -209,6 +211,11 @@ def apply_application_identity(app) -> None:
     app.setWindowIcon(_application_icon())
 
 
+def configure_application_lifecycle(app) -> None:
+    """Keep auxiliary windows from deciding the desktop host lifetime."""
+    app.setQuitOnLastWindowClosed(False)
+
+
 def _build_desktop_browser_setup_dependencies() -> DesktopBrowserSetupDependencies:
     return DesktopBrowserSetupDependencies(
         web_engine_view_factory=QWebEngineView,
@@ -234,6 +241,14 @@ def _build_window_interaction_controller(owner) -> WindowInteractionController:
     )
 
 
+def _build_window_region_controller(owner) -> WindowRegionController:
+    return WindowRegionController(
+        owner,
+        q_region_factory=QRegion,
+        mouse_transparent_attribute=Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+    )
+
+
 def _build_desktop_shutdown_controller(owner) -> DesktopShutdownController:
     return DesktopShutdownController(
         owner,
@@ -249,11 +264,7 @@ def _build_web_permissions_controller(owner) -> DesktopWebPermissionsController:
 
 
 def _build_context_menu_controller(owner) -> DesktopContextMenuController:
-    return DesktopContextMenuController(
-        owner,
-        q_menu_factory=QMenu,
-        q_action_factory=QAction,
-    )
+    return DesktopContextMenuController(owner)
 
 
 def _settings_window_controller_for(owner) -> SettingsWindowController:
@@ -729,9 +740,21 @@ capture_active_vision_frame_payload = _active_vision_wiring.create_capture_activ
 class DesktopPet(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowFlags(_desktop_pet_window_flags())
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            _should_use_translucent_window(),
+        )
+        always_visible_attribute = _window_defaults.always_visible_tool_window_attribute(
+            Qt.WidgetAttribute,
+            is_macos=_is_macos(),
+        )
+        if always_visible_attribute is not None:
+            self.setAttribute(always_visible_attribute, True)
         self.setWindowTitle(APP_DISPLAY_NAME)
         self.setWindowIcon(_application_icon())
         self.config = load_config()
+        self.apply_window_geometry_from_config()
         self.desktop_command_router = self._build_desktop_command_router()
         self._config_mtime = self._config_mtime_token()
         self._desktop_command_mtime = self._desktop_command_mtime_token()
@@ -754,6 +777,7 @@ class DesktopPet(QMainWindow):
         self._settings_window_controller = _build_settings_window_controller(self)
         self._context_menu_controller = _build_context_menu_controller(self)
         self._window_interaction_controller = _build_window_interaction_controller(self)
+        self._window_region_controller = _build_window_region_controller(self)
         self._web_permissions_controller = _build_web_permissions_controller(self)
         self.click_preview_overlay = None
         self._settings_window_url = ""
@@ -784,13 +808,7 @@ class DesktopPet(QMainWindow):
         self.channel = browser_setup.channel
         self._python_event_filters_installed = browser_setup.event_filter_installed
 
-        self.setWindowFlags(_desktop_pet_window_flags())
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            _should_use_translucent_window(),
-        )
-
-        self.apply_window_geometry_from_config()
+        self._window_region_controller.clear_interactive_regions()
 
         self.refresh_motion_list(prefer_reset=False)
         self.start_qwen_tts_service_async()
@@ -883,11 +901,34 @@ class DesktopPet(QMainWindow):
 
     def apply_window_geometry_from_config(self) -> None:
         geom = self.config["window"]
-        self.setGeometry(
-            int(geom["x"]),
-            int(geom["y"]),
-            int(geom["width"]),
-            int(geom["height"]),
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            resolved = (
+                int(geom["x"]),
+                int(geom["y"]),
+                int(geom["width"]),
+                int(geom["height"]),
+            )
+        else:
+            available = screen.availableGeometry()
+            resolved = _window_defaults.visible_window_geometry(
+                x=int(geom["x"]),
+                y=int(geom["y"]),
+                width=int(geom["width"]),
+                height=int(geom["height"]),
+                available_x=int(available.x()),
+                available_y=int(available.y()),
+                available_width=int(available.width()),
+                available_height=int(available.height()),
+            )
+        self.setGeometry(*resolved)
+        geom.update(
+            {
+                "x": resolved[0],
+                "y": resolved[1],
+                "width": resolved[2],
+                "height": resolved[3],
+            }
         )
 
     def sync_panel(self) -> None:
@@ -972,6 +1013,10 @@ class DesktopPet(QMainWindow):
             self._show_or_focus_settings_window(url)
         except Exception as exc:
             print(f"打开设置页失败: {exc}")
+
+    @Slot(str)
+    def apply_interactive_regions(self, payload: str) -> None:
+        self._window_region_controller.apply_interactive_regions(payload)
 
     def show_context_menu(self, pos: QPoint) -> None:
         _context_menu_controller_for(self).show_context_menu(pos)
@@ -1089,7 +1134,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     apply_application_identity(app)
-    app.setQuitOnLastWindowClosed(True)
+    configure_application_lifecycle(app)
     pet = DesktopPet()
     pet.show()
 

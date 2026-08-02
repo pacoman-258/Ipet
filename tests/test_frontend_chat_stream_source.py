@@ -56,6 +56,12 @@ class FrontendChatStreamSourceTests(unittest.TestCase):
         self.assertIn("finishWorklogProcess(terminalTurn, terminalCategory);", source)
         self.assertIn('category: "blocked"', source)
 
+    def test_segment_expression_accepts_current_and_legacy_field_names(self) -> None:
+        source = CHAT_STREAM_JS.read_text(encoding="utf-8")
+
+        self.assertIn("const rawExpression = payload.expr ?? payload.expression;", source)
+        self.assertIn("feedSpeakBuffer(segText, false, segExpr);", source)
+
     def test_index_wires_stream_consumption_through_facade_registry(self) -> None:
         sections_source = CONTROLLER_GRAPH_APP_SECTIONS_JS.read_text(encoding="utf-8")
         index_source = INDEX_JS.read_text(encoding="utf-8")

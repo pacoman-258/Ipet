@@ -38,7 +38,20 @@ def setup_desktop_browser(
     page = browser.page()
 
     browser.setMouseTracking(True)
-    page.setBackgroundColor(dependencies.q_color_factory(*_background_color(dependencies)))
+    background_rgba = _background_color(dependencies)
+    if background_rgba[3] == 0:
+        translucent_attribute = getattr(
+            getattr(dependencies.qt, "WidgetAttribute", None),
+            "WA_TranslucentBackground",
+            None,
+        )
+        if translucent_attribute is not None:
+            browser.setAttribute(translucent_attribute, True)
+        if hasattr(browser, "setAutoFillBackground"):
+            browser.setAutoFillBackground(False)
+        if hasattr(browser, "setStyleSheet"):
+            browser.setStyleSheet("background: transparent;")
+    page.setBackgroundColor(dependencies.q_color_factory(*background_rgba))
 
     settings = browser.settings()
     _set_web_attribute(settings, dependencies.web_attribute, "LocalContentCanAccessFileUrls", True)
@@ -58,6 +71,8 @@ def setup_desktop_browser(
     page.setWebChannel(channel)
 
     owner.setCentralWidget(browser)
+    if all(hasattr(value, name) for value, name in ((owner, "width"), (owner, "height"), (browser, "resize"))):
+        browser.resize(int(owner.width()), int(owner.height()))
     browser.loadFinished.connect(owner.on_web_loaded)
     browser.setUrl(dependencies.q_url_factory.fromLocalFile(str((Path(root_dir) / "index.html").resolve())))
 

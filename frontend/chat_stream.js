@@ -102,7 +102,8 @@
         removeEmptyPendingThoughtGroup(context.thoughtSessionId);
         setReceivedStructuredSegment(true);
         const segText = String(payload.text || "");
-        const segExpr = payload.expr == null ? null : String(payload.expr || "");
+        const rawExpression = payload.expr ?? payload.expression;
+        const segExpr = rawExpression == null ? null : String(rawExpression || "");
         if (segText) {
           feedSpeakBuffer(segText, false, segExpr);
         }

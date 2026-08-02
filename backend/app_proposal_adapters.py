@@ -17,8 +17,6 @@ def proposal_flow_dependencies(
     pending_proposals: MutableMapping[str, dict[str, Any]],
     uuid_factory: Callable[[], str],
     time_func: Callable[[], float],
-    looks_like_desktop_action_request: Callable[[str], bool],
-    looks_like_chat_reply_request: Callable[[str], bool],
     goal_is_terminal: Callable[[str], bool],
     computer_use_context_text: Callable[[dict[str, Any]], str],
 ) -> ProposalFlowDependencies:
@@ -26,8 +24,6 @@ def proposal_flow_dependencies(
         pending_proposals=pending_proposals,
         uuid_factory=uuid_factory,
         time_func=time_func,
-        looks_like_desktop_action_request=looks_like_desktop_action_request,
-        looks_like_chat_reply_request=looks_like_chat_reply_request,
         goal_is_terminal=goal_is_terminal,
         computer_use_context_text=computer_use_context_text,
     )
@@ -43,23 +39,6 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
 
 def proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> dict[str, Any]:
     return _human_ops_proposal_flow_helpers.proposal_event_payload(proposal_id, proposal)
-
-
-def should_default_continue_after_approval(
-    user_text: str,
-    goal: dict[str, Any],
-    *,
-    action_type: str,
-    arguments: dict[str, Any],
-    deps: ProposalFlowDependencies,
-) -> bool:
-    return _human_ops_proposal_flow_helpers.should_default_continue_after_approval(
-        user_text,
-        goal,
-        action_type=action_type,
-        arguments=arguments,
-        deps=deps,
-    )
 
 
 def create_human_ops_act_proposal(
@@ -145,11 +124,8 @@ def human_ops_continuation_prompt(
 def post_approval_observe_prompt(
     user_text: str,
     proposal: ReviewableProposal,
-    *,
-    deps: ProposalFlowDependencies,
 ) -> str:
     return _human_ops_proposal_flow_helpers.post_approval_observe_prompt(
         user_text,
         proposal,
-        deps=deps,
     )

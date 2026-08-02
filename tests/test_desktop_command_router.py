@@ -651,6 +651,67 @@ class DesktopCommandRouterSplitTests(unittest.TestCase):
         )
         self.assertTrue(frame["focus_verification"]["focused"])
 
+    def test_active_vision_does_not_capture_pixels_when_screen_capture_is_disabled(self) -> None:
+        module = _router_module()
+        host = _FakeHost()
+        responses = []
+        captures = []
+
+        def capture(_window, payload, _vision):
+            captures.append(dict(payload))
+            if payload.get("accessibility_enabled") is False:
+                self.fail("disabled screen capture must not fall back to pixels")
+            return {
+                "capture_backend": "macos_accessibility",
+                "accessibility": {
+                    "usable": True,
+                    "search": {
+                        "sufficient": False,
+                        "insufficiency_reason": "requested_role_not_found",
+                        "visual_fallback_required": True,
+                        "index": {"roles": {"AXWindow": 1}},
+                    },
+                },
+                "active_observation": {"status": "partial", "actions": []},
+            }
+
+        router = module.DesktopCommandRouter(
+            host,
+            root_dir=Path("/tmp/ipet-router-test"),
+            command_path=Path("/tmp/ipet-router-test/command.json"),
+            default_response_path=Path("/tmp/ipet-router-test/response.json"),
+            heartbeat_path=Path("/tmp/ipet-router-test/heartbeat.json"),
+            focus_target_application=lambda payload: {
+                "focused": True,
+                "surface_visible": True,
+                "target_app": payload["target_app"],
+                "frontmost_app": payload["target_app"],
+            },
+            capture_active_vision_frame_payload=capture,
+            write_response_func=lambda command, status, result=None: responses.append(
+                {"command": command, "status": status, "result": result}
+            ),
+        )
+
+        router.process_desktop_command(
+            {
+                "nonce": "vision-ax-only",
+                "type": "active_vision_capture",
+                "payload": {
+                    "target_app": "WeChat",
+                    "accessibility_enabled": True,
+                    "screen_capture_enabled": False,
+                },
+            }
+        )
+
+        self.assertEqual(len(captures), 2)
+        self.assertTrue(all(item["accessibility_enabled"] for item in captures))
+        self.assertEqual(
+            responses[0]["result"]["frame"]["capture_backend"],
+            "macos_accessibility",
+        )
+
     def test_active_vision_keeps_near_match_structured_without_visual_fallback(self) -> None:
         module = _router_module()
         host = _FakeHost()

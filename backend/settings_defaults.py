@@ -62,7 +62,7 @@ NEO_DEFAULTS: dict[str, Any] = {
         "max_output_tokens": 1024,
         "persona_prompt_file": "",
         "persona": "",
-        "self_state": "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。",
+        "self_state": "等待用户目标，并在 act / remember 前交给 Human Ops 处理。",
         "response_style": "",
         "decision_temperature": 0.4,
         "reasoning_effort": "",
@@ -76,7 +76,6 @@ NEO_DEFAULTS: dict[str, Any] = {
         "accessibility": True,
         "require_act_review": True,
         "require_memory_review": True,
-        "require_skill_review": True,
         "clipboard_write_review": True,
         "click_preview": {"x": 160, "y": 54, "label": "目标位置", "size": 16},
         "filesystem": {

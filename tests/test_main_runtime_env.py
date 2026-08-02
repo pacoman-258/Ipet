@@ -173,15 +173,22 @@ class MainDesktopEnvTests(unittest.TestCase):
             tail = main._tail_service_log(path, max_lines=2)
         self.assertEqual(tail, " two\nthree")
 
-    def test_macos_uses_opaque_window_defaults(self) -> None:
-        self.assertFalse(main._should_use_translucent_window(force_opaque=False, platform_name="darwin"))
-        self.assertEqual(main._desktop_pet_background_color("darwin"), (18, 18, 18, 255))
+    def test_macos_uses_transparent_window_defaults(self) -> None:
+        self.assertTrue(main._should_use_translucent_window(force_opaque=False, platform_name="darwin"))
+        self.assertEqual(main._desktop_pet_background_color("darwin"), (0, 0, 0, 0))
 
-    def test_macos_window_flags_exclude_tool_flag(self) -> None:
+    def test_macos_window_flags_create_frameless_always_on_top_pet(self) -> None:
         flags = main._desktop_pet_window_flags("darwin")
-        self.assertEqual(flags, main.Qt.WindowType.Window)
-        self.assertFalse(bool(flags & main.Qt.WindowType.FramelessWindowHint))
-        self.assertFalse(bool(flags & main.Qt.WindowType.WindowStaysOnTopHint))
+        self.assertTrue(bool(flags & main.Qt.WindowType.FramelessWindowHint))
+        self.assertTrue(bool(flags & main.Qt.WindowType.WindowStaysOnTopHint))
+        self.assertTrue(bool(flags & main.Qt.WindowType.Tool))
+        self.assertEqual(
+            main._window_defaults.always_visible_tool_window_attribute(
+                main.Qt.WidgetAttribute,
+                is_macos=True,
+            ),
+            main.Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow,
+        )
 
     def test_macos_qt_runtime_env_defaults_disable_gpu_paths(self) -> None:
         env = main._qt_runtime_env_defaults("darwin")

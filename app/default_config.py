@@ -32,7 +32,7 @@ def create_default_config(
             "max_output_tokens": 1024,
             "persona_prompt_file": "",
             "persona": "",
-            "self_state": "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。",
+            "self_state": "等待用户目标，并在 act / remember 前交给 Human Ops 处理。",
             "response_style": "",
             "decision_temperature": 0.4,
             "reasoning_effort": "",
@@ -46,7 +46,6 @@ def create_default_config(
             "accessibility": True,
             "require_act_review": True,
             "require_memory_review": True,
-            "require_skill_review": True,
             "clipboard_write_review": True,
             "click_preview": {"x": 160, "y": 54, "label": "目标位置", "size": 16},
             "observe_model": {
@@ -76,8 +75,8 @@ def create_default_config(
             "proposal_queue": [],
         },
         "window": {
-            "x": 120,
-            "y": 80,
+            "x": -1,
+            "y": -1,
             "width": 420,
             "height": 640,
             "locked": False,
@@ -85,7 +84,7 @@ def create_default_config(
         "pet": {
             "scale": 0.3,
             "offset_x": 0,
-            "offset_y": 40,
+            "offset_y": 0,
             "rotation": 0.0,
             "opacity": 1.0,
             "edit_mode": False,

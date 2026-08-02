@@ -89,7 +89,7 @@ class FrontendShellBridgeSourceTests(unittest.TestCase):
 
         for snippet in (
             'if (!qtBridge || typeof qtBridge[methodName] !== "function")',
-            "qtBridge[methodName]();",
+            "qtBridge[methodName](...args);",
             "return true;",
             'if (callQtBridge("openSettingsPage"))',
             'const backendBase = String(state.chat?.backend_url || "http://127.0.0.1:8008").trim() || "http://127.0.0.1:8008";',

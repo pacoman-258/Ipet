@@ -26,6 +26,7 @@ class QtBindings:
     QImage: Any
     QPainter: Any
     QPixmap: Any
+    QRegion: Any
     QWebChannel: Any
     QWebEnginePage: Any
     QWebEngineSettings: Any
@@ -91,6 +92,7 @@ def _load_binding(binding_name: str) -> QtBindings:
         QImage=_required_attr(gui, "QImage", binding_name),
         QPainter=_required_attr(gui, "QPainter", binding_name),
         QPixmap=_required_attr(gui, "QPixmap", binding_name),
+        QRegion=_required_attr(gui, "QRegion", binding_name),
         QWebChannel=_required_attr(web_channel, "QWebChannel", binding_name),
         QWebEnginePage=_required_attr(web_engine_core, "QWebEnginePage", binding_name),
         QWebEngineSettings=_required_attr(web_engine_core, "QWebEngineSettings", binding_name),

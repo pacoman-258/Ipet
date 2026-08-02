@@ -51,7 +51,8 @@ class FrontendChatPanelSourceTests(unittest.TestCase):
         self.assertTrue(CHAT_PANEL_JS.exists(), "frontend/chat_panel.js should exist")
         source = CHAT_PANEL_JS.read_text(encoding="utf-8")
 
-        self.assertIn('const STORAGE_KEY = "desktopPet.chatPanel";', source)
+        self.assertIn('const STORAGE_KEY = "desktopPet.chatPanel.v2";', source)
+        self.assertIn("const petBounds = getPetBounds();", source)
         self.assertIn("runtimeWindow.localStorage.getItem(STORAGE_KEY)", source)
         self.assertIn("runtimeWindow.localStorage.setItem(STORAGE_KEY", source)
         self.assertIn("Math.min(", source)

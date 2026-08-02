@@ -52,10 +52,9 @@ class AppRouteDependencyContext:
     sse: Callable[[str, dict[str, Any]], str] | None = None
     run_brain_turn: Callable[..., Awaitable[Any]] | None = None
     decision_from_completion: Callable[[Any], BrainDecision] | None = None
-    fallback_after_observe_brain_error: Callable[[str, str], str] | None = None
-    looks_like_click_request: Callable[[str], bool] | None = None
+    fallback_after_observe_brain_error: Callable[[str, bool], str] | None = None
+    observe_decision_requests_click: Callable[[BrainDecision], bool] | None = None
     click_coordinate_clarification_text: Callable[[str], str] | None = None
-    looks_like_desktop_action_request: Callable[[str], bool] | None = None
     coerce_decision_for_human_ops: Callable[[str, BrainDecision], BrainDecision] | None = None
     decision_kind: Callable[[BrainDecision], DecisionKind] | None = None
     decision_goal: Callable[[BrainDecision], dict[str, Any]] | None = None
@@ -162,10 +161,9 @@ def create_chat_stream_route_deps(context: AppRouteDependencyContext) -> _chat_s
         run_brain_turn=context.run_brain_turn or (lambda *args, **kwargs: None),
         decision_from_completion=context.decision_from_completion or (lambda completion: BrainDecision.say("")),
         sanitize_brain_error=context.sanitize_brain_error or (lambda error, brain_config: str(error)),
-        fallback_after_observe_brain_error=context.fallback_after_observe_brain_error or (lambda text, user_text: text),
-        looks_like_click_request=context.looks_like_click_request or (lambda text: False),
+        fallback_after_observe_brain_error=context.fallback_after_observe_brain_error or (lambda text, required: text),
+        observe_decision_requests_click=context.observe_decision_requests_click or (lambda decision: False),
         click_coordinate_clarification_text=context.click_coordinate_clarification_text or (lambda text: text),
-        looks_like_desktop_action_request=context.looks_like_desktop_action_request or (lambda text: False),
         coerce_decision_for_human_ops=context.coerce_decision_for_human_ops or (lambda user_text, decision: decision),
         decision_kind=context.decision_kind or (lambda decision: DecisionKind.SAY),
         decision_goal=context.decision_goal or (lambda decision: {}),

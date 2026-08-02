@@ -12,7 +12,7 @@ def build_proactive_conversation_history(
     relationship_memory_context: Callable[[str, dict[str, Any]], tuple[str, list[str]]],
 ) -> list[dict[str, str]]:
     snapshot = topic_store.get_context_snapshot(session_id)
-    history = list(snapshot.model_messages[-12:]) if snapshot is not None else []
+    history = list(snapshot.model_messages[-4:]) if snapshot is not None else []
     memory_config = private_config.get("memory", {}) if isinstance(private_config.get("memory"), dict) else {}
     if memory_config.get("long_term_enabled") is not False:
         facts = opportunity.get("facts") if isinstance(opportunity.get("facts"), dict) else {}

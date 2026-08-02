@@ -17,6 +17,7 @@ from brain.llm import (
     complete_with_provider,
     list_provider_models,
     normalize_provider,
+    release_codex_task,
     run_brain_turn,
 )
 
@@ -151,6 +152,86 @@ class _FakeAppServerProcess:
 
 
 class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_task_reuses_app_server_and_capability_probe(self) -> None:
+        process = _FakeAppServerProcess(
+            [
+                {"id": 1, "result": {}},
+                {"id": 2, "result": {"webSearch": True}},
+                {"id": 3, "result": {"thread": {"id": "thread-one"}}},
+                {"id": 4, "result": {}},
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed", "items": [{"type": "agentMessage", "text": "first"}]}},
+                },
+                {"id": 5, "result": {"thread": {"id": "thread-two"}}},
+                {"id": 6, "result": {}},
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed", "items": [{"type": "agentMessage", "text": "second"}]}},
+                },
+            ]
+        )
+        config = BrainProviderConfig(provider="codex", model="gpt-account", web_search_enabled=True)
+
+        with mock.patch("brain.llm._codex_executable", return_value="/mock/codex"):
+            with mock.patch(
+                "brain.llm.asyncio.create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ) as spawn:
+                first = await complete_with_provider(
+                    config,
+                    [BrainMessage(role="user", content="first")],
+                    task_id="reuse-task",
+                )
+                second = await complete_with_provider(
+                    config,
+                    [BrainMessage(role="user", content="second")],
+                    task_id="reuse-task",
+                )
+                self.assertIsNone(process.returncode)
+                await release_codex_task("reuse-task")
+
+        requests = [
+            json.loads(value)
+            for chunk in process.stdin.writes
+            for value in chunk.decode("utf-8").splitlines()
+        ]
+        self.assertEqual((first.text, second.text), ("first", "second"))
+        self.assertEqual(spawn.await_count, 1)
+        self.assertEqual(
+            [item["method"] for item in requests].count("modelProvider/capabilities/read"),
+            1,
+        )
+        self.assertEqual([item["method"] for item in requests].count("thread/start"), 2)
+        self.assertEqual(process.returncode, 0)
+
+    async def test_codex_task_enters_cli_fallback_mode_only_once(self) -> None:
+        config = BrainProviderConfig(provider="codex", model="gpt-account")
+        fallback = BrainCompletion(text="fallback", provider="codex", model="gpt-account")
+
+        with mock.patch(
+            "brain.llm._complete_codex_stream",
+            new=mock.AsyncMock(side_effect=BrainLLMError("unsupported")),
+        ) as app_server:
+            with mock.patch(
+                "brain.llm._complete_codex",
+                new=mock.AsyncMock(return_value=fallback),
+            ) as cli:
+                await complete_with_provider(
+                    config,
+                    [BrainMessage(role="user", content="one")],
+                    task_id="fallback-task",
+                )
+                await complete_with_provider(
+                    config,
+                    [BrainMessage(role="user", content="two")],
+                    task_id="fallback-task",
+                )
+                await release_codex_task("fallback-task")
+
+        self.assertEqual(app_server.await_count, 1)
+        self.assertEqual(cli.await_count, 2)
+
     async def test_codex_provider_uses_lightweight_tool_free_app_server_thread(self) -> None:
         process = _FakeAppServerProcess()
         config = BrainProviderConfig(provider="codex", model="gpt-account")
@@ -169,6 +250,8 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(thread_params["config"]["web_search"], "disabled")
         self.assertTrue(all(value is False for value in thread_params["config"]["features"].values()))
         self.assertEqual(thread_params["config"]["tools"], {"view_image": False, "web_search": False})
+        turn_prompt = requests[2]["params"]["input"][0]["text"]
+        self.assertIn("不要调用任何工具", turn_prompt)
 
     async def test_codex_provider_attaches_brain_image_and_removes_temporary_file(self) -> None:
         process = _FakeAppServerProcess()
@@ -243,6 +326,10 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[1]["method"], "modelProvider/capabilities/read")
         self.assertEqual(requests[2]["params"]["config"]["web_search"], "live")
         self.assertTrue(requests[2]["params"]["config"]["tools"]["web_search"])
+        self.assertIn("Built-in web search is the only allowed tool", requests[2]["params"]["baseInstructions"])
+        turn_prompt = requests[3]["params"]["input"][0]["text"]
+        self.assertIn("必须先使用它搜索再作答", turn_prompt)
+        self.assertNotIn("不要调用任何工具", turn_prompt)
         self.assertEqual([item["text"] for item in activities], ["正在搜索：Ipet latest", "正在浏览：https://example.com/ipet"])
         self.assertFalse(completion.web_search_unavailable)
 

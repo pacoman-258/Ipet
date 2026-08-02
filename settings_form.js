@@ -50,7 +50,7 @@
           max_output_tokens: 1024,
           persona_prompt_file: "",
           persona: "",
-          self_state: "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。",
+          self_state: "等待用户目标，并在 act / remember 前交给 Human Ops 处理。",
           response_style: "",
           decision_temperature: 0.4,
           reasoning_effort: "",
@@ -64,7 +64,6 @@
           accessibility: true,
           require_act_review: true,
           require_memory_review: true,
-          require_skill_review: true,
           clipboard_write_review: true,
           click_preview: { x: 160, y: 54, label: "目标位置", size: 16 },
           observe_model: {
@@ -456,7 +455,6 @@
           : "review",
       );
       setChecked(els.opsRequireMemoryReview, true);
-      setChecked(els.opsRequireSkillReview, neo.human_ops.require_skill_review);
       setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
       setChecked(els.opsObserveModelEnabled, neo.human_ops.observe_model.enabled);
       setValue(els.opsObserveModelProvider, neo.human_ops.observe_model.provider || "openai_compatible");
@@ -597,7 +595,6 @@
         accessibility: !!els.opsAccessibility?.checked,
         require_act_review: authorizationMode !== "full",
         require_memory_review: true,
-        require_skill_review: !!els.opsRequireSkillReview?.checked,
         clipboard_write_review: !!els.opsClipboardReview?.checked,
         observe_model: {
           ...((next.human_ops || {}).observe_model || {}),

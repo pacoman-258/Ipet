@@ -3,98 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-import backend.app as backend_app
 from backend import computer_use_context as context_helpers
 
 
 class ComputerUseContextTests(unittest.TestCase):
-    def test_intent_helpers_classify_observe_action_and_click_requests(self) -> None:
-        for text in ("看看屏幕", "当前屏幕有什么", "帮我观察屏幕"):
-            with self.subTest(text=text):
-                self.assertTrue(context_helpers._looks_like_desktop_observe_request(text))
-
-        for text in ("如何打开 app", "为什么打开微信"):
-            with self.subTest(text=text):
-                self.assertFalse(context_helpers._looks_like_desktop_action_request(text))
-                self.assertFalse(context_helpers._looks_like_click_request(text))
-
-        self.assertTrue(context_helpers._looks_like_desktop_action_request("帮我打开微信"))
-        self.assertTrue(context_helpers._looks_like_app_launch_request("帮我打开微信"))
-        self.assertEqual(context_helpers._app_launch_target("帮我打开微信"), "WeChat")
-        self.assertTrue(context_helpers._looks_like_chat_reply_request("在 QQ 回复小明"))
-        self.assertTrue(context_helpers._looks_like_desktop_action_request("暂停音乐"))
-        self.assertTrue(context_helpers._looks_like_desktop_action_request("在访达选择文件"))
-        self.assertFalse(context_helpers._looks_like_click_request("帮我打开微信"))
-        localized_app_names = {
-            "打开QQ": "QQ",
-            "打开音乐": "Music",
-            "打开网易云音乐": "NeteaseMusic",
-            "启动腾讯会议": "TencentMeeting",
-            "打开库乐队": "GarageBand",
-            "打开Keynote讲演": "Keynote",
-            "打开Numbers表格": "Numbers",
-            "打开Pages文稿": "Pages",
-            "打开Safari浏览器": "Safari",
-            "打开iMovie 剪辑": "iMovie",
-        }
-        for request, app_name in localized_app_names.items():
-            with self.subTest(request=request):
-                self.assertEqual(context_helpers._app_launch_target(request), app_name)
-
-        self.assertTrue(context_helpers._looks_like_desktop_action_request("点击按钮"))
-        self.assertTrue(context_helpers._looks_like_click_request("点击按钮"))
-
-    def test_intent_helpers_ignore_read_only_state_and_negative_action_constraints(self) -> None:
-        read_only_requests = (
-            (
-                "只读检查当前 QQ 会话：告诉我当前打开的会话名称、"
-                "聊天输入框是否可用，以及最后一条可见消息摘要。"
-                "不得输入、不得发送、不得点击链接。"
-            ),
-            "检查当前打开的 QQ 会话和聊天输入框，不要输入或发送消息",
-            "列出音乐播放列表名称和当前播放状态",
-            "告诉我发送按钮是否可点击",
-            "不要点击这个按钮",
-        )
-        for text in read_only_requests:
-            with self.subTest(text=text):
-                self.assertFalse(
-                    context_helpers._looks_like_desktop_action_request(text)
-                )
-
-        positive_requests = (
-            "在 QQ 输入你好，但不要发送",
-            "不要点击链接，打开 QQ",
-            "查看当前会话后，发送你好",
-        )
-        for text in positive_requests:
-            with self.subTest(text=text):
-                self.assertTrue(
-                    context_helpers._looks_like_desktop_action_request(text)
-                )
-
-        self.assertFalse(
-            context_helpers._looks_like_click_request("请勿点击确认按钮")
-        )
-        self.assertTrue(
-            context_helpers._looks_like_click_request(
-                "不要点击链接，但要点击确认按钮"
-            )
-        )
-
-    def test_app_intent_wrappers_delegate_to_computer_use_context_helpers(self) -> None:
-        with mock.patch.object(context_helpers, "_looks_like_desktop_observe_request", return_value=True) as helper:
-            self.assertTrue(backend_app._looks_like_desktop_observe_request("看看屏幕"))
-        helper.assert_called_once_with("看看屏幕")
-
-        with mock.patch.object(context_helpers, "_looks_like_desktop_action_request", return_value=True) as helper:
-            self.assertTrue(backend_app._looks_like_desktop_action_request("帮我打开微信"))
-        helper.assert_called_once_with("帮我打开微信")
-
-        with mock.patch.object(context_helpers, "_looks_like_click_request", return_value=True) as helper:
-            self.assertTrue(backend_app._looks_like_click_request("点击按钮"))
-        helper.assert_called_once_with("点击按钮")
-
     def test_negative_visibility_does_not_create_dock_app_icon(self) -> None:
         context = context_helpers._infer_computer_use_context(
             "屏幕上目前没有显示微信图标，未显示 Dock 栏或桌面。",
@@ -112,6 +24,7 @@ class ComputerUseContextTests(unittest.TestCase):
             {
                 "active_observation": {
                     "target_hint": "打开微信",
+                    "require_coordinates": True,
                     "screen_bounds": {"x": 0, "y": 0, "width": 1470, "height": 956},
                 }
             },
@@ -122,6 +35,20 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertIn("screen_edge", affordances)
         self.assertEqual(affordances["screen_edge"]["purpose"], "reveal_hidden_dock")
         self.assertEqual(affordances["screen_edge"]["location"], {"x": 735, "y": 954})
+
+    def test_hidden_dock_words_do_not_select_coordinate_route(self) -> None:
+        context = context_helpers._infer_computer_use_context(
+            "当前浏览器窗口占满屏幕，未显示 Dock 栏，也没有看到微信图标。",
+            {
+                "active_observation": {
+                    "target_hint": "请点击 Dock 里的微信",
+                    "screen_bounds": {"x": 0, "y": 0, "width": 1470, "height": 956},
+                }
+            },
+            "请点击 Dock 里的微信",
+        )
+
+        self.assertNotIn("screen_edge", {item["kind"] for item in context["affordances"]})
 
     def test_wechat_observation_creates_contact_input_and_chat_context(self) -> None:
         context = context_helpers._infer_computer_use_context(
@@ -910,6 +837,29 @@ class ComputerUseContextTests(unittest.TestCase):
         self.assertIn("Structured computer-use context", context_text)
         self.assertIn("chat_context", context_text)
         self.assertIn("下午3点记得带资料", context_text)
+
+    def test_computer_use_context_text_includes_route_learning_feedback(self) -> None:
+        context_text = context_helpers._computer_use_context_text(
+            {
+                "route_decision": {
+                    "selected": "brain_vision",
+                    "reason": "screenshot_requires_brain_vision",
+                    "outcome": "pending_model",
+                },
+                "route_history": [
+                    {
+                        "selected": "ax",
+                        "reason": "no_semantic_match",
+                        "outcome": "needs_narrowing",
+                        "repeat_count": 2,
+                    }
+                ],
+            }
+        )
+
+        self.assertIn('"route_decision"', context_text)
+        self.assertIn('"route_history"', context_text)
+        self.assertIn('"repeat_count": 2', context_text)
 
     def test_accessibility_context_exposes_cache_index_without_full_tree(self) -> None:
         context = context_helpers._infer_computer_use_context(

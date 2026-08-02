@@ -1,5 +1,5 @@
 (() => {
-  const STORAGE_KEY = "desktopPet.chatPanel";
+  const STORAGE_KEY = "desktopPet.chatPanel.v2";
 
   function createChatPanelController(deps = {}) {
     const refs = deps.refs || {};
@@ -18,6 +18,7 @@
     const cancelAsrSession = typeof deps.cancelAsrSession === "function" ? deps.cancelAsrSession : () => {};
     const toggleChatSkillsDrawer =
       typeof deps.toggleChatSkillsDrawer === "function" ? deps.toggleChatSkillsDrawer : () => {};
+    const getPetBounds = typeof deps.getPetBounds === "function" ? deps.getPetBounds : () => null;
 
     const {
       chatPanelEl,
@@ -92,20 +93,25 @@
     function panelRectFromState(saved) {
       const width = viewportWidth();
       const height = viewportHeight();
+      const petBounds = getPetBounds();
       const w = Math.min(
-        Math.max(numberOrDefault(saved?.width, Math.floor(width * 0.42)), 300),
+        Math.max(numberOrDefault(saved?.width, Math.min(480, width - 24)), 300),
         Math.max(300, width - 12),
       );
       const h = Math.min(
-        Math.max(numberOrDefault(saved?.height, Math.floor(height * 0.6)), 280),
+        Math.max(numberOrDefault(saved?.height, Math.min(440, Math.floor(height * 0.62))), 280),
         Math.max(280, height - 12),
       );
+      const defaultLeft = petBounds
+        ? petBounds.left + petBounds.width * 0.5 - w * 0.5
+        : (width - w) * 0.5;
+      const defaultTop = petBounds ? petBounds.top - h - 16 : 12;
       const left = Math.min(
-        Math.max(numberOrDefault(saved?.left, width - w - 24), 8),
+        Math.max(numberOrDefault(saved?.left, defaultLeft), 8),
         Math.max(8, width - w - 8),
       );
       const top = Math.min(
-        Math.max(numberOrDefault(saved?.top, height - h - 68), 8),
+        Math.max(numberOrDefault(saved?.top, defaultTop), 8),
         Math.max(8, height - h - 8),
       );
       return { left, top, width: w, height: h };

@@ -12,6 +12,7 @@ def create_pet_bridge_class(
 ):
     class PetBridge(qobject_base):
         stateChanged = signal_factory(str)
+        interactiveRegionsChanged = signal_factory(str)
         openSettingsRequested = signal_factory()
         startAsrWarmupRequested = signal_factory()
         minimizeWindowRequested = signal_factory()
@@ -25,6 +26,10 @@ def create_pet_bridge_class(
         @slot_decorator(str)
         def petStateChanged(self, payload: str) -> None:
             self.stateChanged.emit(payload)
+
+        @slot_decorator(str)
+        def setInteractiveRegions(self, payload: str) -> None:
+            self.interactiveRegionsChanged.emit(str(payload or ""))
 
         @slot_decorator(str)
         def log(self, text: str) -> None:

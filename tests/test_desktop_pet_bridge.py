@@ -103,12 +103,14 @@ class DesktopPetBridgeTests(unittest.TestCase):
         bridge = Bridge()
 
         bridge.petStateChanged("pet-state")
+        bridge.setInteractiveRegions('{"regions": []}')
         bridge.openSettingsPage()
         bridge.showClickPreview('{"x": 1}')
         bridge.showClickPreview(None)
         bridge.hideClickPreview()
 
         self.assertEqual(bridge.stateChanged.emitted, [("pet-state",)])
+        self.assertEqual(bridge.interactiveRegionsChanged.emitted, [('{"regions": []}',)])
         self.assertEqual(bridge.openSettingsRequested.emitted, [()])
         self.assertEqual(bridge.showClickPreviewRequested.emitted, [('{"x": 1}',), ("",)])
         self.assertEqual(bridge.hideClickPreviewRequested.emitted, [()])

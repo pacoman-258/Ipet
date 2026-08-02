@@ -5,8 +5,15 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from brain.contracts import action_scope
 from brain.decisions import BrainDecision, DecisionKind
-from backend.task_control import TASK_CONTROL, TaskStopped
+from brain.llm import release_codex_task
+from backend.task_control import (
+    DEFAULT_TASK_BUDGET,
+    MAX_TASK_BUDGET,
+    TASK_CONTROL,
+    TaskStopped,
+)
 from body.macos_accessibility import _chat_header_matches_input_window
 
 from .approvals import ReviewableProposal
@@ -18,7 +25,7 @@ class HumanOpsProposalNotFound(LookupError):
     """Raised when a pending Human Ops proposal cannot be resolved."""
 
 
-FULL_AUTH_ACTION_LIMIT = 24
+FULL_AUTH_ACTION_LIMIT = MAX_TASK_BUDGET
 
 
 def near_match_confirmation_decision(
@@ -460,7 +467,7 @@ def stream_human_ops_proposal_decision(
     }
 
     async def event_stream() -> AsyncIterator[str]:
-        def done_event(data: dict[str, Any]) -> str:
+        async def done_event(data: dict[str, Any]) -> str:
             result = dict(data)
             try:
                 result["accessibility_index_refresh_scheduled"] = bool(
@@ -468,8 +475,11 @@ def stream_human_ops_proposal_decision(
                 )
             except Exception:
                 result["accessibility_index_refresh_scheduled"] = False
+            await release_codex_task(task_id)
             return deps.sse("done", result)
 
+        if TASK_CONTROL.get(task_id) is None:
+            TASK_CONTROL.start(task_id, session_id, budget_total=DEFAULT_TASK_BUDGET)
         TASK_CONTROL.bind_current_task(task_id)
         yield deps.sse(
             "meta",
@@ -497,7 +507,7 @@ def stream_human_ops_proposal_decision(
             else:
                 final_text = "已拒绝这次操作。" + (f" 调整说明：{user_text}" if user_text else "")
             yield deps.sse("display_segment", {"text": final_text})
-            yield done_event(
+            yield await done_event(
                 {
                     "turn_id": proposal_key,
                     "proposal_id": proposal_key,
@@ -565,7 +575,7 @@ def stream_human_ops_proposal_decision(
                     assistant_text=final_text,
                 )
             yield deps.sse("display_segment", {"text": final_text})
-            yield done_event(
+            yield await done_event(
                 {
                     "turn_id": proposal_key,
                     "proposal_id": proposal_key,
@@ -580,16 +590,11 @@ def stream_human_ops_proposal_decision(
 
         if auto_authorized:
             try:
-                remaining_actions = int(
-                    record.get("action_budget_remaining", FULL_AUTH_ACTION_LIMIT)
-                )
+                actions_executed = int(record.get("actions_executed") or 0)
             except (TypeError, ValueError):
-                remaining_actions = FULL_AUTH_ACTION_LIMIT
-            remaining_actions = max(
-                0,
-                min(FULL_AUTH_ACTION_LIMIT, remaining_actions),
-            )
-            if remaining_actions <= 0:
+                actions_executed = 0
+            actions_executed = max(0, actions_executed)
+            if actions_executed >= FULL_AUTH_ACTION_LIMIT:
                 record["status"] = "action_limit_reached"
                 final_text = (
                     f"完全授权连续动作已达到 {FULL_AUTH_ACTION_LIMIT} 步安全上限，"
@@ -606,7 +611,7 @@ def stream_human_ops_proposal_decision(
                     },
                 )
                 yield deps.sse("display_segment", {"text": final_text})
-                yield done_event(
+                yield await done_event(
                     {
                         "turn_id": proposal_key,
                         "proposal_id": proposal_key,
@@ -623,12 +628,7 @@ def stream_human_ops_proposal_decision(
                     },
                 )
                 return
-            record["action_budget_remaining"] = remaining_actions - 1
-            try:
-                actions_executed = int(record.get("actions_executed") or 0)
-            except (TypeError, ValueError):
-                actions_executed = 0
-            record["actions_executed"] = max(0, actions_executed) + 1
+            record["actions_executed"] = actions_executed + 1
             yield deps.sse(
                 "phase",
                 {
@@ -651,7 +651,7 @@ def stream_human_ops_proposal_decision(
                 final_text = f"完全授权操作未执行：通知失败（{str(exc)[:160]}）。"
                 record["status"] = "notification_failed"
                 yield deps.sse("display_segment", {"text": final_text})
-                yield done_event(
+                yield await done_event(
                     {
                         "turn_id": proposal_key,
                         "proposal_id": proposal_key,
@@ -758,7 +758,8 @@ def stream_human_ops_proposal_decision(
                 if key in {"enter", "return"}:
                     record.pop("chat_send_transaction", None)
         yield deps.sse("display_segment", {"text": final_text})
-        if record.get("status") == "executed" and deps.proposal_continue_after_approval(proposal):
+        if record.get("status") == "executed":
+            continue_after_approval = deps.proposal_continue_after_approval(proposal)
             TASK_CONTROL.check(task_id, next_action="动作后结构化验证")
             private_config = deps.normalize_private_config()
             brain_config = private_config.get("brain", {}) if isinstance(private_config.get("brain"), dict) else {}
@@ -785,7 +786,7 @@ def stream_human_ops_proposal_decision(
                 record["status"] = "verification_failed"
                 final_text = f"动作返回后的结构化验证失败：{verification['reason']}。"
                 yield deps.sse("display_segment", {"text": final_text})
-                yield done_event(
+                yield await done_event(
                     {
                         "turn_id": proposal_key,
                         "proposal_id": proposal_key,
@@ -811,35 +812,48 @@ def stream_human_ops_proposal_decision(
                         "source": "body",
                     },
                 )
-                try:
-                    proposal_args = (
-                        proposal.payload.get("arguments")
-                        if isinstance(proposal.payload.get("arguments"), dict)
-                        else {}
-                    )
-                    target_app = str(
-                        proposal_args.get("target_app")
-                        or (proposal_args.get("app") if action_type == "launch_app" else "")
-                        or execution.get("target_app")
-                        or execution.get("app")
-                        or ""
-                    ).strip()
-                    observation = await deps.perform_human_ops_observe(
-                        BrainDecision.observe(
-                            "screen",
-                            observe_prompt=verification_task,
-                            target_app=target_app,
-                        ),
-                        human_ops_config,
-                    )
-                except Exception as exc:
+                if not TASK_CONTROL.consume_budget(task_id, "observe:verification"):
                     observation = {
-                        "text": f"观察失败：{deps.sanitize_brain_error(exc, brain_config)}",
+                        "text": "动作后视觉验证未执行：本任务统一步骤预算已耗尽。",
                         "observations": [],
-                        "unknowns": [str(exc)],
+                        "unknowns": ["task_budget_exhausted"],
                     }
+                else:
+                    try:
+                        proposal_args = (
+                            proposal.payload.get("arguments")
+                            if isinstance(proposal.payload.get("arguments"), dict)
+                            else {}
+                        )
+                        target_app = str(
+                            proposal_args.get("target_app")
+                            or (proposal_args.get("app") if action_type == "launch_app" else "")
+                            or execution.get("target_app")
+                            or execution.get("app")
+                            or ""
+                        ).strip()
+                        observation = await deps.perform_human_ops_observe(
+                            BrainDecision.observe(
+                                "screen",
+                                observe_prompt=verification_task,
+                                target_app=target_app,
+                            ),
+                            human_ops_config,
+                        )
+                    except Exception as exc:
+                        observation = {
+                            "text": f"观察失败：{deps.sanitize_brain_error(exc, brain_config)}",
+                            "observations": [],
+                            "unknowns": [str(exc)],
+                        }
             else:
                 observation = structured_verification_observation(verification)
+            observation = TASK_CONTROL.learn_observation_route(
+                task_id,
+                observation,
+            )
+            record["verification"] = deepcopy(verification)
+            record["verification_observation"] = deepcopy(observation)
             confirmation = near_match_confirmation_decision(
                 observation,
                 record.get("user_text"),
@@ -851,7 +865,7 @@ def stream_human_ops_proposal_decision(
                     "display_segment",
                     {"text": continuation_text},
                 )
-                yield done_event(
+                yield await done_event(
                     {
                         "turn_id": proposal_key,
                         "proposal_id": proposal_key,
@@ -861,6 +875,30 @@ def stream_human_ops_proposal_decision(
                         "execution": execution,
                         "verification": verification,
                         "decision": confirmation.to_dict(),
+                        "observation": observation,
+                        **authorization_payload,
+                    },
+                )
+                return
+            if not continue_after_approval:
+                observation_text = str(observation.get("text") or "").strip()
+                if verification["status"] == "verified":
+                    final_text = observation_text or "动作已经执行，并通过结构化验证。"
+                else:
+                    final_text = (
+                        "动作已经执行；原生证据不足，已完成动作后观察。"
+                        + (f"{observation_text}" if observation_text else "")
+                    )
+                yield deps.sse("display_segment", {"text": final_text})
+                yield await done_event(
+                    {
+                        "turn_id": proposal_key,
+                        "proposal_id": proposal_key,
+                        "session_id": session_id,
+                        "text": final_text,
+                        "approved": True,
+                        "execution": execution,
+                        "verification": verification,
                         "observation": observation,
                         **authorization_payload,
                     },
@@ -884,21 +922,24 @@ def stream_human_ops_proposal_decision(
                     "并把图片、执行结果、坐标上下文和结构化系统证据作为同一份上下文决定下一步。"
                 )
             try:
-                try:
-                    stored_react_budget = int(
-                        record.get("react_budget_remaining", 3)
-                    )
-                except (TypeError, ValueError):
-                    stored_react_budget = 3
-                continuation_budget = max(0, min(20, stored_react_budget))
                 correction_used = False
                 next_decision: BrainDecision | None = None
                 continuation_text = ""
                 original_user_text = str(record.get("user_text") or "")
+                continuation_profile = "agent"
                 while True:
+                    if not TASK_CONTROL.consume_budget(task_id, "brain:post_action"):
+                        next_decision = deps.blocked_react_decision(
+                            original_user_text,
+                            next_decision,
+                        )
+                        continuation_text = next_decision.summary
+                        break
                     brain_kwargs: dict[str, Any] = {"user_text": followup_text}
+                    brain_kwargs["task_id"] = task_id
                     if followup_image_data_url:
                         brain_kwargs["image_data_url"] = followup_image_data_url
+                    brain_kwargs["prompt_profile"] = continuation_profile
                     completion = await deps.run_brain_turn(brain_config, **brain_kwargs)
                     followup_image_data_url = ""
                     next_decision = deps.decision_from_completion(completion)
@@ -959,14 +1000,13 @@ def stream_human_ops_proposal_decision(
                                 )
                             )
                         ):
-                            if continuation_budget <= 0:
+                            if TASK_CONTROL.remaining_budget(task_id) <= 0:
                                 next_decision = deps.blocked_react_decision(
                                     original_user_text,
                                     next_decision,
                                 )
                                 continuation_text = next_decision.summary
                                 break
-                            continuation_budget -= 1
                             yield deps.sse(
                                 "phase",
                                 {
@@ -1029,14 +1069,13 @@ def stream_human_ops_proposal_decision(
                                 input_ax_ref=expected_input_ref,
                             )
                         ):
-                            if continuation_budget <= 0:
+                            if TASK_CONTROL.remaining_budget(task_id) <= 0:
                                 next_decision = deps.blocked_react_decision(
                                     original_user_text,
                                     next_decision,
                                 )
                                 continuation_text = next_decision.summary
                                 break
-                            continuation_budget -= 1
                             yield deps.sse(
                                 "phase",
                                 {
@@ -1062,11 +1101,10 @@ def stream_human_ops_proposal_decision(
                             continue
                         supported_action, unsupported_action = deps.simple_human_action_support(next_decision)
                         if not supported_action:
-                            if continuation_budget <= 0:
+                            if TASK_CONTROL.remaining_budget(task_id) <= 0:
                                 next_decision = deps.blocked_react_decision(original_user_text, next_decision)
                                 continuation_text = next_decision.summary
                                 break
-                            continuation_budget -= 1
                             yield deps.sse(
                                 "phase",
                                 {
@@ -1080,7 +1118,18 @@ def stream_human_ops_proposal_decision(
                                 user_text=original_user_text,
                                 decision=next_decision,
                                 unsupported_action=unsupported_action,
-                                remaining_budget=continuation_budget,
+                                remaining_budget=max(
+                                    0,
+                                    TASK_CONTROL.remaining_budget(task_id) - 1,
+                                ),
+                            )
+                            proposed_scope = action_scope(proposed_action)
+                            continuation_profile = (
+                                "file"
+                                if proposed_scope == "file"
+                                else "desktop"
+                                if proposed_scope in {"desktop", "browser"}
+                                else "agent"
                             )
                             continue
                         next_proposal_id, next_proposal = deps.create_human_ops_act_proposal(
@@ -1090,17 +1139,6 @@ def stream_human_ops_proposal_decision(
                         )
                         if next_proposal_id in deps.pending_proposals:
                             deps.pending_proposals[next_proposal_id]["task_id"] = task_id
-                            deps.pending_proposals[next_proposal_id][
-                                "react_budget_remaining"
-                            ] = continuation_budget
-                            deps.pending_proposals[next_proposal_id][
-                                "action_budget_remaining"
-                            ] = int(
-                                record.get(
-                                    "action_budget_remaining",
-                                    FULL_AUTH_ACTION_LIMIT,
-                                )
-                            )
                             deps.pending_proposals[next_proposal_id][
                                 "actions_executed"
                             ] = int(record.get("actions_executed") or 0)
@@ -1160,11 +1198,10 @@ def stream_human_ops_proposal_decision(
                         yield deps.sse("approval_required", deps.proposal_event_payload(next_proposal_id, next_proposal))
                         return
                     if next_kind == DecisionKind.THINK:
-                        if continuation_budget <= 0:
+                        if TASK_CONTROL.remaining_budget(task_id) <= 0:
                             next_decision = deps.blocked_react_decision(original_user_text, next_decision)
                             continuation_text = next_decision.summary
                             break
-                        continuation_budget -= 1
                         yield deps.sse(
                             "phase",
                             {
@@ -1177,16 +1214,18 @@ def stream_human_ops_proposal_decision(
                         followup_text = deps.react_followup_prompt(
                             user_text=original_user_text,
                             decision=next_decision,
-                            remaining_budget=continuation_budget,
+                            remaining_budget=max(
+                                0,
+                                TASK_CONTROL.remaining_budget(task_id) - 1,
+                            ),
                         )
                         continue
                     if next_kind == DecisionKind.OBSERVE:
                         TASK_CONTROL.check(task_id, next_action="Observe 分析")
-                        if continuation_budget <= 0:
+                        if not TASK_CONTROL.consume_budget(task_id, "observe"):
                             next_decision = deps.blocked_react_decision(original_user_text, next_decision)
                             continuation_text = next_decision.summary
                             break
-                        continuation_budget -= 1
                         yield deps.sse(
                             "phase",
                             {
@@ -1210,6 +1249,10 @@ def stream_human_ops_proposal_decision(
                                 "observations": [],
                                 "unknowns": [str(exc)],
                             }
+                        observation = TASK_CONTROL.learn_observation_route(
+                            task_id,
+                            observation,
+                        )
                         confirmation = near_match_confirmation_decision(
                             observation,
                             original_user_text,
@@ -1233,7 +1276,10 @@ def stream_human_ops_proposal_decision(
                         followup_text = deps.react_followup_prompt(
                             user_text=original_user_text,
                             decision=next_decision,
-                            remaining_budget=continuation_budget,
+                            remaining_budget=max(
+                                0,
+                                TASK_CONTROL.remaining_budget(task_id) - 1,
+                            ),
                             observation_text=observation_text,
                             coordinate_context=str(observation.get("coordinate_context") or "").strip(),
                             computer_use_context=deps.computer_use_context_text(observation),
@@ -1242,12 +1288,11 @@ def stream_human_ops_proposal_decision(
                         continue
                     status = deps.goal_status(next_decision, operation_request=True)
                     if next_kind in {DecisionKind.SAY, DecisionKind.STOP} and not deps.goal_is_terminal(status):
-                        if correction_used or continuation_budget <= 0:
+                        if correction_used or TASK_CONTROL.remaining_budget(task_id) <= 0:
                             next_decision = deps.blocked_react_decision(original_user_text, next_decision)
                             continuation_text = next_decision.summary
                             break
                         correction_used = True
-                        continuation_budget -= 1
                         yield deps.sse(
                             "phase",
                             {
@@ -1260,14 +1305,17 @@ def stream_human_ops_proposal_decision(
                         followup_text = deps.react_followup_prompt(
                             user_text=original_user_text,
                             decision=next_decision,
-                            remaining_budget=continuation_budget,
+                            remaining_budget=max(
+                                0,
+                                TASK_CONTROL.remaining_budget(task_id) - 1,
+                            ),
                             correction=True,
                         )
                         continue
                     break
                 if next_decision is not None and continuation_text:
                     yield deps.sse("display_segment", {"text": continuation_text})
-                    yield done_event(
+                    yield await done_event(
                         {
                             "turn_id": proposal_key,
                             "proposal_id": proposal_key,
@@ -1307,7 +1355,7 @@ def stream_human_ops_proposal_decision(
                     "display_segment",
                     {"text": final_text},
                 )
-        yield done_event(
+        yield await done_event(
             {
                 "turn_id": proposal_key,
                 "proposal_id": proposal_key,

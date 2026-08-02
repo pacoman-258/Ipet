@@ -11,14 +11,12 @@ class DecisionKind(str, Enum):
     OBSERVE = "observe"
     PROPOSE_ACT = "propose_act"
     PROPOSE_REMEMBER = "propose_remember"
-    PROPOSE_LEARN_SKILL = "propose_learn_skill"
     STOP = "stop"
 
 
 _REVIEW_REQUIRED = {
     DecisionKind.PROPOSE_ACT,
     DecisionKind.PROPOSE_REMEMBER,
-    DecisionKind.PROPOSE_LEARN_SKILL,
 }
 
 
@@ -81,6 +79,7 @@ class BrainDecision:
         *,
         target_app: str = "",
         ax_query: str = "",
+        require_coordinates: bool = False,
         goal: dict[str, Any] | None = None,
     ) -> "BrainDecision":
         target_text = str(target or "screen").strip() or "screen"
@@ -94,6 +93,8 @@ class BrainDecision:
         ax_query_text = str(ax_query or "").strip()
         if ax_query_text:
             payload["ax_query"] = ax_query_text[:240]
+        if require_coordinates:
+            payload["require_coordinates"] = True
         if isinstance(goal, dict):
             payload["goal"] = dict(goal)
         return cls(DecisionKind.OBSERVE, f"Observe {target_text}", payload)
@@ -124,16 +125,6 @@ class BrainDecision:
             DecisionKind.PROPOSE_REMEMBER,
             f"Propose memory: {category_text}",
             {"category": category_text, "text": memory_text},
-        )
-
-    @classmethod
-    def propose_learn_skill(cls, name: str, steps: list[str]) -> "BrainDecision":
-        skill_name = str(name or "").strip()
-        clean_steps = [str(step or "").strip() for step in steps if str(step or "").strip()]
-        return cls(
-            DecisionKind.PROPOSE_LEARN_SKILL,
-            f"Propose skill: {skill_name}",
-            {"name": skill_name, "steps": clean_steps},
         )
 
     @classmethod

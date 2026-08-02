@@ -75,7 +75,6 @@
     opsAxIndexStatus: $("ops-ax-index-status"),
     opsAuthorizationMode: $("ops-authorization-mode"),
     opsRequireMemoryReview: $("ops-require-memory-review"),
-    opsRequireSkillReview: $("ops-require-skill-review"),
     opsClipboardReview: $("ops-clipboard-review"),
     opsObserveModelEnabled: $("ops-observe-model-enabled"),
     opsObserveModelProvider: $("ops-observe-model-provider"),
@@ -314,7 +313,7 @@
     const neo = mergedNeo(config || {});
     const diagnostics = [
       ["本体设置", "已加载"],
-      ["最近观察", neo.human_ops.observe_screen ? "允许看屏幕" : "观察关闭"],
+      ["截图观察", neo.human_ops.observe_screen ? "允许截图" : "截图关闭"],
       ["最近授权动作", "等待 human-op 提案"],
       ["最近失败动作", "暂无记录"],
     ];
@@ -333,7 +332,7 @@
       <div class="review-item"><strong>say</strong><span>自由执行</span></div>
       <div class="review-item"><strong>observe</strong><span>自由执行</span></div>
       <div class="review-item"><strong>act</strong><span>执行前显示红点、文本或路径预览</span></div>
-      <div class="review-item"><strong>remember / learn_skill</strong><span>写入前进入审阅队列</span></div>
+      <div class="review-item"><strong>remember</strong><span>写入前进入审阅队列</span></div>
     `;
   }
 

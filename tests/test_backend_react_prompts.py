@@ -195,23 +195,32 @@ class BackendReactPromptsTests(unittest.TestCase):
             remaining_budget=1,
         )
 
-        self.assertIn("不可执行或不符合当前简单人类动作范围", prompt)
+        self.assertIn("动作校验失败", prompt)
         self.assertIn("open_app", prompt)
-        self.assertIn("playwright、launch_app、click、type_text、key_press enter", prompt)
-        self.assertIn("默认使用 Playwright", prompt)
-        self.assertIn("不为执行方式询问", prompt)
-        self.assertIn("两者都缺少时才用 goal.status=need_user", prompt)
-        self.assertIn("设置页传入的 Playwright 默认资料", prompt)
-        self.assertIn("不要重复询问已经明确的选择", prompt)
-        self.assertIn("Brain 已判断目标是本地应用", prompt)
-        self.assertIn("arguments.target_app", prompt)
+        self.assertIn("系统合同中的动作 schema", prompt)
+        self.assertIn("重复询问已经明确的选择", prompt)
+        self.assertLess(len(prompt), 900)
 
     def test_simple_action_support_click_coordinates_and_enter_key_rules(self) -> None:
         react_prompts = self._react_prompts()
 
         self.assertEqual(
-            react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"target_app": "Chrome", "x": "12.5", "y": 34})),
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "click",
+                    {"target_app": "Chrome", "x": 12.5, "y": 34, "coordinate_space": "macos_screen_points"},
+                )
+            ),
             (True, ""),
+        )
+        self.assertEqual(
+            react_prompts._simple_human_action_support(
+                BrainDecision.propose_act(
+                    "click",
+                    {"target_app": "Chrome", "x": "12.5", "y": 34, "coordinate_space": "macos_screen_points"},
+                )
+            ),
+            (False, "click x must be number"),
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(
@@ -232,7 +241,7 @@ class BackendReactPromptsTests(unittest.TestCase):
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("click", {"target_app": "Chrome", "x": 12})),
-            (False, "click missing complete x/y"),
+            (False, "click requires ax_ref or x+y+coordinate_space"),
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"target_app": "Chrome", "key": "Enter"})),
@@ -240,7 +249,7 @@ class BackendReactPromptsTests(unittest.TestCase):
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("key_press", {"target_app": "Chrome", "key": "tab"})),
-            (False, "key_press tab"),
+            (False, "key_press key must be one of enter, return"),
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("type_text", {"target_app": "Chrome", "text": "hi"})),
@@ -351,7 +360,7 @@ class BackendReactPromptsTests(unittest.TestCase):
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(BrainDecision.propose_act("launch_app", {})),
-            (False, "launch_app missing app name"),
+            (False, "launch_app missing app"),
         )
         self.assertEqual(
             react_prompts._simple_human_action_support(
@@ -363,12 +372,12 @@ class BackendReactPromptsTests(unittest.TestCase):
             BrainDecision.propose_act("playwright", {"profile": "工作", "operation": "eval", "text": "document.cookie"})
         )
         self.assertFalse(supported)
-        self.assertIn("Unsupported Playwright operation", reason)
+        self.assertIn("playwright operation must be one of", reason)
         supported, reason = react_prompts._simple_human_action_support(
             BrainDecision.propose_act("playwright", {"operation": "snapshot"})
         )
         self.assertFalse(supported)
-        self.assertIn("profile must be explicitly selected", reason)
+        self.assertIn("playwright missing profile", reason)
 
     def test_production_coercion_preserves_model_surface_choice(self) -> None:
         model_decision = BrainDecision.observe("screen")

@@ -90,7 +90,7 @@ class FrontendAppStateSourceTests(unittest.TestCase):
         self.assertEqual(state["model_url"], "")
         self.assertEqual(state["scale"], 0.3)
         self.assertEqual(state["offset_x"], 0)
-        self.assertEqual(state["offset_y"], 40)
+        self.assertEqual(state["offset_y"], 0)
         self.assertEqual(state["rotation"], 0)
         self.assertEqual(state["opacity"], 1)
         self.assertFalse(state["edit_mode"])

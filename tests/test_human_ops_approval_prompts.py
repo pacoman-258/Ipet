@@ -16,13 +16,12 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         proposal = ReviewableProposal.act(
             action_type="type_text",
             summary="Ipet 想输入到聊天输入框：收到，马上处理",
-            payload={"text": "收到，马上处理", "label": "聊天输入框"},
+            payload={"text": "收到，马上处理", "label": "聊天输入框", "intended_chat": "张三"},
         )
 
         prompt = build_post_approval_observe_prompt(
             "根据张三的聊天信息回复张三",
             proposal,
-            looks_like_chat_reply_request=lambda text: "回复" in text,
         )
 
         self.assertIn("刚才输入的草稿是“收到，马上处理”", prompt)
@@ -41,7 +40,6 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         prompt = build_post_approval_observe_prompt(
             "根据张三的聊天信息回复张三",
             proposal,
-            looks_like_chat_reply_request=lambda text: "回复" in text,
         )
 
         self.assertIn("预期刚发送的回复是“收到，马上处理”", prompt)
@@ -67,7 +65,7 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         self.assertIn("用户原始复杂任务：打开微信并根据张三聊天信息回复张三", prompt)
         self.assertIn("上一项已批准并执行", prompt)
         self.assertIn("张三聊天条目", prompt)
-        self.assertIn('"clicked": true', prompt)
+        self.assertIn('"clicked":true', prompt)
         self.assertIn("执行后验证：", prompt)
         self.assertIn("已经进入张三会话。", prompt)
         self.assertIn("Structured computer-use context", prompt)
@@ -83,6 +81,23 @@ class HumanOpsApprovalPromptTests(unittest.TestCase):
         self.assertNotIn("聊天输入框中是否已经出现这段草稿", backend_source)
         self.assertIn("请独立判断原始目标是否已经完成", prompt_source)
         self.assertIn("聊天输入框中是否已经出现这段草稿", prompt_source)
+
+    def test_continuation_prompt_summarizes_large_file_payloads(self) -> None:
+        proposal = ReviewableProposal.act(
+            action_type="file_write",
+            summary="写入大文件",
+            payload={"path": "notes.txt", "content": "x" * 100_000},
+        )
+
+        prompt = build_human_ops_continuation_prompt(
+            user_text="写入文件后继续",
+            proposal=proposal,
+            execution={"written": True, "content": "y" * 100_000},
+            observation={"text": "写入已由文件系统回执确认。"},
+        )
+
+        self.assertIn("<100000 chars>", prompt)
+        self.assertLess(len(prompt), 5_000)
 
 
 if __name__ == "__main__":

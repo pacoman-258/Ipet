@@ -24,6 +24,7 @@ class _FakeSignal:
 class _FakeBridge:
     def __init__(self) -> None:
         self.stateChanged = _FakeSignal()
+        self.interactiveRegionsChanged = _FakeSignal()
         self.openSettingsRequested = _FakeSignal()
         self.startAsrWarmupRequested = _FakeSignal()
         self.minimizeWindowRequested = _FakeSignal()
@@ -40,6 +41,9 @@ class _Owner:
 
     def on_web_state_changed(self, *args) -> None:
         self.calls.append("stateChanged")
+
+    def apply_interactive_regions(self, *args) -> None:
+        self.calls.append("interactiveRegionsChanged")
 
     def open_settings_page(self, *args) -> None:
         self.calls.append("openSettingsRequested")
@@ -84,6 +88,7 @@ class DesktopBridgeWiringTests(unittest.TestCase):
         self.assertEqual(
             [
                 bridge.stateChanged.connected,
+                bridge.interactiveRegionsChanged.connected,
                 bridge.openSettingsRequested.connected,
                 bridge.startAsrWarmupRequested.connected,
                 bridge.minimizeWindowRequested.connected,
@@ -95,6 +100,7 @@ class DesktopBridgeWiringTests(unittest.TestCase):
             ],
             [
                 [owner.on_web_state_changed],
+                [owner.apply_interactive_regions],
                 [owner.open_settings_page],
                 [owner.request_asr_warmup],
                 [owner.showMinimized],

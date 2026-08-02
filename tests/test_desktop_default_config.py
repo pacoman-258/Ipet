@@ -42,7 +42,7 @@ class DesktopDefaultConfigTests(unittest.TestCase):
         self.assertFalse(config["brain"]["web_search_enabled"])
         self.assertEqual(config["brain"]["persona_prompt_file"], "")
         self.assertEqual(config["brain"]["persona"], "")
-        self.assertEqual(config["brain"]["self_state"], "等待用户目标，并在 act / remember / learn_skill 前交给 Human Ops 处理。")
+        self.assertEqual(config["brain"]["self_state"], "等待用户目标，并在 act / remember 前交给 Human Ops 处理。")
         self.assertEqual(config["human_ops"]["observe_screen"], True)
         self.assertEqual(config["human_ops"]["authorization_mode"], "review")
         self.assertEqual(config["human_ops"]["playwright_profile"], "")

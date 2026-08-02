@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import Any
 
+from brain.contracts import is_terminal_goal_status, validate_decision_payload
 from brain.decisions import BrainDecision, DecisionKind
 from human_ops.filesystem_actions import FILESYSTEM_ACTIONS, validate_filesystem_action
 from human_ops.playwright_actions import playwright_command
+
+
+def _prompt_text(value: object, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}…<省略 {len(text) - limit} 字符>"
+
+
+def _prompt_json(value: object, limit: int = 2_000) -> str:
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return text if len(text) <= limit else f"{text[:limit]}…<省略 {len(text) - limit} 字符>"
 
 
 def _click_coordinate_clarification_text(observation_text: str) -> str:
@@ -28,11 +40,9 @@ def _click_coordinate_observe_failure_text(observation_text: str) -> str:
 
 def _fallback_after_observe_brain_error(
     observation_text: str,
-    user_text: str,
-    *,
-    looks_like_click_request: Callable[[str], bool] | None = None,
+    require_coordinates: bool = False,
 ) -> str:
-    if looks_like_click_request is not None and looks_like_click_request(user_text):
+    if require_coordinates:
         return _click_coordinate_clarification_text(observation_text)
     observation = str(observation_text or "").strip()
     if observation:
@@ -67,7 +77,7 @@ def _goal_status(decision: BrainDecision, *, operation_request: bool) -> str:
 
 
 def _goal_is_terminal(status: str) -> bool:
-    return status in {"done", "blocked", "need_user"}
+    return is_terminal_goal_status(status)
 
 
 def _react_missing_summary(goal: dict[str, Any]) -> str:
@@ -106,11 +116,11 @@ def _react_followup_prompt(
     correction: bool = False,
 ) -> str:
     goal = _decision_goal(decision)
-    goal_json = json.dumps(goal, ensure_ascii=False) if goal else "{}"
+    goal_json = _prompt_json(goal, 1_500) if goal else "{}"
     base = (
-        f"用户原始请求：{user_text}\n\n"
+        f"用户原始请求：{_prompt_text(user_text, 1_500)}\n\n"
         f"当前 goal：{goal_json}\n"
-        f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
+        f"剩余任务步骤预算：{remaining_budget}\n\n"
     )
     if correction:
         return (
@@ -133,25 +143,20 @@ def _react_followup_prompt(
                 '并明确写 coordinate_space="image_pixels"；后端会确定性换算为 macOS 屏幕点。'
             )
         else:
-            observation_intro = "你刚才让 observe 模型查看了屏幕。observe 用自然语言回答如下：\n"
+            observation_intro = "Body 刚完成一次界面观察，自然语言结果如下：\n"
             decision_instruction = "请基于这个观察结果决定下一步。不要因为格式问题要求 observe 输出 JSON。"
         return (
             f"{base}"
             f"{observation_intro}"
-            f"{observation_text}"
-            f"{coordinate_block}"
-            f"{computer_use_block}\n"
+            f"{_prompt_text(observation_text, 3_500)}"
+            f"{_prompt_text(coordinate_block, 1_000)}"
+            f"{_prompt_text(computer_use_block, 2_500)}\n"
             f"{decision_instruction}"
-            "如果用户只是问屏幕内容，请用 say 直接回答。"
-            "如果 Structured computer-use context 的目标带 ax_ref，请把该 ax_ref 原样复制到 click 或 type_text arguments，"
-            "不要自行改写字段，也不要同时猜坐标；若没有可用 ax_ref，click 才使用 macOS screen coordinates 的 x/y，"
-            '并写 coordinate_space="macos_screen_points"。'
-            "Structured computer-use context 里的 surface 和 affordance 是当前证据，请与用户目标和观察结果一起判断。"
-            "如果观察结果说看不到或不确定，请用 goal.status=blocked 或 need_user 的 say 如实告诉用户。"
+            "根据系统合同和这份新证据，只返回一个最小下一步；看不到或不确定时如实 blocked/need_user。"
         )
     return (
         f"{base}"
-        f"上一轮 Brain 决定：{decision.to_dict()}\n\n"
+        f"上一轮 Brain 决定：{_prompt_json(decision.to_dict())}\n\n"
         "这是 ReAct 的无副作用 think 进展。请继续推进到 observe、propose_act、"
         "或带 terminal goal.status 的 say/stop。"
     )
@@ -163,6 +168,9 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
     payload = decision.payload if isinstance(decision.payload, dict) else {}
     action_type = str(payload.get("action_type") or "").strip()
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    valid, reason = validate_decision_payload(decision.kind.value, payload)
+    if not valid:
+        return False, reason
     if action_type == "click":
         target_app = str(arguments.get("target_app") or "").strip()
         if not target_app:
@@ -214,7 +222,7 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
             return True, ""
         return False, f"key_press {key}"
     if action_type == "launch_app":
-        app_name = str(arguments.get("app") or arguments.get("name") or arguments.get("label") or "").strip()
+        app_name = str(arguments.get("app") or "").strip()
         return (True, "") if app_name else (False, "launch_app missing app name")
     if action_type == "playwright":
         try:
@@ -266,31 +274,13 @@ def _unsupported_simple_action_prompt(
     remaining_budget: int,
 ) -> str:
     goal = _decision_goal(decision)
-    goal_json = json.dumps(goal, ensure_ascii=False) if goal else "{}"
+    goal_json = _prompt_json(goal, 1_500) if goal else "{}"
     return (
-        f"用户原始请求：{user_text}\n\n"
+        f"用户原始请求：{_prompt_text(user_text, 1_500)}\n\n"
         f"当前 goal：{goal_json}\n"
-        f"上一轮 Brain 返回了不可执行或不符合当前简单人类动作范围的 propose_act：{unsupported_action}。\n"
-        f"上一轮 Brain 决定：{decision.to_dict()}\n"
-        f"剩余 ReAct 自动继续预算：{remaining_budget}\n\n"
-        "当前 Human Ops 能审批并执行这些动作：playwright、launch_app、click、type_text、key_press enter，以及受允许根目录约束的 file_list、file_read、file_write、file_mkdir、file_copy、file_move、file_delete。"
-        "浏览器任务应遵循用户明确选择的 Playwright 或人类操作方式；若用户没有明确选择，默认使用 Playwright，不为执行方式询问。"
-        "显式或默认使用 playwright 时，它支持 attach、open、snapshot、click、fill、type、press、导航和标签页操作，"
-        "Chrome 个人资料优先使用当前任务中用户明确指定的名称，否则使用设置页传入的 Playwright 默认资料，并在每个 playwright proposal 的 arguments.profile 中原样携带；两者都缺少时才用 goal.status=need_user 的 say 询问，不得猜测资料。"
-        "open 会精确解析真实 Chrome 资料：可验证时复用唯一活跃且允许远程调试的窗口，否则从原资料只读初始化 Ipet 私有登录态快照；找不到时使用执行器返回的可选名称让用户重选。"
-        "用户明确只要已打开的 Chrome 原窗口时使用 attach；attach 要求所选资料唯一活跃并允许远程调试，失败必须如实报告。"
-        "click/fill 的 ref 必须来自同一 Playwright 会话的最新 snapshot。"
-        "用户选择人类操作后，再使用桌面观察、点击、输入或回车；当前任务内不要重复询问已经明确的选择。"
-        "launch_app 只用于 Brain 已判断目标是本地应用并明确给出 arguments.app 的情况；"
-        "click、type_text、key_press 都必须在 arguments.target_app 中写明要切换并操作的应用；"
-        "QQ/微信的消息输入 type_text 必须同时携带经过观察确认的 intended_chat 与输入框 ax_ref；"
-        "只有 ax_ref 内签名 input_kind=search_field 的搜索框可不带 intended_chat，"
-        "清空或替换输入框使用同一个 type_text 并设置 replace_existing=true，且必须携带最新 ax_ref；"
-        "发送 Enter 必须携带同一 intended_chat、expected_text 与从输入阶段继承的 input_ax_ref；"
-        "普通 macOS GUI 应用会优先尝试返回 Accessibility affordance；目标带 ax_ref 时必须原样复制，"
-        "click 不再需要 x/y，type_text 可携带输入元素的 ax_ref 并由执行器先聚焦；没有 ax_ref 时才使用坐标点击。"
-        "发送/确认可使用 key_press enter。"
-        "文件动作只能使用相对项目根目录或允许根目录内的路径；file_read 和 file_list 也要审批，file_delete 不递归，file_copy/file_move 不覆盖已有目标，file_write 覆盖已有文件时必须显式写 overwrite=true。"
-        "请重新选择一个下一步 JSON：observe、propose_act playwright、propose_act launch_app、propose_act click、propose_act type_text、propose_act key_press enter、propose_act 文件动作，"
-        "或带 terminal goal.status 的 say/stop。"
+        f"动作校验失败：{_prompt_text(unsupported_action, 500)}。\n"
+        f"上一轮 Brain 决定：{_prompt_json(decision.to_dict())}\n"
+        f"剩余任务步骤预算：{remaining_budget}\n\n"
+        "请按系统合同中的动作 schema 修正缺失或非法字段，不改变用户目标，也不重复询问已经明确的选择。"
+        "只返回一个 observe、合法 propose_act，或带终态 goal.status 的 say/stop JSON。"
     )

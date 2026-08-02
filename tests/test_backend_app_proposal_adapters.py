@@ -22,8 +22,6 @@ def _deps(module: Any, **overrides: Any) -> Any:
         "pending_proposals": {},
         "uuid_factory": lambda: "proposal-fixed",
         "time_func": lambda: 123.5,
-        "looks_like_desktop_action_request": lambda text: "微信" in text or "打开" in text,
-        "looks_like_chat_reply_request": lambda text: "回复" in text or "聊天" in text,
         "goal_is_terminal": lambda status: status in {"done", "blocked", "need_user"},
         "computer_use_context_text": lambda observation: f"Structured context: {observation.get('surface', 'unknown')}",
     }
@@ -57,7 +55,6 @@ class BackendAppProposalAdaptersTests(unittest.TestCase):
             "_coerce_int": "coerce_int",
             "_proposal_tool_label": "proposal_tool_label",
             "_proposal_event_payload": "proposal_event_payload",
-            "_should_default_continue_after_approval": "should_default_continue_after_approval",
             "_create_human_ops_act_proposal": "create_human_ops_act_proposal",
             "_proposal_arguments": "proposal_arguments",
             "_proposal_continue_after_approval": "proposal_continue_after_approval",

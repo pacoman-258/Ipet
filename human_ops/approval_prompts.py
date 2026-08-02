@@ -1,12 +1,41 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Any
 
 from .approvals import ReviewableProposal
 from .proposals import proposal_arguments, proposal_tool_label
 
-IntentPredicate = Callable[[str], bool]
+
+def _prompt_text(value: object, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}…<省略 {len(text) - limit} 字符>"
+
+
+def _compact_prompt_value(value: object, *, depth: int = 0) -> object:
+    if depth >= 3:
+        return "<nested>"
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 20:
+                result["<more_fields>"] = len(value) - index
+                break
+            if str(key) == "content" and isinstance(item, str):
+                result[str(key)] = f"<{len(item)} chars>"
+            else:
+                result[str(key)] = _compact_prompt_value(item, depth=depth + 1)
+        return result
+    if isinstance(value, list):
+        items = [_compact_prompt_value(item, depth=depth + 1) for item in value[:8]]
+        if len(value) > 8:
+            items.append(f"<{len(value) - 8} more>")
+        return items
+    if isinstance(value, str):
+        return _prompt_text(value, 500)
+    return value
 
 
 def build_human_ops_continuation_prompt(
@@ -17,44 +46,51 @@ def build_human_ops_continuation_prompt(
     observation: dict[str, Any],
     computer_use_context_text: str = "",
 ) -> str:
-    observation_text = str(observation.get("text") or "").strip()
-    computer_use_context = str(computer_use_context_text or "").strip()
+    observation_text = _prompt_text(observation.get("text"), 3_000)
+    computer_use_context = _prompt_text(computer_use_context_text, 3_000)
     computer_use_block = f"{computer_use_context}\n\n" if computer_use_context else ""
+    action_type = str(proposal.payload.get("action_type") or "").strip()
+    arguments = (
+        proposal.payload.get("arguments")
+        if isinstance(proposal.payload.get("arguments"), dict)
+        else {}
+    )
+    proposal_delta = {
+        "action_type": action_type,
+        "arguments": _compact_prompt_value(arguments),
+    }
+    execution_delta = _compact_prompt_value(execution)
     return (
-        f"用户原始复杂任务：{user_text}\n\n"
-        f"上一项已批准并执行：{proposal.to_dict()}\n"
-        f"执行结果：{json.dumps(execution, ensure_ascii=False)}\n\n"
+        f"用户原始复杂任务：{_prompt_text(user_text, 1_500)}\n\n"
+        f"上一项已批准并执行：{json.dumps(proposal_delta, ensure_ascii=False, separators=(',', ':'))}\n"
+        f"执行结果：{json.dumps(execution_delta, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "执行后验证：\n"
         f"{observation_text}\n\n"
         f"{computer_use_block}"
         "请独立判断原始目标是否已经完成、当前证据还缺什么，以及最小安全下一步。"
-        "surface、affordance 和 stage 是可用的状态描述，不是固定流程。"
         "把执行返回值、平台原生状态、chat_context 和可见观察都当作证据；不要重复获取已经足够且一致的证据。"
-        "当前可审批动作能力包括：通过 Playwright 操作浏览器页面、打开已确认的本地应用、点击已定位目标、"
-        "向已确认焦点的输入位置输入文字，以及按 Enter/Return。浏览器任务应遵循用户已经选择的 Playwright 或人类操作方式；"
-        "也可以通过 Human Ops 执行受允许根目录约束的文件列表、读取、写入、新建目录、复制、移动和非递归删除；每一项文件动作都单独审批，读取文件同样需要审批，不能访问受保护的本地状态。"
-        "如果上下文中还没有明确选择，默认使用 Playwright，不为执行方式询问；Chrome 个人资料优先使用用户在当前任务中指定的值，否则使用设置页中的已选值，两者都缺少时才询问。"
-        "由你根据目标和证据在 think、observe、propose_act、need_user、blocked 或 done 中选择下一步；"
-        "observe 只用于补齐下一步确实依赖的可见状态，不要把任何动作类型套进预设顺序。"
+        "按系统合同返回一个最小下一步；observe 只补齐真正缺少的证据，不要把任何动作类型套进预设顺序。"
     )
 
 
 def build_post_approval_observe_prompt(
     user_text: str,
     proposal: ReviewableProposal,
-    *,
-    looks_like_chat_reply_request: IntentPredicate | None = None,
 ) -> str:
-    task = str(user_text or "").strip()
+    task = _prompt_text(user_text, 1_000)
     label = proposal_tool_label(proposal)
     args = proposal_arguments(proposal)
     action_type = str(proposal.payload.get("action_type") or "").strip()
-    looks_like_chat = looks_like_chat_reply_request or (lambda _text: False)
-    if looks_like_chat(task):
+    chat_transaction = bool(
+        str(args.get("intended_chat") or "").strip()
+        or str(args.get("expected_text") or "").strip()
+        or isinstance(args.get("input_ax_ref"), dict)
+    )
+    if chat_transaction:
         if action_type == "type_text":
-            draft = str(args.get("text") or "").strip()
+            draft = _prompt_text(args.get("text"), 1_000)
             draft_clause = f"刚才输入的草稿是“{draft}”。" if draft else ""
-            intended_chat = str(args.get("intended_chat") or "").strip()
+            intended_chat = _prompt_text(args.get("intended_chat"), 300)
             chat_clause = (
                 f"获批的目标会话是“{intended_chat}”。"
                 if intended_chat
@@ -68,7 +104,10 @@ def build_post_approval_observe_prompt(
                 "请只用自然语言给出可见依据，不替 Brain 决定下一步动作。"
             )
         if action_type == "key_press" and str(args.get("key") or "enter").strip().lower() in {"enter", "return"}:
-            expected_text = str(args.get("expected_text") or args.get("text") or args.get("draft") or "").strip()
+            expected_text = _prompt_text(
+                args.get("expected_text") or args.get("text") or args.get("draft"),
+                1_000,
+            )
             expected_clause = f"预期刚发送的回复是“{expected_text}”。" if expected_text else ""
             return (
                 f"用户目标是“{task}”。刚才已执行获批动作：{label}。{expected_clause}"

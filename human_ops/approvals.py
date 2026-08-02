@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from brain.contracts import action_names
+
 from .previews import ClickPreview
 
 
@@ -12,26 +14,7 @@ class ApprovalRequirement(str, Enum):
     NOT_REQUIRED = "not_required"
 
 
-_STATE_CHANGING_ACTIONS = {
-    "click",
-    "type_text",
-    "key_press",
-    "hotkey",
-    "scroll",
-    "drag",
-    "launch_app",
-    "focus_window",
-    "clipboard_write",
-    "wait",
-    "playwright",
-    "file_list",
-    "file_read",
-    "file_write",
-    "file_mkdir",
-    "file_copy",
-    "file_move",
-    "file_delete",
-}
+_REVIEWABLE_ACTIONS = frozenset(action_names())
 
 
 @dataclass(frozen=True)
@@ -57,7 +40,7 @@ class ReviewableProposal:
         preview: ClickPreview | None = None,
     ) -> "ReviewableProposal":
         action = str(action_type or "").strip()
-        if action not in _STATE_CHANGING_ACTIONS:
+        if action not in _REVIEWABLE_ACTIONS:
             raise ValueError(f"action requires no act proposal or is unsupported: {action}")
         return cls(
             proposal_type="act",

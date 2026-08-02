@@ -7,7 +7,7 @@ Own the LLM boundary, provider calls, one-step decision schema, prompt contracts
 ## Lead When
 
 - Brain provider configuration, model discovery, or API request shape changes
-- structured decisions such as `say`, `observe`, `propose_act`, `propose_remember`, or `propose_learn_skill` change
+- structured decisions such as `say`, `observe`, `propose_act`, or `propose_remember` change
 - `/api/chat/stream` decision events or Brain error handling changes
 - prompt/persona/self-state rules change
 

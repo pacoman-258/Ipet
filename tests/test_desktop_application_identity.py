@@ -14,6 +14,7 @@ class _FakeApplication:
         self.application_name = ""
         self.display_name = ""
         self.icon = None
+        self.quit_on_last_window_closed = True
         if not supports_display_name:
             self.setApplicationDisplayName = None
 
@@ -25,6 +26,9 @@ class _FakeApplication:
 
     def setWindowIcon(self, icon) -> None:
         self.icon = icon
+
+    def setQuitOnLastWindowClosed(self, enabled: bool) -> None:
+        self.quit_on_last_window_closed = enabled
 
 
 class DesktopApplicationIdentityTests(unittest.TestCase):
@@ -50,6 +54,23 @@ class DesktopApplicationIdentityTests(unittest.TestCase):
 
         self.assertEqual(app.application_name, "Ipet")
         self.assertIs(app.icon, icon)
+
+    def test_auxiliary_window_close_does_not_exit_desktop_host(self) -> None:
+        app = _FakeApplication()
+
+        main.configure_application_lifecycle(app)
+
+        self.assertFalse(app.quit_on_last_window_closed)
+
+    def test_desktop_entrypoint_applies_application_lifecycle_policy(self) -> None:
+        tree = ast.parse(inspect.getsource(main))
+        called_functions = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+        self.assertIn("configure_application_lifecycle", called_functions)
 
     def test_desktop_window_sets_the_same_title_and_icon(self) -> None:
         tree = ast.parse(textwrap.dedent(inspect.getsource(main.DesktopPet.__init__)))

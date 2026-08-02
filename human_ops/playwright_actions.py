@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Sequence
 from urllib.parse import urlparse
 
+from brain.contracts import action_choices
+
 from .approvals import ReviewableProposal
 from .chrome_profiles import (
     active_chrome_profiles,
@@ -22,22 +24,7 @@ from .chrome_profiles import (
 
 _ELEMENT_REF_RE = re.compile(r"^e\d+$")
 _SESSION_RE = re.compile(r"[^A-Za-z0-9_-]+")
-_OPERATIONS = {
-    "attach",
-    "open",
-    "snapshot",
-    "click",
-    "fill",
-    "type",
-    "press",
-    "go_back",
-    "go_forward",
-    "reload",
-    "tab_list",
-    "tab_new",
-    "tab_select",
-    "tab_close",
-}
+_OPERATIONS = frozenset(action_choices("playwright", "operation"))
 _KEYS = {
     "Enter",
     "Tab",

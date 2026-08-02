@@ -48,11 +48,6 @@ EXPECTED_COMPAT_EXPORTS = {
     "_infer_contact_label",
     "_infer_recent_chat_messages",
     "_label_aliases",
-    "_looks_like_app_launch_request",
-    "_looks_like_chat_reply_request",
-    "_looks_like_click_request",
-    "_looks_like_desktop_action_request",
-    "_looks_like_desktop_observe_request",
     "_looks_like_visual_observation_failure",
     "_normalize_observed_click_coordinates",
     "_observation_has_reviewable_click_affordance",
@@ -105,14 +100,15 @@ class BackendAppAdapterExportsTests(unittest.TestCase):
     def test_route_dependencies_keep_reading_patched_backend_app_globals(self) -> None:
         with mock.patch.object(
             backend_app,
-            "_looks_like_click_request",
+            "_observe_decision_requests_click",
             return_value=mock.sentinel.result,
         ) as patched:
             deps = backend_app._chat_stream_route_deps()
-            result = deps.looks_like_click_request("click")
+            decision = mock.sentinel.decision
+            result = deps.observe_decision_requests_click(decision)
 
         self.assertIs(result, mock.sentinel.result)
-        patched.assert_called_once_with("click")
+        patched.assert_called_once_with(decision)
 
 
 if __name__ == "__main__":

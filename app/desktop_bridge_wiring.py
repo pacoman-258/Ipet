@@ -5,6 +5,7 @@ from typing import Callable
 
 _PET_BRIDGE_SIGNAL_HANDLERS = (
     ("stateChanged", "on_web_state_changed"),
+    ("interactiveRegionsChanged", "apply_interactive_regions"),
     ("openSettingsRequested", "open_settings_page"),
     ("startAsrWarmupRequested", "request_asr_warmup"),
     ("minimizeWindowRequested", "showMinimized"),

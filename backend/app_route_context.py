@@ -75,17 +75,19 @@ class _LiveRouteDependencyContext:
         self.stream_qwen_tts_local = lambda **kwargs: self._call("_stream_qwen_tts_local_for_route", **kwargs)
         self.sse = lambda event, data: self._call("_sse", event, data)
         self.decision_from_completion = lambda completion: self._call("_decision_from_completion", completion)
-        self.fallback_after_observe_brain_error = lambda observation_text, user_text: self._call(
+        self.fallback_after_observe_brain_error = lambda observation_text, require_coordinates=False: self._call(
             "_fallback_after_observe_brain_error",
             observation_text,
-            user_text,
+            require_coordinates,
         )
-        self.looks_like_click_request = lambda text: self._call("_looks_like_click_request", text)
+        self.observe_decision_requests_click = lambda decision: self._call(
+            "_observe_decision_requests_click",
+            decision,
+        )
         self.click_coordinate_clarification_text = lambda observation_text: self._call(
             "_click_coordinate_clarification_text",
             observation_text,
         )
-        self.looks_like_desktop_action_request = lambda text: self._call("_looks_like_desktop_action_request", text)
         self.coerce_decision_for_human_ops = lambda user_text, decision: self._call(
             "_coerce_decision_for_human_ops",
             user_text,

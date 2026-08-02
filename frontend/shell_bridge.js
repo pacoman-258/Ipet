@@ -4,12 +4,12 @@
     const window = deps.window || globalThis.window;
     const getQtBridge = typeof deps.getQtBridge === "function" ? deps.getQtBridge : () => null;
 
-    function callQtBridge(methodName) {
+    function callQtBridge(methodName, ...args) {
       const qtBridge = getQtBridge();
       if (!qtBridge || typeof qtBridge[methodName] !== "function") {
         return false;
       }
-      qtBridge[methodName]();
+      qtBridge[methodName](...args);
       return true;
     }
 

@@ -125,6 +125,7 @@ class EnvironmentRoutesTests(unittest.TestCase):
         self.assertIn("回来", delivery["text"])
         self.assertIn("不可信数据", self.brain_calls[0]["user_text"])
         self.assertEqual(self.brain_calls[0]["conversation_history"][0]["role"], "system")
+        self.assertEqual(self.brain_calls[0]["prompt_profile"], "proactive")
         self.assertFalse(self.brain_configs[0]["web_search_enabled"])
         self.assertNotIn("playwright_profile", self.brain_configs[0])
         feedback = self.client.post(

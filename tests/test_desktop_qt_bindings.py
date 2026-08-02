@@ -32,6 +32,7 @@ QT_EXPORT_NAMES = (
     "QImage",
     "QPainter",
     "QPixmap",
+    "QRegion",
     "QWebChannel",
     "QWebEnginePage",
     "QWebEngineSettings",
@@ -81,6 +82,7 @@ def _fake_qt_modules(binding_name: str) -> dict[str, ModuleType]:
             QImage=f"{binding_name}.QImage",
             QPainter=f"{binding_name}.QPainter",
             QPixmap=f"{binding_name}.QPixmap",
+            QRegion=f"{binding_name}.QRegion",
         ),
         f"{binding_name}.QtWebChannel": _module(
             f"{binding_name}.QtWebChannel",

@@ -13,6 +13,14 @@
     const navChatButtonEl = refs.navChatButtonEl;
     const windowMinimizeEl = refs.windowMinimizeEl;
     const windowCloseEl = refs.windowCloseEl;
+    const chatPanelEl = refs.chatPanelEl;
+    const petContextMenuEl = refs.petContextMenuEl;
+    const petMenuChatEl = refs.petMenuChatEl;
+    const petMenuTemporaryChatEl = refs.petMenuTemporaryChatEl;
+    const petMenuHistoryEl = refs.petMenuHistoryEl;
+    const petMenuSettingsEl = refs.petMenuSettingsEl;
+    const petMenuMinimizeEl = refs.petMenuMinimizeEl;
+    const petMenuCloseEl = refs.petMenuCloseEl;
     const chatModeButtons = refs.chatModeButtons || [];
     const memoryModeButtons = refs.memoryModeButtons || [];
     const chatCloseEl = refs.chatCloseEl;
@@ -31,6 +39,7 @@
     const openSettingsPage = typeof deps.openSettingsPage === "function" ? deps.openSettingsPage : () => {};
     const minimizeWindow = typeof deps.minimizeWindow === "function" ? deps.minimizeWindow : () => {};
     const closeWindow = typeof deps.closeWindow === "function" ? deps.closeWindow : () => {};
+    const callQtBridge = typeof deps.callQtBridge === "function" ? deps.callQtBridge : () => false;
     const applyBackgroundVisuals =
       typeof deps.applyBackgroundVisuals === "function" ? deps.applyBackgroundVisuals : () => {};
     const setupStageInteraction =
@@ -80,6 +89,9 @@
     const refreshStatus = typeof deps.refreshStatus === "function" ? deps.refreshStatus : () => {};
 
     let pendingConfig = null;
+    let lastInteractiveRegionPayload = "";
+    let interactiveRegionSyncPending = false;
+    let interactiveRegionTick = 0;
 
     function canChangeConversation() {
       return ["idle", "awaiting_followup_input"].includes(getChatState());
@@ -91,6 +103,104 @@
       }
       showError("当前回复尚未结束，请稍后再切换会话。");
       return false;
+    }
+
+    function regionFromRect(rect, padding = 0) {
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const left = Math.max(0, Math.floor(rect.left - padding));
+      const top = Math.max(0, Math.floor(rect.top - padding));
+      const right = Math.min(runtimeWindow.innerWidth, Math.ceil(rect.right + padding));
+      const bottom = Math.min(runtimeWindow.innerHeight, Math.ceil(rect.bottom + padding));
+      if (right <= left || bottom <= top) {
+        return null;
+      }
+      return { x: left, y: top, width: right - left, height: bottom - top };
+    }
+
+    function syncInteractiveRegions() {
+      interactiveRegionSyncPending = false;
+      const regions = [];
+      const modelRegion = regionFromRect(petSceneController.modelBoundsInClientSpace?.(), 6);
+      if (modelRegion) {
+        regions.push(modelRegion);
+      }
+      if (petContextMenuEl?.classList.contains("open")) {
+        const menuRegion = regionFromRect(petContextMenuEl.getBoundingClientRect(), 2);
+        if (menuRegion) {
+          regions.push(menuRegion);
+        }
+      }
+      if (chatPanelEl?.classList.contains("open")) {
+        const chatRegion = regionFromRect(chatPanelEl.getBoundingClientRect(), 2);
+        if (chatRegion) {
+          regions.push(chatRegion);
+        }
+      }
+      const payload = JSON.stringify({ regions });
+      if (payload === lastInteractiveRegionPayload) {
+        return;
+      }
+      if (callQtBridge("setInteractiveRegions", payload)) {
+        lastInteractiveRegionPayload = payload;
+      }
+    }
+
+    function scheduleInteractiveRegionSync() {
+      if (interactiveRegionSyncPending) {
+        return;
+      }
+      interactiveRegionSyncPending = true;
+      runtimeWindow.requestAnimationFrame(syncInteractiveRegions);
+    }
+
+    function hidePetContextMenu() {
+      if (!petContextMenuEl) {
+        return;
+      }
+      petContextMenuEl.classList.remove("open");
+      petContextMenuEl.setAttribute("aria-hidden", "true");
+      scheduleInteractiveRegionSync();
+    }
+
+    function showPetContextMenuAt(clientX, clientY) {
+      if (!petContextMenuEl) {
+        hidePetContextMenu();
+        return false;
+      }
+      const x = Number(clientX);
+      const y = Number(clientY);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return false;
+      }
+      const pointTarget = runtimeWindow.document?.elementFromPoint?.(x, y);
+      if (pointTarget !== canvas || !petSceneController.isPointOnModel?.(x, y)) {
+        hidePetContextMenu();
+        return false;
+      }
+      petMenuChatEl?.classList.toggle("is-active", getCurrentMemoryMode() === "persistent");
+      petMenuTemporaryChatEl?.classList.toggle("is-active", getCurrentMemoryMode() === "temporary");
+      petContextMenuEl.classList.add("open");
+      petContextMenuEl.setAttribute("aria-hidden", "false");
+      const menuWidth = Math.max(petContextMenuEl.offsetWidth, 248);
+      const menuHeight = Math.max(petContextMenuEl.offsetHeight, 260);
+      const left = Math.min(Math.max(x + 12, 8), Math.max(8, runtimeWindow.innerWidth - menuWidth - 8));
+      const top = Math.min(Math.max(y - 24, 8), Math.max(8, runtimeWindow.innerHeight - menuHeight - 8));
+      petContextMenuEl.style.left = `${left}px`;
+      petContextMenuEl.style.top = `${top}px`;
+      petContextMenuEl.focus?.();
+      scheduleInteractiveRegionSync();
+      return true;
+    }
+
+    async function startConversation(memoryMode) {
+      if (!guardConversationChange()) {
+        return;
+      }
+      setMemoryMode(memoryMode);
+      hidePetContextMenu();
+      await createNewTopic(true);
     }
 
     function installPixiRenderer() {
@@ -112,6 +222,11 @@
       setupStageInteraction();
 
       pixiApp.ticker.add(() => {
+        interactiveRegionTick += 1;
+        if (interactiveRegionTick >= 6) {
+          interactiveRegionTick = 0;
+          scheduleInteractiveRegionSync();
+        }
         const currentModel = petSceneController.getCurrentModel();
         const currentApp = petSceneController.getPixiApp();
         if (!currentModel || !currentApp || !state.follow_mouse) {
@@ -134,6 +249,7 @@
         new runtimeWindow.QWebChannel(runtimeWindow.qt.webChannelTransport, (channel) => {
           setQtBridge(channel.objects.qtBridge);
           onQtBridgeReady();
+          scheduleInteractiveRegionSync();
           logToQt("QWebChannel ready");
         });
       }
@@ -158,6 +274,39 @@
       });
       windowCloseEl.addEventListener("click", () => {
         closeWindow();
+      });
+      petMenuChatEl?.addEventListener("click", async () => {
+        await startConversation("persistent");
+      });
+      petMenuTemporaryChatEl?.addEventListener("click", async () => {
+        await startConversation("temporary");
+      });
+      petMenuHistoryEl?.addEventListener("click", () => {
+        hidePetContextMenu();
+        openChat();
+        toggleChatHistoryDrawer();
+      });
+      petMenuSettingsEl?.addEventListener("click", () => {
+        hidePetContextMenu();
+        openSettingsPage();
+      });
+      petMenuMinimizeEl?.addEventListener("click", () => {
+        hidePetContextMenu();
+        minimizeWindow();
+      });
+      petMenuCloseEl?.addEventListener("click", () => {
+        hidePetContextMenu();
+        closeWindow();
+      });
+      runtimeWindow.addEventListener("contextmenu", (event) => {
+        if (showPetContextMenuAt(event.clientX, event.clientY)) {
+          event.preventDefault();
+        }
+      });
+      runtimeWindow.addEventListener("pointerdown", (event) => {
+        if (petContextMenuEl?.classList.contains("open") && !petContextMenuEl.contains(event.target)) {
+          hidePetContextMenu();
+        }
       });
       for (const button of chatModeButtons) {
         button.addEventListener("click", () => setChatMode(button.dataset.chatMode));
@@ -210,6 +359,11 @@
         stopSpeaking(true);
       });
       runtimeWindow.addEventListener("keydown", async (event) => {
+        if (event.key === "Escape" && petContextMenuEl?.classList.contains("open")) {
+          event.preventDefault();
+          hidePetContextMenu();
+          return;
+        }
         const stopShortcut = event.key === "Escape" || (event.metaKey && event.key === ".");
         if (stopShortcut && ["streaming", "awaiting_approval", "stopping"].includes(getChatState())) {
           event.preventDefault();
@@ -237,10 +391,12 @@
         stopPushToTalk();
       }, true);
       runtimeWindow.addEventListener("blur", () => {
+        hidePetContextMenu();
         if (asrController.isBusy()) {
           cancelAsrSession({ restoreInput: true, statusMessage: defaultAsrStatusText(), tone: "idle" });
         }
       });
+      runtimeWindow.addEventListener("resize", scheduleInteractiveRegionSync);
       chatPanelController.installChatPanelInteractions();
     }
 
@@ -267,6 +423,7 @@
       installQWebChannel();
       installEventListeners();
       await consumeStartupConfig();
+      scheduleInteractiveRegionSync();
 
       syncPetDisplayName();
       applyChatModeUI();
@@ -290,6 +447,7 @@
         streamChat,
         stopSpeaking,
         enqueueTTSChunk,
+        showContextMenuAt: showPetContextMenuAt,
         setPendingConfig(config) {
           pendingConfig = config;
         },

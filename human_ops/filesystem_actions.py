@@ -8,20 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from brain.contracts import action_names, validate_action_arguments
+
 from .approvals import ReviewableProposal
 
 
-FILESYSTEM_ACTIONS = frozenset(
-    {
-        "file_list",
-        "file_read",
-        "file_write",
-        "file_mkdir",
-        "file_copy",
-        "file_move",
-        "file_delete",
-    }
-)
+FILESYSTEM_ACTIONS = frozenset(action_names(("file",)))
 
 MAX_READ_BYTES = 1_000_000
 MAX_WRITE_BYTES = 1_000_000
@@ -109,24 +101,13 @@ def validate_filesystem_action(action_type: str, arguments: dict[str, Any] | Non
     args = arguments if isinstance(arguments, dict) else {}
     if action not in FILESYSTEM_ACTIONS:
         return False, action or "unknown"
-    if action in {"file_list", "file_read", "file_write", "file_mkdir", "file_delete"} and not str(
-        args.get("path") or ""
-    ).strip():
-        return False, f"{action} missing path"
+    valid, reason = validate_action_arguments(action, args)
+    if not valid:
+        return False, reason
     if action == "file_read":
         encoding = str(args.get("encoding") or "utf-8").strip().lower()
         if encoding != "utf-8":
             return False, "file_read only supports utf-8"
-    if action == "file_write":
-        if "content" not in args:
-            return False, "file_write missing content"
-        if not isinstance(args.get("overwrite", False), bool):
-            return False, "file_write overwrite must be boolean"
-    if action in {"file_copy", "file_move"}:
-        if not str(args.get("source") or "").strip():
-            return False, f"{action} missing source"
-        if not str(args.get("destination") or "").strip():
-            return False, f"{action} missing destination"
     if action == "file_list" and "max_entries" in args:
         try:
             if int(args["max_entries"]) < 1:

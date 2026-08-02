@@ -110,6 +110,7 @@
       isAsrBusy: () => graphState.asrController.isBusy(),
       cancelAsrSession: facade.cancelAsrSession,
       toggleChatSkillsDrawer: facade.toggleChatSkillsDrawer,
+      getPetBounds: () => controllerRegistry.petScene?.modelBoundsInClientSpace?.() || null,
       window: runtimeWindow,
     });
     controllerRegistry.chatPanel = chatPanelController;
