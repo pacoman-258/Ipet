@@ -76,7 +76,7 @@ Brain owns the LLM decision for a single turn. Its input is a compact packet:
 - available skills
 - current approval or execution status
 
-Brain's system prompt has two explicit layers. One executable schema registry owns decision kinds, action arguments, goal statuses, and profile allowlists; prompt rendering and runtime validation both read it. `prompts/Ipet.md` supplies the general policy template, while compact chat, proactive, desktop-correction, and filesystem-correction renderers omit irrelevant capabilities. Correction profiles receive only the current state delta and exact error, not persona or history. A user-selected Markdown file from `prompts/` is rendered only into the bounded normal-turn persona slot for identity, tone, speaking style, and role-play. Persona, self-state, and system-summary slots are capped independently at 8,000, 2,000, and 6,000 characters before every normal provider call. The contract is restated after dynamic persona, self-state, and summary data, so a persona cannot expand actions, bypass approval, weaken verification, or replace the output schema. The selected filename is stored as `brain.persona_prompt_file`; prompt content remains in its Markdown file and is read at turn time.
+Brain's system prompt has two explicit layers. One executable schema registry owns decision kinds, action arguments, goal statuses, and profile allowlists; prompt rendering and runtime validation both read it. `prompts/Ipet.md` supplies the general policy template, while compact chat, proactive, desktop-correction, and filesystem-correction renderers omit irrelevant capabilities. Correction profiles receive only the current state delta and exact error, not persona or history. A user-selected Markdown file from `prompts/` is rendered only into the bounded normal-turn persona slot for identity, tone, speaking style, and role-play. Persona, self-state, and system-summary slots are capped independently at 8,000, 2,000, and 6,000 characters before every normal provider call. Provider serialization keeps the executable contract and bounded configuration in an exact reusable prefix, then places the changing system summary after its cache boundary; the allowlist is restated after all dynamic data, so a persona cannot expand actions, bypass approval, weaken verification, or replace the output schema. The selected filename is stored as `brain.persona_prompt_file`; prompt content remains in its Markdown file and is read at turn time.
 
 Brain returns exactly one structured next step:
 
@@ -121,6 +121,8 @@ Human Ops is the safety and approval layer. It owns:
 - user-visible explanation of side effects
 
 Any action that touches files, processes, configuration, network access, external services, destructive operations, or durable user data must pass through Human Ops.
+
+The cross-platform shell action remains inside this boundary. Brain supplies an explicit risk judgment, while Human Ops owns a local versioned dangerous-command catalog whose matches can only raise risk. Commands that both layers classify as safe may run without interrupting the user; dangerous or uncertain commands require approval that is bound to the full command and working directory. Timeout and output bounds limit resource use, but they do not constitute an OS sandbox.
 
 ## 6. Memory & Skills
 

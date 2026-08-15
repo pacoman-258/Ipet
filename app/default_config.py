@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from backend.environment import DEFAULT_ENVIRONMENT_CONFIG
+from backend.game import DEFAULT_GAME_CONFIG
 
 
 def _clone_json_value(value: Any) -> Any:
@@ -23,6 +24,7 @@ def create_default_config(
     return {
         "vision": _clone_json_value(default_vision_config),
         "environment": _clone_json_value(default_environment_config or DEFAULT_ENVIRONMENT_CONFIG),
+        "game": _clone_json_value(DEFAULT_GAME_CONFIG),
         "model_path": default_model_path,
         "brain": {
             "provider": "openai_compatible",
@@ -48,6 +50,10 @@ def create_default_config(
             "require_memory_review": True,
             "clipboard_write_review": True,
             "click_preview": {"x": 160, "y": 54, "label": "目标位置", "size": 16},
+            "shell": {
+                "enabled": True,
+                "max_output_bytes": 200000,
+            },
             "observe_model": {
                 "enabled": False,
                 "provider": "openai_compatible",

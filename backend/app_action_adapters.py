@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from human_ops import ReviewableProposal
 from human_ops.filesystem_actions import FILESYSTEM_ACTIONS, execute_filesystem_action, filesystem_action_label
 from human_ops.playwright_actions import execute_playwright_action
+from human_ops.shell_actions import MAX_OUTPUT_BYTES, SHELL_ACTION, assess_shell_risk, execute_shell_action
 
 from . import desktop_command_client as _desktop_command_client_helpers
 
@@ -22,6 +23,9 @@ class AppActionAdapterDependencies:
     filesystem_max_read_bytes: int = 1_000_000
     filesystem_max_write_bytes: int = 1_000_000
     filesystem_max_list_entries: int = 200
+    shell_default_cwd: Path = Path(".")
+    shell_max_output_bytes: int = MAX_OUTPUT_BYTES
+    shell_enabled: bool = True
     command_timeout_sec: float = 8.0
 
 
@@ -79,6 +83,14 @@ async def perform_human_ops_action(
     if action_type == "playwright":
         playwright_handler = deps.perform_playwright_action or execute_playwright_action
         return await playwright_handler(proposal)
+    if action_type == SHELL_ACTION:
+        if not deps.shell_enabled:
+            raise RuntimeError("Human Ops shell execution is disabled.")
+        return await execute_shell_action(
+            proposal,
+            default_cwd=deps.shell_default_cwd,
+            max_output_bytes=deps.shell_max_output_bytes,
+        )
     if action_type in FILESYSTEM_ACTIONS:
         roots = deps.filesystem_roots
         if not roots:
@@ -133,6 +145,21 @@ async def request_native_human_ops_approval(
             "读取会把限定大小的 UTF-8 文本返回给当前会话，写入/复制/移动/删除会改变本地文件状态。"
             "不会跟随最终符号链接，不会递归删除，不会覆盖复制或移动目标；拒绝后不执行任何文件操作。"
         )
+    elif action_type == SHELL_ACTION:
+        risk = assess_shell_risk(args)
+        reasons = "；".join(risk.reasons) or str(args.get("risk_reason") or "未提供")
+        rules = ", ".join(risk.matched_rules) or "无"
+        target_line = (
+            f"\n完整命令：{str(args.get('command') or '')}"
+            f"\n工作目录：{str(args.get('cwd') or '.')}"
+            f"\n模型判断：{str(args.get('model_risk') or 'uncertain')} — {str(args.get('risk_reason') or '')}"
+            f"\n本地风险规则：{rules}"
+        )
+        impact = (
+            f"风险原因：{reasons}。批准后，Ipet 会把上面的完整字符串交给当前操作系统 Shell，"
+            "命令及其子进程拥有与 Ipet 相同的用户权限，可能访问网络、修改或删除数据；"
+            "执行受超时和输出长度限制，但当前版本不提供操作系统级沙箱。拒绝后不会启动进程。"
+        )
     else:
         target_line = f"\n目标应用：{target_app}" if target_app else "\n目标界面：macOS 桌面"
         impact = (
@@ -178,6 +205,7 @@ async def notify_human_ops_action(
         "file_write": "写入文件",
         "file_mkdir": "创建文件夹",
         "file_copy": "复制文件",
+        "shell": "运行 Shell 命令",
         "file_move": "移动文件",
         "file_delete": "删除文件",
     }.get(action_type, "操作")

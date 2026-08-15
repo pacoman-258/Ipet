@@ -6,6 +6,7 @@
     const petSceneController = deps.petSceneController || {};
     const asrController = deps.asrController || {};
     const chatPanelController = deps.chatPanelController || {};
+    const proactivePresenceController = deps.proactivePresenceController || {};
 
     const canvas = refs.canvas;
     const navSettingsButtonEl = refs.navSettingsButtonEl;
@@ -18,6 +19,7 @@
     const petMenuChatEl = refs.petMenuChatEl;
     const petMenuTemporaryChatEl = refs.petMenuTemporaryChatEl;
     const petMenuHistoryEl = refs.petMenuHistoryEl;
+    const petMenuGameEl = refs.petMenuGameEl;
     const petMenuSettingsEl = refs.petMenuSettingsEl;
     const petMenuMinimizeEl = refs.petMenuMinimizeEl;
     const petMenuCloseEl = refs.petMenuCloseEl;
@@ -75,6 +77,7 @@
       typeof deps.defaultAsrStatusText === "function" ? deps.defaultAsrStatusText : () => "";
     const cancelAsrSession = typeof deps.cancelAsrSession === "function" ? deps.cancelAsrSession : () => {};
     const stopSpeaking = typeof deps.stopSpeaking === "function" ? deps.stopSpeaking : () => {};
+    const toggleGamePause = typeof deps.toggleGamePause === "function" ? deps.toggleGamePause : async () => false;
     const startPushToTalk = typeof deps.startPushToTalk === "function" ? deps.startPushToTalk : async () => {};
     const stopPushToTalk = typeof deps.stopPushToTalk === "function" ? deps.stopPushToTalk : () => {};
     const applyConfig = typeof deps.applyConfig === "function" ? deps.applyConfig : async () => {};
@@ -286,6 +289,10 @@
         openChat();
         toggleChatHistoryDrawer();
       });
+      petMenuGameEl?.addEventListener("click", async () => {
+        hidePetContextMenu();
+        await toggleGamePause();
+      });
       petMenuSettingsEl?.addEventListener("click", () => {
         hidePetContextMenu();
         openSettingsPage();
@@ -444,6 +451,7 @@
         playMotionCompat,
         openChat,
         closeChat,
+        setProactiveSuspended: (value) => proactivePresenceController.setSuspended?.(value),
         streamChat,
         stopSpeaking,
         enqueueTTSChunk,

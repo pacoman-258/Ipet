@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -191,8 +192,35 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
         )
         self.assertEqual(call["cwd"], str(root))
         self.assertEqual(call["env"]["IPET_LOCAL_API_TOKEN"], "secret-token")
+        self.assertGreater(int(call["env"]["IPET_DESKTOP_PARENT_PID"]), 1)
         self.assertIs(service.backend_process, fake_subprocess.process)
         self.assertTrue(service.backend_started_by_app)
+
+    def test_backend_publishes_actual_loopback_url_for_game_bridge(self) -> None:
+        module = importlib.import_module("app.service_lifecycle")
+        with tempfile.TemporaryDirectory() as tmp:
+            discovery_path = Path(tmp) / "ipet-game-bridge.json"
+            config = {"chat": {"backend_url": "http://127.0.0.1:8017"}}
+            service = module.DesktopServiceLifecycle(
+                config,
+                root_dir=Path(tmp),
+                default_backend_url="http://127.0.0.1:8008",
+                default_asr_api_base_url="http://127.0.0.1:8012",
+                local_api_token_env="IPET_LOCAL_API_TOKEN",
+                local_api_token="secret-token",
+                is_backend_healthy=lambda _url: True,
+                is_backend_authorized=lambda _url: True,
+                is_backend_live=lambda _url: True,
+                is_local_service_url=lambda _url: True,
+                game_bridge_discovery_path=discovery_path,
+            )
+
+            service.ensure_backend_service()
+
+            self.assertEqual(
+                json.loads(discovery_path.read_text(encoding="utf-8")),
+                {"base_url": "http://127.0.0.1:8017", "token": "secret-token"},
+            )
 
     def test_stale_local_backend_with_another_token_is_not_reused(self) -> None:
         module = importlib.import_module("app.service_lifecycle")
@@ -309,8 +337,11 @@ class DesktopServiceLifecycleSplitTests(unittest.TestCase):
                 service.start_qwen_tts_service_async()
 
         call = fake_subprocess.popen_calls[0]
-        self.assertEqual(call["cwd"], str(qwen_root))
-        self.assertEqual(call["cmd"][:4], [str(qwen_python), "-m", "uvicorn", "app:app"])
+        self.assertEqual(call["cwd"], str(root))
+        self.assertEqual(call["cmd"][:3], [service.sys.executable, "-m", "app.managed_child_service"])
+        self.assertEqual(call["cmd"][-10:-6], [str(qwen_python), "-m", "uvicorn", "app:app"])
+        self.assertIn("--parent-pid", call["cmd"])
+        self.assertEqual(call["cmd"][call["cmd"].index("--cwd") + 1], str(qwen_root))
         self.assertIs(service.qwen_tts_process, fake_subprocess.process)
         self.assertTrue(service.qwen_tts_started_by_app)
 

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "design_sources": [
+    "https://openai.com/index/running-codex-safely/",
+    "https://cdn.openai.com/pdf/ac7c37ae-7f4c-4442-b741-2eabdeaf77e0/oai_5_2_Codex.pdf"
+  ],
+  "rules": [
+    {"id": "filesystem_delete", "reason": "may delete files or directories", "pattern": "(?:^|[;&|\\s])(?:sudo\\s+)?(?:rm|rmdir|shred|unlink|del|erase|remove-item)\\b"},
+    {"id": "filesystem_mutation", "reason": "may create, overwrite, copy, move, or rename local data", "pattern": "(?:^|[;&|\\s])(?:mv|cp|touch|mkdir|tee|set-content|add-content|new-item|copy-item|move-item|rename-item|sed\\s+[^;&|]*(?:-i|--in-place))\\b"},
+    {"id": "disk_or_filesystem", "reason": "may overwrite, format, or repartition storage", "pattern": "(?:^|[;&|\\s])(?:dd|mkfs(?:\\.[a-z0-9]+)?|format|diskpart|fdisk|parted|cipher\\s+/w)\\b"},
+    {"id": "privilege_or_policy", "reason": "may elevate privileges or weaken execution policy", "pattern": "(?:^|[;&|\\s])(?:sudo|su|doas|runas|set-executionpolicy)\\b"},
+    {"id": "system_or_process", "reason": "may stop processes, services, or the operating system", "pattern": "(?:^|[;&|\\s])(?:shutdown|reboot|halt|poweroff|kill|pkill|killall|taskkill|systemctl|service|sc\\s+(?:stop|delete|config))\\b"},
+    {"id": "persistence", "reason": "may create persistent scheduled or startup execution", "pattern": "(?:^|[;&|\\s])(?:crontab|at|launchctl|schtasks|reg\\s+(?:add|delete))\\b"},
+    {"id": "network_or_remote", "reason": "may access remote systems, transfer data, or execute a download", "pattern": "(?:^|[;&|\\s])(?:curl|wget|scp|sftp|ssh|rsync|invoke-webrequest|invoke-restmethod|start-bitstransfer)\\b"},
+    {"id": "package_or_system_change", "reason": "may install, remove, or update software", "pattern": "(?:^|[;&|\\s])(?:apt|apt-get|dnf|yum|pacman|brew|winget|choco|pip|pip3|npm|pnpm|yarn|gem|cargo)\\s+(?:install|uninstall|remove|update|upgrade|add|publish)\\b"},
+    {"id": "git_state_change", "reason": "may publish, rewrite, discard, or create durable version-control state", "pattern": "(?:^|[;&|\\s])git\\s+(?:push|commit|merge|rebase|clean|tag|reset\\s+--hard|branch\\s+-[dD]|stash\\s+(?:drop|clear)|checkout\\s+--|restore\\s+(?:--staged\\s+)?(?:\\.|/))\\b"},
+    {"id": "cloud_container_change", "reason": "may change cloud, cluster, container, or infrastructure state", "pattern": "(?:^|[;&|\\s])(?:docker\\s+(?:run|exec|rm|rmi|system\\s+prune|compose\\s+(?:down|up))|kubectl\\s+(?:apply|delete|patch|replace|exec)|terraform\\s+(?:apply|destroy)|aws|az|gcloud)\\b"},
+    {"id": "nested_interpreter", "reason": "interpreter flags can hide arbitrary nested code", "pattern": "(?:^|[;&|\\s])(?:python(?:3)?\\s+-c|node\\s+-e|ruby\\s+-e|perl\\s+-e|(?:ba|z|fi|k)?sh\\s+-c|powershell(?:\\.exe)?\\s+(?:-[^\\s]+\\s+)*-(?:command|encodedcommand))\\b"},
+    {"id": "shell_write", "reason": "shell redirection may overwrite or append local data", "pattern": "(?:^|[^<])(?:>>?|2>|&>)\\s*[^&]"},
+    {"id": "dangerous_permissions", "reason": "may broaden permissions or change ownership", "pattern": "(?:^|[;&|\\s])(?:chmod|chown|chgrp|icacls|takeown)\\b"},
+    {"id": "sensitive_data_access", "reason": "may access sensitive credentials, keys, or configuration", "pattern": "(?:^|[;&|\\s])(?:.*[\\s\"'/\\\\])?(?:~[\\/\\\\]?\\.ssh|~[\\/\\\\]?\\.aws|~[\\/\\\\]?\\.gnupg|~[\\/\\\\]?\\.kube|~[\\/\\\\]?\\.docker|~[\\/\\\\]?\\.netrc|~[\\/\\\\]?\\.npmrc|~[\\/\\\\]?\\.pypirc|\\.env(?:\\.[a-zA-Z0-9_-]+)?|id_rsa|id_ed25519|id_ecdsa|id_dsa|credentials|\\/etc\\/(?:shadow|passwd|sudoers|master\\.passwd))\\b"},
+    {"id": "fork_bomb", "reason": "may exhaust system resources", "pattern": ":\\s*\\(\\s*\\)\\s*\\{[^}]*:\\s*\\|\\s*:"}
+  ]
+}

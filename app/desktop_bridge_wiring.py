@@ -8,7 +8,7 @@ _PET_BRIDGE_SIGNAL_HANDLERS = (
     ("interactiveRegionsChanged", "apply_interactive_regions"),
     ("openSettingsRequested", "open_settings_page"),
     ("startAsrWarmupRequested", "request_asr_warmup"),
-    ("minimizeWindowRequested", "showMinimized"),
+    ("minimizeWindowRequested", "hide_desktop_pet"),
     ("closeWindowRequested", "close"),
     ("showClickPreviewRequested", "show_click_preview"),
     ("hideClickPreviewRequested", "hide_click_preview"),

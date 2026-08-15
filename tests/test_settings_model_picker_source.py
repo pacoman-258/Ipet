@@ -30,7 +30,7 @@ class SettingsModelPickerSourceTests(unittest.TestCase):
 
     def test_settings_page_loads_model_picker_before_settings_controller(self) -> None:
         model_picker_script = '<script src="/settings_model_picker.js?v=1"></script>'
-        settings_script = '<script src="/settings.js?v=10"></script>'
+        settings_script = '<script src="/settings.js?v=11"></script>'
 
         self.assertIn(model_picker_script, self.html)
         self.assertIn(settings_script, self.html)

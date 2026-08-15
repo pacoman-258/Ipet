@@ -72,6 +72,27 @@ class DesktopApplicationIdentityTests(unittest.TestCase):
 
         self.assertIn("configure_application_lifecycle", called_functions)
 
+    def test_every_qt_quit_path_requests_desktop_shutdown(self) -> None:
+        tree = ast.parse(inspect.getsource(main))
+        connections = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "aboutToQuit"
+        ]
+        self.assertTrue(connections)
+        self.assertTrue(
+            any(
+                node.args
+                and isinstance(node.args[0], ast.Attribute)
+                and node.args[0].attr == "shutdown_desktop"
+                for node in connections
+            )
+        )
+
     def test_desktop_window_sets_the_same_title_and_icon(self) -> None:
         tree = ast.parse(textwrap.dedent(inspect.getsource(main.DesktopPet.__init__)))
         calls = [

@@ -20,6 +20,14 @@
         speak_enabled: true,
         open_chat_on_speak: true,
       },
+      game: {
+        enabled: true,
+        adapter: "slay_the_spire_2",
+        min_reaction_interval_sec: 5,
+        max_reactions_per_minute: 6,
+        reaction_instruction: "",
+        categories: { combat: true, growth: true, route: true, resources: true, outcome: true },
+      },
       chat: {
         backend_url: "http://127.0.0.1:8008",
         model: "gpt-5.4",

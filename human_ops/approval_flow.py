@@ -182,6 +182,7 @@ def execution_verification(
         "type_text": "typed",
         "key_press": "pressed",
         "playwright": "playwright_done",
+        "shell": "shell_done",
     }.get(action_type, "")
     if action_type.startswith("file_"):
         success_field = filesystem_action_success_field(action_type)
@@ -457,13 +458,20 @@ def stream_human_ops_proposal_decision(
     session_id = str(record.get("session_id") or "default")
     task_id = str(record.get("task_id") or proposal_key)
     label = deps.proposal_tool_label(proposal)
-    auto_authorized = (
+    authorization_mode = str(record.get("authorization_mode") or "").strip().lower()
+    full_auto_authorized = (
         proposal.proposal_type == "act"
-        and str(record.get("authorization_mode") or "").strip().lower() == AUTHORIZATION_MODE_FULL
+        and authorization_mode == AUTHORIZATION_MODE_FULL
     )
+    risk_auto_authorized = (
+        proposal.proposal_type == "act"
+        and authorization_mode == "risk_classified_safe"
+        and not proposal.requires_review
+    )
+    auto_authorized = full_auto_authorized or risk_auto_authorized
     authorization_payload = {
         "auto_authorized": auto_authorized,
-        "authorization_mode": AUTHORIZATION_MODE_FULL if auto_authorized else "review",
+        "authorization_mode": authorization_mode if auto_authorized else "review",
     }
 
     async def event_stream() -> AsyncIterator[str]:
@@ -522,8 +530,11 @@ def stream_human_ops_proposal_decision(
         if record.get("status") == "invalidated_by_stop":
             raise TaskStopped()
         TASK_CONTROL.check(task_id, next_action="待执行动作" if auto_authorized else "待审批动作")
-        if auto_authorized:
+        if full_auto_authorized:
             record["authorized_by"] = "full_authorization"
+        elif risk_auto_authorized:
+            record["authorized_by"] = "local_risk_policy"
+            record["status"] = "auto_authorized"
         else:
             record["status"] = "approved"
 
@@ -588,7 +599,7 @@ def stream_human_ops_proposal_decision(
             )
             return
 
-        if auto_authorized:
+        if full_auto_authorized:
             try:
                 actions_executed = int(record.get("actions_executed") or 0)
             except (TypeError, ValueError):
@@ -703,6 +714,9 @@ def stream_human_ops_proposal_decision(
                 final_text = f"已打开应用：{label}。"
             elif action_type == "playwright":
                 final_text = f"已执行 Playwright 操作：{label}。"
+            elif action_type == "shell":
+                exit_code = int(execution.get("exit_code") or 0)
+                final_text = f"已执行 Shell 命令（退出码 {exit_code}）：{label}。"
             elif action_type.startswith("file_"):
                 final_text = f"已执行文件动作：{label}。"
             else:
@@ -1169,9 +1183,25 @@ def stream_human_ops_proposal_decision(
                             if isinstance(current_private_config.get("human_ops"), dict)
                             else {}
                         )
+                        if not next_proposal.requires_review:
+                            if next_proposal_id in deps.pending_proposals:
+                                deps.pending_proposals[next_proposal_id]["authorization_mode"] = (
+                                    "risk_classified_safe"
+                                )
+                            async for event in stream_human_ops_proposal_decision(
+                                next_proposal_id,
+                                {"approved": True},
+                                deps,
+                            ):
+                                yield event
+                            return
+                        next_action_type = str(
+                            next_proposal.payload.get("action_type") or ""
+                        ).strip()
                         if (
                             full_authorization_enabled(current_human_ops_config)
                             and deps.notify_human_ops_action is not None
+                            and next_action_type != "shell"
                         ):
                             if next_proposal_id in deps.pending_proposals:
                                 deps.pending_proposals[next_proposal_id]["authorization_mode"] = (

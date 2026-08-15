@@ -86,6 +86,7 @@ class NeoBackendContractTests(unittest.TestCase):
                 "human_ops",
                 "vision",
                 "environment",
+                "game",
                 "memory",
                 "skills",
                 "diagnostics",

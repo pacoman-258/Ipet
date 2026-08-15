@@ -25,6 +25,7 @@ class DesktopConfigActions:
         set_geometry: Callable[[Any, int, int, int, int], None] | None = None,
         apply_window_geometry_from_config: Callable[[Any], None] | None = None,
         normalize_environment_config: Callable[[dict], dict] | None = None,
+        normalize_game_config: Callable[[dict], dict] | None = None,
     ) -> None:
         self.owner = owner
         self.json = json_module
@@ -36,6 +37,7 @@ class DesktopConfigActions:
         self.normalize_model_path = normalize_model_path
         self.normalize_vision_config = normalize_vision_config
         self.normalize_environment_config = normalize_environment_config or (lambda value: dict(value or {}))
+        self.normalize_game_config = normalize_game_config or (lambda value: dict(value or {}))
         self.keep_neo_config_shape = keep_neo_config_shape
         self.normalize_neo_chat_config = normalize_neo_chat_config
         self.screen_provider = screen_provider
@@ -116,6 +118,7 @@ class DesktopConfigActions:
         config["model_path"] = self.normalize_model_path(config.get("model_path", ""))
         config["vision"] = self.normalize_vision_config(config.get("vision", {}))
         config["environment"] = self.normalize_environment_config(config.get("environment", {}))
+        config["game"] = self.normalize_game_config(config.get("game", {}))
         self.keep_neo_config_shape(config)
         self.normalize_neo_chat_config(config)
         config["window"]["x"] = owner.x()

@@ -552,7 +552,19 @@ async def stream_chat_response(
             )
             if proposal_id in deps.pending_proposals:
                 deps.pending_proposals[proposal_id]["task_id"] = turn_id
-            if full_authorization_enabled(human_ops_config) and deps.stream_authorized_proposal is not None:
+            if getattr(proposal, "requires_review", True) is False and deps.stream_authorized_proposal is not None:
+                if proposal_id in deps.pending_proposals:
+                    deps.pending_proposals[proposal_id]["authorization_mode"] = "risk_classified_safe"
+                async for event in deps.stream_authorized_proposal(proposal_id):
+                    yield event
+                return
+            proposal_payload = proposal.payload if isinstance(getattr(proposal, "payload", None), dict) else {}
+            proposal_action_type = str(proposal_payload.get("action_type") or "").strip()
+            if (
+                full_authorization_enabled(human_ops_config)
+                and deps.stream_authorized_proposal is not None
+                and proposal_action_type != "shell"
+            ):
                 if proposal_id in deps.pending_proposals:
                     deps.pending_proposals[proposal_id]["authorization_mode"] = AUTHORIZATION_MODE_FULL
                 async for event in deps.stream_authorized_proposal(proposal_id):

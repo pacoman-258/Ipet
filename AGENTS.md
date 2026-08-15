@@ -1,6 +1,17 @@
 # Agent Development Guide
 
-This is the only development document that coding agents read by default. Start from the user request, locate the smallest relevant code slice, and open other docs only when the routing table below requires them.
+This is the canonical development guide for every coding agent and model used in this repository. Tool-specific entry files may import it, but must not copy or redefine its project rules. Start from the user request, locate the smallest relevant code slice, and open other docs only when the routing table below requires them.
+
+## Cross-Tool Collaboration Contract
+
+- Repository instructions, checked-in configuration, and nearby code define the style. Do not impose a model vendor's preferred architecture, naming, formatting, or workflow.
+- One working tree has one writer by default. Parallel writers are allowed only after the user assigns disjoint file or subsystem ownership; one lead owns every shared entrypoint, schema, generated artifact, and other high-conflict file.
+- Before writing, run `git status --short`, inspect the current file and its relevant diff, and state the intended file slice. Treat unfamiliar changes as another contributor's work.
+- Change only the owned slice. Do not revert, overwrite, broadly reformat, regenerate, or "clean up" unrelated work. If the required edit overlaps an unowned or unclear change, stop and ask for ownership instead of guessing.
+- Re-read a shared file immediately before patching it. If it changed since inspection, reconcile the new content and preserve both intents; never replace the file from a stale copy.
+- Keep patches responsibility-complete: when an interface changes, update its directly affected producer, consumer, and focused contract test together. Do not expand into adjacent refactors without authorization.
+- Ownership ends with a handoff that names changed files, checks run and their results, plus any unresolved risk. A plan, command dispatch, or partial test signal is not a completed handoff.
+- `AGENTS.md` is the single source of project-wide agent rules. Tool adapters such as `CLAUDE.md` must stay thin and point here; tool-only mechanics may be added only when they do not restate or contradict this guide.
 
 ## Safety And Authorization
 

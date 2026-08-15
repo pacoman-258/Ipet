@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -49,6 +51,7 @@ class DesktopServiceLifecycle:
         service_log_path: Callable[[str], Path] | None = None,
         truncate_service_log: Callable[[Path], Path] | None = None,
         tail_service_log: Callable[..., str] | None = None,
+        game_bridge_discovery_path: Path | None = None,
     ) -> None:
         self.config = config
         self.root_dir = Path(root_dir)
@@ -75,6 +78,9 @@ class DesktopServiceLifecycle:
         self.service_log_path = service_log_path or self._service_log_path
         self.truncate_service_log = truncate_service_log or _desktop_runtime.truncate_service_log
         self.tail_service_log = tail_service_log or _desktop_runtime.tail_service_log
+        self.game_bridge_discovery_path = game_bridge_discovery_path or (
+            Path(tempfile.gettempdir()) / "ipet-game-bridge.json"
+        )
         self.backend_process = None
         self.backend_started_by_app = False
         self.asr_process = None
@@ -86,6 +92,12 @@ class DesktopServiceLifecycle:
         self._asr_warmup_stop_event = self.threading.Event()
         self._service_start_locks_lock = self.threading.Lock()
         self._service_start_locks: dict[str, Any] = {}
+
+    def _managed_process_env(self) -> dict[str, str]:
+        env = dict(self.os.environ)
+        getpid = getattr(self.os, "getpid", os.getpid)
+        env["IPET_DESKTOP_PARENT_PID"] = str(getpid())
+        return env
 
     @contextmanager
     def _service_start_guard(self, name: str):
@@ -168,6 +180,33 @@ class DesktopServiceLifecycle:
     def ensure_backend_service(self) -> None:
         with self._service_start_guard("backend"):
             self._ensure_backend_service()
+        backend_url = str(
+            self.config.get("chat", {}).get("backend_url") or self.default_backend_url
+        ).strip() or self.default_backend_url
+        if self.is_local_service_url(backend_url) and self.is_backend_live(backend_url):
+            self._publish_game_bridge_endpoint(backend_url)
+
+    def _publish_game_bridge_endpoint(self, backend_url: str) -> None:
+        """Publish the active loopback endpoint for native game bridges."""
+        path = self.game_bridge_discovery_path
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"base_url": str(backend_url).rstrip("/")}
+            if self.local_api_token:
+                payload["token"] = str(self.local_api_token)
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=True),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+            path.chmod(0o600)
+        except OSError:
+            # Discovery is optional. The bridge still probes the default port.
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _backend_accepts_local_token(self, backend_url: str) -> bool:
         """Return whether a local backend belongs to this desktop process."""
@@ -226,7 +265,7 @@ class DesktopServiceLifecycle:
 
         backend_log_path = self.truncate_service_log(self.service_log_path("backend"))
         try:
-            env = dict(self.os.environ)
+            env = self._managed_process_env()
             env[self.local_api_token_env] = self.local_api_token
             with Path(backend_log_path).open("a", encoding="utf-8") as backend_log:
                 self.backend_process = self.subprocess.Popen(
@@ -303,6 +342,7 @@ class DesktopServiceLifecycle:
 
         asr_log_path = self.truncate_service_log(self.service_log_path("asr"))
         try:
+            env = self._managed_process_env()
             with Path(asr_log_path).open("a", encoding="utf-8") as asr_log:
                 self.asr_process = self.subprocess.Popen(
                     cmd,
@@ -310,6 +350,7 @@ class DesktopServiceLifecycle:
                     stdout=asr_log,
                     stderr=self.subprocess.STDOUT,
                     creationflags=creationflags,
+                    env=env,
                     start_new_session=self.os.name != "nt",
                 )
             self.asr_started_by_app = True
@@ -364,7 +405,7 @@ class DesktopServiceLifecycle:
             return
 
         log_path = self.truncate_service_log(self.service_log_path("qwen-tts"))
-        command = [
+        qwen_command = [
             str(qwen_python),
             "-m",
             "uvicorn",
@@ -376,6 +417,18 @@ class DesktopServiceLifecycle:
             "--log-level",
             "warning",
         ]
+        getpid = getattr(self.os, "getpid", os.getpid)
+        command = [
+            str(self.sys.executable),
+            "-m",
+            "app.managed_child_service",
+            "--parent-pid",
+            str(getpid()),
+            "--cwd",
+            str(project_dir),
+            "--",
+            *qwen_command,
+        ]
         creationflags = 0
         if self.os.name == "nt":
             creationflags = getattr(self.subprocess, "CREATE_NO_WINDOW", 0) | getattr(
@@ -384,13 +437,15 @@ class DesktopServiceLifecycle:
                 0,
             )
         try:
+            env = self._managed_process_env()
             with Path(log_path).open("a", encoding="utf-8") as qwen_log:
                 self.qwen_tts_process = self.subprocess.Popen(
                     command,
-                    cwd=str(project_dir),
+                    cwd=str(self.root_dir),
                     stdout=qwen_log,
                     stderr=self.subprocess.STDOUT,
                     creationflags=creationflags,
+                    env=env,
                     start_new_session=self.os.name != "nt",
                 )
             self.qwen_tts_started_by_app = True

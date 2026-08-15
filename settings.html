@@ -502,6 +502,53 @@
           <div id="environment-audit-list" class="review-list"></div>
         </section>
 
+        <section id="game" class="panel-card desktop-window" data-window-title="Game">
+          <div class="section-head">
+            <div>
+              <h3>Game Companion</h3>
+              <p>只观察《杀戮尖塔 2》的本地玩家事件，用当前人格生成简短语音，不操作游戏、不写入长期记忆。</p>
+            </div>
+          </div>
+
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <input id="game-enabled" type="checkbox" />
+              <span>自动检测杀戮尖塔 2</span>
+            </label>
+            <label class="toggle-card"><input id="game-category-combat" type="checkbox" /><span>战斗反应</span></label>
+            <label class="toggle-card"><input id="game-category-growth" type="checkbox" /><span>成长反应</span></label>
+            <label class="toggle-card"><input id="game-category-route" type="checkbox" /><span>路线反应</span></label>
+            <label class="toggle-card"><input id="game-category-resources" type="checkbox" /><span>资源反应</span></label>
+            <label class="toggle-card"><input id="game-category-outcome" type="checkbox" /><span>结局反应</span></label>
+          </div>
+
+          <div class="form-grid two-col">
+            <label class="field">
+              <span>最短反应间隔（秒）</span>
+              <input id="game-min-reaction-interval-sec" type="number" min="0" max="60" step="1" />
+            </label>
+            <label class="field">
+              <span>每分钟最大反应数</span>
+              <input id="game-max-reactions-per-minute" type="number" min="1" max="30" step="1" />
+            </label>
+            <label class="field wide">
+              <span>游戏反应风格补充</span>
+              <textarea id="game-reaction-instruction" rows="5" maxlength="500" placeholder="例如：吐槽可以犀利一点，但在低血量时认真关心我。"></textarea>
+            </label>
+          </div>
+
+          <p class="memory-privacy-note">高频事件只更新当前局上下文；关键事件才进入语音队列。所有状态、事件和生成反应都会在后端退出时消失。</p>
+          <div class="memory-toolbar">
+            <div class="button-row wrap">
+              <button id="game-refresh-btn" class="ghost-button" type="button">刷新状态</button>
+              <button id="game-clear-btn" class="ghost-button" type="button">清空临时记录</button>
+            </div>
+          </div>
+          <p id="game-status-text" class="inline-status" aria-live="polite">正在等待杀戮尖塔 2...</p>
+          <div id="game-status-cards" class="hero-summary"></div>
+          <div id="game-audit-list" class="review-list"></div>
+        </section>
+
         <section id="memory" class="panel-card desktop-window" data-window-title="Memory">
           <div class="section-head">
             <div>
@@ -625,6 +672,7 @@
       <button class="desktop-icon tone-purple" data-window-target="brain" data-title="Brain"><span>Ψ</span><strong>大脑</strong></button>
       <button class="desktop-icon tone-red" data-window-target="human-ops" data-title="Human Ops"><span>●</span><strong>操作</strong></button>
       <button class="desktop-icon tone-green" data-window-target="environment" data-title="Environment"><span>◎</span><strong>环境</strong></button>
+      <button class="desktop-icon tone-purple" data-window-target="game" data-title="Game"><span>♠</span><strong>游戏</strong></button>
       <button class="desktop-icon tone-pink" data-window-target="memory" data-title="Memory"><span>◇</span><strong>记忆</strong></button>
       <button class="desktop-icon tone-orange" data-window-target="skills" data-title="Skills"><span>S</span><strong>技能</strong></button>
       <button class="desktop-icon tone-gray" data-window-target="diagnostics" data-title="Diagnostics"><span>⌁</span><strong>诊断</strong></button>
@@ -636,15 +684,16 @@
       <button class="dock-item" data-window-target="brain" data-title="Brain" title="Brain"><span class="dock-glyph">🧠</span><strong>大脑</strong></button>
       <button class="dock-item" data-window-target="human-ops" data-title="Human Ops" title="Human Ops"><span class="dock-glyph">☺</span><strong>操作</strong></button>
       <button class="dock-item" data-window-target="environment" data-title="Environment" title="Environment"><span class="dock-glyph">◎</span><strong>环境</strong></button>
+      <button class="dock-item" data-window-target="game" data-title="Game" title="Game"><span class="dock-glyph">♠</span><strong>游戏</strong></button>
       <button class="dock-item" data-window-target="memory" data-title="Memory" title="Memory"><span class="dock-glyph">📖</span><strong>记忆</strong></button>
       <button class="dock-item" data-window-target="skills" data-title="Skills" title="Skills"><span class="dock-glyph">☭</span><strong>技能</strong></button>
       <button class="dock-item" data-window-target="diagnostics" data-title="Diagnostics" title="Diagnostics"><span class="dock-glyph">⌁</span><strong>诊断</strong></button>
     </nav>
   </div>
 
-  <script src="/settings_form.js?v=2"></script>
+  <script src="/settings_form.js?v=3"></script>
   <script src="/settings_model_picker.js?v=1"></script>
   <script src="/settings_live2d.js?v=1"></script>
-  <script src="/settings.js?v=10"></script>
+  <script src="/settings.js?v=11"></script>
 </body>
 </html>

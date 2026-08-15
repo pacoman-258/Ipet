@@ -32,6 +32,9 @@
     let ttsAbortController = null;
     let activePlaybackSettler = null;
     let speechRunId = 0;
+    let speechSource = "";
+    const speechRunWaiters = new Map();
+    const failedSpeechRuns = new Set();
     let streamFinished = false;
     let pendingSpeakBuffer = "";
     let pendingSpeakExpr = null;
@@ -57,6 +60,7 @@
     }
 
     function stopSpeaking(manual = false) {
+      const stoppedRunId = speechRunId;
       if (speakFlushTimer) {
         runtimeWindow.clearTimeout(speakFlushTimer);
         speakFlushTimer = 0;
@@ -70,6 +74,8 @@
       pendingSpeakExpr = null;
       ttsPlaying = false;
       streamFinished = true;
+      speechSource = "";
+      settleSpeechRun(stoppedRunId, "replaced");
       if (activeAudio) {
         try {
           activeAudio.pause();
@@ -90,8 +96,13 @@
       }
     }
 
-    function beginStream() {
+    function beginStream(source = "chat") {
+      const replacedRunId = speechRunId;
+      if (speechSource || !speechPipelineIsIdle()) {
+        settleSpeechRun(replacedRunId, "replaced");
+      }
       speechRunId += 1;
+      speechSource = String(source || "chat");
       streamFinished = false;
       pendingSpeakBuffer = "";
       pendingSpeakExpr = null;
@@ -99,6 +110,7 @@
       discardPreparedAudio();
       ttsAbortController?.abort();
       ttsAbortController = null;
+      return speechRunId;
     }
 
     function markStreamFinished() {
@@ -109,6 +121,46 @@
 
     function isPlaying() {
       return ttsPlaying;
+    }
+
+    function source() {
+      return speechSource;
+    }
+
+    function settleSpeechRun(runId, outcome) {
+      const waiters = speechRunWaiters.get(runId) || [];
+      speechRunWaiters.delete(runId);
+      failedSpeechRuns.delete(runId);
+      for (const resolve of waiters) {
+        resolve(outcome);
+      }
+    }
+
+    function finishSpeechRunIfIdle() {
+      if (!streamFinished || !speechPipelineIsIdle()) return false;
+      const completedRunId = speechRunId;
+      const outcome = failedSpeechRuns.has(completedRunId) ? "failed" : "delivered";
+      speechSource = "";
+      setChatState("idle");
+      settleSpeechRun(completedRunId, outcome);
+      return true;
+    }
+
+    function whenRunSettled(runId) {
+      const target = Number(runId);
+      if (!Number.isFinite(target) || target <= 0 || target !== speechRunId) {
+        return Promise.resolve("replaced");
+      }
+      if (streamFinished && speechPipelineIsIdle()) {
+        const outcome = failedSpeechRuns.has(target) ? "failed" : "delivered";
+        settleSpeechRun(target, outcome);
+        return Promise.resolve(outcome);
+      }
+      return new Promise((resolve) => {
+        const waiters = speechRunWaiters.get(target) || [];
+        waiters.push(resolve);
+        speechRunWaiters.set(target, waiters);
+      });
     }
 
     function queueLength() {
@@ -312,7 +364,12 @@
       if (!chunk) {
         return;
       }
-      ttsQueue.push({ text: chunk, expr: expr ? String(expr).trim() : null, runId: speechRunId });
+      ttsQueue.push({
+        text: chunk,
+        expr: expr ? String(expr).trim() : null,
+        runId: speechRunId,
+        source: speechSource,
+      });
       requestNextTTSChunk();
     }
 
@@ -392,9 +449,7 @@
       }
       const nextItem = ttsQueue.shift();
       if (!nextItem) {
-        if (streamFinished && speechPipelineIsIdle()) {
-          setChatState("idle");
-        }
+        finishSpeechRunIfIdle();
         return;
       }
       const runId = nextItem.runId;
@@ -413,8 +468,11 @@
       } catch (err) {
         if (err?.name !== "AbortError" && runId === speechRunId) {
           const message = String(err?.message || ttsFailureMessage(err));
-          appendMessage("error", message);
-          showError(message);
+          failedSpeechRuns.add(runId);
+          if (nextItem.source !== "game") {
+            appendMessage("error", message);
+            showError(message);
+          }
           ttsQueue = [];
           discardPreparedAudio();
           stopLipSyncLoop();
@@ -434,9 +492,7 @@
       }
       const nextItem = preparedAudioQueue.shift();
       if (!nextItem) {
-        if (streamFinished && speechPipelineIsIdle()) {
-          setChatState("idle");
-        }
+        finishSpeechRunIfIdle();
         return;
       }
       const urlApi = runtimeWindow.URL || globalThis.URL;
@@ -483,8 +539,11 @@
         });
       } catch (err) {
         const message = ttsFailureMessage(err?.message || err);
-        appendMessage("error", message);
-        showError(message);
+        failedSpeechRuns.add(nextItem.runId);
+        if (nextItem.source !== "game") {
+          appendMessage("error", message);
+          showError(message);
+        }
         ttsQueue = [];
         discardPreparedAudio();
       } finally {
@@ -501,6 +560,8 @@
       beginStream,
       markStreamFinished,
       isPlaying,
+      source,
+      whenRunSettled,
       queueLength,
       hasPendingSpeakBuffer,
       setPendingSpeakBuffer,

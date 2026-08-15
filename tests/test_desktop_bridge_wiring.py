@@ -51,7 +51,7 @@ class _Owner:
     def request_asr_warmup(self, *args) -> None:
         self.calls.append("startAsrWarmupRequested")
 
-    def showMinimized(self, *args) -> None:
+    def hide_desktop_pet(self, *args) -> None:
         self.calls.append("minimizeWindowRequested")
 
     def close(self, *args) -> None:
@@ -103,7 +103,7 @@ class DesktopBridgeWiringTests(unittest.TestCase):
                 [owner.apply_interactive_regions],
                 [owner.open_settings_page],
                 [owner.request_asr_warmup],
-                [owner.showMinimized],
+                [owner.hide_desktop_pet],
                 [owner.close],
                 [owner.show_click_preview],
                 [owner.hide_click_preview],

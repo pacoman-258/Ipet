@@ -7,6 +7,7 @@
     const chatSidebarsController = deps.chatSidebarsController || {};
     const petSceneController = deps.petSceneController || {};
     const proactivePresenceController = deps.proactivePresenceController || {};
+    const gamePresenceController = deps.gamePresenceController || {};
 
     const syncPetDisplayName = typeof deps.syncPetDisplayName === "function" ? deps.syncPetDisplayName : () => {};
     const normalizeAsrConfig =
@@ -41,6 +42,9 @@
       } else {
         Object.assign(state, incoming);
       }
+      if (incoming.game_capability) {
+        state.game_capability = String(incoming.game_capability || "");
+      }
       if (incoming.chat && typeof incoming.chat === "object") {
         Object.assign(state.chat, incoming.chat);
         state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});
@@ -65,6 +69,9 @@
       }
       if (incoming.environment && typeof incoming.environment === "object") {
         proactivePresenceController.applyConfig?.(incoming.environment);
+      }
+      if (incoming.game && typeof incoming.game === "object") {
+        gamePresenceController.applyConfig?.(incoming.game);
       }
       syncPetDisplayName();
       state.chat.asr = normalizeAsrConfig(state.chat?.asr || {});

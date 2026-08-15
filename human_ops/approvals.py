@@ -38,6 +38,7 @@ class ReviewableProposal:
         summary: str,
         payload: dict[str, Any],
         preview: ClickPreview | None = None,
+        requirement: ApprovalRequirement = ApprovalRequirement.REQUIRED,
     ) -> "ReviewableProposal":
         action = str(action_type or "").strip()
         if action not in _REVIEWABLE_ACTIONS:
@@ -46,6 +47,7 @@ class ReviewableProposal:
             proposal_type="act",
             summary=str(summary or "").strip(),
             payload={"action_type": action, "arguments": dict(payload or {})},
+            requirement=requirement,
             preview=preview,
         )
 

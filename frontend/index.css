@@ -1884,6 +1884,18 @@
       background: linear-gradient(135deg, rgba(235, 242, 255, 0.96), rgba(248, 242, 255, 0.94));
     }
 
+    .pet-menu-tab.is-paused {
+      border-color: rgba(217, 157, 74, 0.45);
+      background: rgba(255, 247, 229, 0.94);
+    }
+
+    .pet-menu-tab:disabled {
+      cursor: default;
+      opacity: 0.58;
+      transform: none;
+      box-shadow: none;
+    }
+
     .pet-menu-tab > span:last-child {
       min-width: 0;
       display: flex;

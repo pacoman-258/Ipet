@@ -114,6 +114,20 @@
     environmentStatusCards: $("environment-status-cards"),
     environmentAuditList: $("environment-audit-list"),
     environmentStatusText: $("environment-status-text"),
+    gameEnabled: $("game-enabled"),
+    gameCategoryCombat: $("game-category-combat"),
+    gameCategoryGrowth: $("game-category-growth"),
+    gameCategoryRoute: $("game-category-route"),
+    gameCategoryResources: $("game-category-resources"),
+    gameCategoryOutcome: $("game-category-outcome"),
+    gameMinReactionIntervalSec: $("game-min-reaction-interval-sec"),
+    gameMaxReactionsPerMinute: $("game-max-reactions-per-minute"),
+    gameReactionInstruction: $("game-reaction-instruction"),
+    gameRefreshBtn: $("game-refresh-btn"),
+    gameClearBtn: $("game-clear-btn"),
+    gameStatusCards: $("game-status-cards"),
+    gameAuditList: $("game-audit-list"),
+    gameStatusText: $("game-status-text"),
     memoryConversationSaving: $("memory-conversation-saving"),
     memoryLongTermEnabled: $("memory-long-term-enabled"),
     memoryPreferencesEnabled: $("memory-preferences-enabled"),
@@ -158,9 +172,14 @@
   }
 
   async function fetchJson(url, options = {}) {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    const gameCapability = String(settingsPayload?.game_capability || "").trim();
+    if (gameCapability && url.startsWith("/api/game/") && !headers["X-Ipet-Game-Capability"]) {
+      headers["X-Ipet-Game-Capability"] = gameCapability;
+    }
     const response = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
       ...options,
+      headers,
     });
     const text = await response.text();
     const data = text ? JSON.parse(text) : {};
@@ -289,6 +308,7 @@
             ? "影子模式（只记录）"
             : "环境感知关闭",
       ],
+      ["Game", neo.game.enabled ? "杀戮尖塔 2 · 自动检测" : "游戏陪伴关闭"],
       ["Memory", neo.memory.long_term_enabled ? "长期记忆开启" : "长期记忆关闭"],
       ["Skills", neo.skills.review_required ? "保存前审阅" : "审阅关闭"],
       ["Diagnostics", lastLoadedAt || "等待加载"],
@@ -472,6 +492,88 @@
     }
     renderEnvironmentStatus(await fetchJson("/api/environment/clear", { method: "POST", body: "{}" }));
     showToast("环境记录已清空");
+  }
+
+  function gameStateLabel(value) {
+    return {
+      disabled: "已关闭",
+      waiting: "等待游戏",
+      connected: "已连接，等待新 Run",
+      active: "运行中",
+      paused: "已暂停",
+      incompatible: "不兼容",
+    }[String(value || "waiting")] || "等待游戏";
+  }
+
+  function renderGameStatus(payload = null) {
+    const status = payload || {};
+    const run = status.run_summary && typeof status.run_summary === "object" ? status.run_summary : {};
+    const cards = [
+      ["连接状态", gameStateLabel(status.state)],
+      ["游戏 / 模组", [status.game_version, status.adapter_version].filter(Boolean).join(" / ") || "尚未连接"],
+      ["当前 Run", status.run_id ? `Act ${Number(run.act || 0)} · ${Number(run.floor || 0)} 层` : "尚未开始"],
+      ["本地玩家", status.local_player_identified === false ? "无法识别" : status.connected ? "已识别" : "等待连接"],
+      ["事件序号", `${Number(status.bridge_sequence || 0)} / ${Number(status.accepted_sequence || 0)}`],
+      ["待播反应", String(Number(status.pending_count || 0))],
+    ];
+    if (els.gameStatusCards) {
+      els.gameStatusCards.innerHTML = cards.map(
+        ([label, value], index) => `
+          <div class="summary-card tone-${(index % 4) + 1}">
+            <span class="stat-icon"></span>
+            <strong class="stat-number">${escapeHtml(value)}</strong>
+            <span class="stat-label">${escapeHtml(label)}</span>
+          </div>
+        `,
+      ).join("");
+    }
+    const audit = Array.isArray(status.recent_audit) ? status.recent_audit.slice().reverse() : [];
+    if (els.gameAuditList) {
+      els.gameAuditList.innerHTML = audit.length
+        ? audit.map((item) => `
+            <div class="review-item">
+              <strong>${escapeHtml(item.action || "event")}</strong>
+              <span>${escapeHtml([item.kind, item.reason].filter(Boolean).join(" · ") || "已记录")}</span>
+              <small>${escapeHtml(formatMemoryTime(item.timestamp ? new Date(Number(item.timestamp) * 1000).toISOString() : ""))}</small>
+            </div>
+          `).join("")
+        : '<div class="review-item"><strong>暂无游戏事件</strong><span>安装并启用 STS2 模组后，这里会显示临时事件审计。</span></div>';
+    }
+    if (els.gameStatusText) {
+      if (status.state === "active") {
+        els.gameStatusText.textContent = "游戏模式运行中：只观察本地玩家，关键事件会生成纯语音反应。";
+      } else if (status.state === "connected") {
+        els.gameStatusText.textContent = "已连接《杀戮尖塔 2》，正在等待新 Run。";
+      } else if (status.state === "paused") {
+        els.gameStatusText.textContent = "当前 Run 的反应已暂停；可在桌宠右键菜单恢复。";
+      } else if (status.state === "incompatible") {
+        els.gameStatusText.textContent = status.local_player_identified === false
+          ? "多人局中无法可靠识别本地玩家，已停止反应。"
+          : "游戏或模组版本不兼容，已安全停止反应。";
+      } else if (status.state === "disabled") {
+        els.gameStatusText.textContent = "游戏陪伴已关闭。";
+      } else {
+        els.gameStatusText.textContent = "正在等待《杀戮尖塔 2》模组心跳。";
+      }
+    }
+  }
+
+  async function loadGameStatus() {
+    if (settingsPayload?.static_preview) {
+      const game = mergedNeo(settingsPayload.config || {}).game;
+      renderGameStatus({ state: game.enabled ? "waiting" : "disabled", connected: false, recent_audit: [] });
+      return;
+    }
+    renderGameStatus(await fetchJson("/api/game/status"));
+  }
+
+  async function clearGameStatus() {
+    if (settingsPayload?.static_preview) {
+      await loadGameStatus();
+      return;
+    }
+    renderGameStatus(await fetchJson("/api/game/clear", { method: "POST", body: "{}" }));
+    showToast("游戏临时记录已清空");
   }
 
   function setMemoryCatalogStatus(message) {
@@ -923,6 +1025,14 @@
         els.environmentStatusText.textContent = `环境状态不可用：${error.message || String(error)}`;
       }
     }
+    try {
+      await loadGameStatus();
+    } catch (error) {
+      renderGameStatus();
+      if (els.gameStatusText) {
+        els.gameStatusText.textContent = `游戏状态不可用：${error.message || String(error)}`;
+      }
+    }
     if (!settingsPayload.static_preview) {
       setStatus("设置已加载。");
     }
@@ -949,6 +1059,7 @@
     populateLocalModels();
     await loadMemoryCatalog();
     await loadEnvironmentStatus();
+    await loadGameStatus();
     setStatus("设置已保存，Ipet 会按新配置刷新。");
     showToast("已保存");
   }
@@ -959,6 +1070,7 @@
     current.brain = defaults.brain;
     current.human_ops = defaults.human_ops;
     current.environment = defaults.environment;
+    current.game = defaults.game;
     current.memory = defaults.memory;
     current.skills = defaults.skills;
     populateForm(current);
@@ -1002,6 +1114,8 @@
     els.memoryRefreshBtn?.addEventListener("click", () => wrap(loadMemoryCatalog));
     els.environmentRefreshBtn?.addEventListener("click", () => wrap(loadEnvironmentStatus));
     els.environmentClearBtn?.addEventListener("click", () => wrap(clearEnvironmentStatus));
+    els.gameRefreshBtn?.addEventListener("click", () => wrap(loadGameStatus));
+    els.gameClearBtn?.addEventListener("click", () => wrap(clearGameStatus));
     document.querySelectorAll("[data-memory-tab]").forEach((button) => {
       button.addEventListener("click", () => setMemoryTab(button.dataset.memoryTab || "saved"));
     });

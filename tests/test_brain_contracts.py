@@ -75,6 +75,7 @@ class BrainContractTests(unittest.TestCase):
         self.assertNotIn("think", decision_kinds("desktop"))
         self.assertNotIn("propose_remember", decision_kinds("file"))
         self.assertEqual(decision_kinds("proactive"), ("say", "stop"))
+        self.assertEqual(decision_kinds("game"), ("say", "stop"))
 
     def test_decision_and_playwright_choices_share_the_contract(self) -> None:
         self.assertIn("stop", render_decision_contract("agent"))

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import unittest
 from unittest import mock
+
+import httpx
 
 from brain.llm import (
     BrainLLMError,
@@ -51,6 +54,18 @@ class _RecordingClient:
     async def get(self, url: str, **kwargs):
         self.requests.append({"method": "GET", "url": url, **kwargs})
         return _FakeResponse(self.payload)
+
+
+class _SequenceRecordingClient:
+    def __init__(self, responses: list[tuple[int, dict]]) -> None:
+        self.responses = list(responses)
+        self.requests: list[dict] = []
+
+    async def post(self, url: str, **kwargs):
+        self.requests.append({"url": url, **kwargs})
+        status, payload = self.responses.pop(0)
+        request = httpx.Request("POST", url)
+        return httpx.Response(status, request=request, json=payload)
 
 
 class _PagedRecordingClient:
@@ -404,6 +419,12 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
             "xhigh",
         )
         self.assertTrue(BrainProviderConfig.from_dict({"provider": "codex", "streaming_enabled": True}).streaming_enabled)
+        self.assertIsNone(BrainProviderConfig.from_dict({"provider": "openai_compatible"}).thinking_enabled)
+        self.assertFalse(
+            BrainProviderConfig.from_dict(
+                {"provider": "openai_compatible", "thinking_enabled": False}
+            ).thinking_enabled
+        )
 
     def test_codex_stream_extracts_only_visible_say_text(self) -> None:
         extractor = _StreamingSayTextExtractor()
@@ -494,6 +515,169 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["json"]["temperature"], 0.25)
         self.assertEqual(request["json"]["max_tokens"], 2048)
 
+    async def test_openai_compatible_marks_stable_prompt_prefix_and_reports_cache_usage(self) -> None:
+        client = _RecordingClient(
+            {
+                "choices": [{"message": {"content": "缓存回复"}}],
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 7,
+                    "total_tokens": 127,
+                    "prompt_tokens_details": {
+                        "cached_tokens": 96,
+                        "cache_write_tokens": 16,
+                    },
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                },
+            }
+        )
+        config = BrainProviderConfig(
+            provider="openai_compatible",
+            endpoint="https://cache-supported.example/v1",
+            model="gpt-cache",
+        )
+
+        completion = await complete_with_provider(
+            config,
+            [
+                BrainMessage(
+                    role="system",
+                    content="稳定合同\n动态摘要",
+                    cache_prefix="稳定合同",
+                ),
+                BrainMessage(role="user", content="你好"),
+            ],
+            client=client,
+        )
+
+        request_payload = client.requests[0]["json"]
+        self.assertEqual(request_payload["prompt_cache_options"], {"mode": "explicit"})
+        self.assertRegex(request_payload["prompt_cache_key"], r"^ipet-[0-9a-f]{40}$")
+        self.assertEqual(
+            request_payload["messages"][0]["content"],
+            [
+                {
+                    "type": "text",
+                    "text": "稳定合同",
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                },
+                {"type": "text", "text": "动态摘要"},
+            ],
+        )
+        self.assertEqual(
+            completion.usage,
+            {
+                "input_tokens": 120,
+                "cached_input_tokens": 96,
+                "cache_write_input_tokens": 16,
+                "output_tokens": 7,
+                "reasoning_output_tokens": 2,
+                "total_tokens": 127,
+            },
+        )
+
+        changed_suffix_client = _RecordingClient(
+            {"choices": [{"message": {"content": "新摘要回复"}}]}
+        )
+        await complete_with_provider(
+            config,
+            [
+                BrainMessage(
+                    role="system",
+                    content="稳定合同\n另一份动态摘要",
+                    cache_prefix="稳定合同",
+                ),
+                BrainMessage(role="user", content="下一问"),
+            ],
+            client=changed_suffix_client,
+        )
+        self.assertEqual(
+            changed_suffix_client.requests[0]["json"]["prompt_cache_key"],
+            request_payload["prompt_cache_key"],
+        )
+
+    async def test_openai_prompt_cache_extensions_fall_back_and_remember_compatibility(self) -> None:
+        config = BrainProviderConfig(
+            provider="openai_compatible",
+            endpoint="https://legacy-cache.example/v1",
+            model="legacy-model",
+        )
+        messages = [
+            BrainMessage(role="system", content="稳定合同\n动态摘要", cache_prefix="稳定合同"),
+            BrainMessage(role="user", content="你好"),
+        ]
+        client = _SequenceRecordingClient(
+            [
+                (400, {"error": {"message": "unknown field prompt_cache_options"}}),
+                (400, {"error": {"message": "unknown field prompt_cache_key"}}),
+                (200, {"choices": [{"message": {"content": "兼容回复"}}]}),
+            ]
+        )
+
+        completion = await complete_with_provider(config, messages, client=client)
+
+        self.assertEqual(completion.text, "兼容回复")
+        self.assertIn("prompt_cache_options", client.requests[0]["json"])
+        self.assertNotIn("prompt_cache_options", client.requests[1]["json"])
+        self.assertIn("prompt_cache_key", client.requests[1]["json"])
+        self.assertNotIn("prompt_cache_key", client.requests[2]["json"])
+        self.assertEqual(client.requests[2]["json"]["messages"][0]["content"], "稳定合同\n动态摘要")
+
+        next_client = _RecordingClient({"choices": [{"message": {"content": "再次兼容"}}]})
+        await complete_with_provider(config, messages, client=next_client)
+        self.assertNotIn("prompt_cache_options", next_client.requests[0]["json"])
+        self.assertNotIn("prompt_cache_key", next_client.requests[0]["json"])
+
+    async def test_openai_prompt_cache_falls_back_to_supported_cache_key(self) -> None:
+        config = BrainProviderConfig(
+            provider="openai_compatible",
+            endpoint="https://key-cache.example/v1",
+            model="key-cache-model",
+        )
+        messages = [BrainMessage(role="system", content="稳定\n动态", cache_prefix="稳定")]
+        client = _SequenceRecordingClient(
+            [
+                (422, {"error": {"message": "prompt_cache_breakpoint is not supported"}}),
+                (200, {"choices": [{"message": {"content": "键缓存回复"}}]}),
+            ]
+        )
+
+        completion = await complete_with_provider(config, messages, client=client)
+
+        self.assertEqual(completion.text, "键缓存回复")
+        self.assertIn("prompt_cache_key", client.requests[1]["json"])
+        self.assertNotIn("prompt_cache_options", client.requests[1]["json"])
+        self.assertEqual(client.requests[1]["json"]["messages"][0]["content"], "稳定\n动态")
+
+    async def test_identical_concurrent_openai_calls_share_only_in_flight_work(self) -> None:
+        config = BrainProviderConfig(
+            provider="openai_compatible",
+            endpoint="https://singleflight.example/v1",
+            model="gpt-test",
+        )
+        messages = [BrainMessage(role="user", content="同一个请求")]
+        started = asyncio.Event()
+        release = asyncio.Event()
+        completion = BrainCompletion(text="完成", provider=config.provider, model=config.model)
+
+        async def delayed_complete(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            return completion
+
+        with mock.patch("brain.llm._complete_openai", side_effect=delayed_complete) as provider_call:
+            first = asyncio.create_task(complete_with_provider(config, messages))
+            await started.wait()
+            second = asyncio.create_task(complete_with_provider(config, messages))
+            await asyncio.sleep(0)
+            release.set()
+            results = await asyncio.gather(first, second)
+            third = await complete_with_provider(config, messages)
+
+        self.assertEqual(results, [completion, completion])
+        self.assertEqual(third, completion)
+        self.assertEqual(provider_call.await_count, 2)
+
     async def test_openai_compatible_attaches_image_to_last_user_message(self) -> None:
         client = _RecordingClient({"choices": [{"message": {"content": "看到了"}}]})
 
@@ -507,6 +691,22 @@ class BrainProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content[0], {"type": "text", "text": "观察并决定"})
         self.assertEqual(content[1]["type"], "image_url")
         self.assertEqual(content[1]["image_url"]["url"], PNG_DATA_URL)
+
+    async def test_openai_compatible_can_disable_thinking_explicitly(self) -> None:
+        client = _RecordingClient({"choices": [{"message": {"content": "快答"}}]})
+
+        await complete_with_provider(
+            BrainProviderConfig(
+                provider="openai_compatible",
+                endpoint="https://api.deepseek.com",
+                model="deepseek-v4-flash",
+                thinking_enabled=False,
+            ),
+            [BrainMessage(role="user", content="hi")],
+            client=client,
+        )
+
+        self.assertEqual(client.requests[0]["json"]["thinking"], {"type": "disabled"})
 
     async def test_ollama_uses_api_chat_shape(self) -> None:
         client = _RecordingClient({"message": {"content": "本地模型回复"}})

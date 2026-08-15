@@ -19,6 +19,7 @@ from backend.chat_stream_flow import (
 )
 from backend.observe_context import normalize_observed_click_coordinates
 from backend.task_control import TASK_CONTROL
+from human_ops.proposals import build_human_ops_act_proposal, proposal_event_payload
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -159,7 +160,13 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
                 decision=BrainDecision.say("你好"),
                 provider="codex",
                 model="gpt-test",
-                usage={"input_tokens": 21, "output_tokens": 2, "total_tokens": 23},
+                usage={
+                    "input_tokens": 21,
+                    "cached_input_tokens": 16,
+                    "cache_write_input_tokens": 4,
+                    "output_tokens": 2,
+                    "total_tokens": 23,
+                },
             )
 
         deps = self._dependencies(
@@ -184,7 +191,16 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
             ["searching"],
         )
         self.assertNotIn("display_segment", [name for name, _data in events])
-        self.assertEqual(events[-1][1]["usage"], {"input_tokens": 21, "output_tokens": 2, "total_tokens": 23})
+        self.assertEqual(
+            events[-1][1]["usage"],
+            {
+                "input_tokens": 21,
+                "cached_input_tokens": 16,
+                "cache_write_input_tokens": 4,
+                "output_tokens": 2,
+                "total_tokens": 23,
+            },
+        )
 
     async def test_terminal_chat_schedules_accessibility_index_refresh(self) -> None:
         topic_store = TopicStoreSpy()
@@ -786,6 +802,67 @@ class ChatStreamFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(TASK_CONTROL.remaining_budget("task-full-auth"), 8)
         self.assertNotIn("approval_required", [name for name, _payload in events])
         self.assertTrue(events[-1][1]["auto_authorized"])
+
+    async def test_safe_shell_auto_authorizes_but_dangerous_shell_waits_even_in_full_mode(self) -> None:
+        async def run_case(command: str) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+            topic_store = TopicStoreSpy()
+            pending: dict[str, dict[str, Any]] = {}
+            streamed: list[str] = []
+
+            async def run_brain_turn(_config: dict[str, Any], **_kwargs: Any) -> Any:
+                decision = BrainDecision.propose_act(
+                    "shell",
+                    {
+                        "command": command,
+                        "model_risk": "safe",
+                        "risk_reason": "read-only inspection",
+                    },
+                )
+                return SimpleNamespace(text=decision.summary, decision=decision, provider="test", model="brain")
+
+            def create_proposal(decision: BrainDecision, *, session_id: str, user_text: str):
+                proposal_id = "shell-proposal"
+                proposal = build_human_ops_act_proposal(decision)
+                pending[proposal_id] = {
+                    "proposal": proposal,
+                    "session_id": session_id,
+                    "user_text": user_text,
+                    "status": "pending",
+                }
+                return proposal_id, proposal
+
+            async def stream_authorized(proposal_id: str):
+                streamed.append(proposal_id)
+                self.assertEqual(pending[proposal_id]["authorization_mode"], "risk_classified_safe")
+                yield _sse("done", {"proposal_id": proposal_id, "auto_authorized": True})
+
+            deps = self._dependencies(
+                topic_store,
+                normalize_private_config=lambda: {
+                    "brain": {"model_endpoint": "https://llm.example", "model_name": "brain"},
+                    "human_ops": {"authorization_mode": "full", "require_act_review": False},
+                },
+                run_brain_turn=run_brain_turn,
+                create_human_ops_act_proposal=create_proposal,
+                proposal_event_payload=proposal_event_payload,
+                pending_proposals=pending,
+                stream_authorized_proposal=stream_authorized,
+            )
+            events = await _collect_events(
+                stream_chat_response(
+                    {"text": "运行命令", "session_id": command, "task_id": f"task-{command}"},
+                    deps,
+                )
+            )
+            return events, streamed
+
+        safe_events, safe_streamed = await run_case("pwd")
+        risky_events, risky_streamed = await run_case("rm -rf ./cache")
+
+        self.assertEqual(safe_streamed, ["shell-proposal"])
+        self.assertNotIn("approval_required", [name for name, _payload in safe_events])
+        self.assertEqual(risky_streamed, [])
+        self.assertIn("approval_required", [name for name, _payload in risky_events])
 
     async def test_direct_brain_image_failure_is_blocked_with_actionable_model_guidance(self) -> None:
         topic_store = TopicStoreSpy()

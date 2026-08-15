@@ -85,8 +85,17 @@ class FrontendChatInputStateSourceTests(unittest.TestCase):
               refs: { chatInputEl: input, chatTokenCountEl: counter },
             });
             controller.setChatTokenUsage({ input_tokens: 17, output_tokens: 5, total_tokens: 22 });
+            const label = counter.textContent;
+            controller.setChatTokenUsage({
+              input_tokens: 120,
+              cached_input_tokens: 96,
+              cache_write_input_tokens: 16,
+              output_tokens: 7,
+              total_tokens: 127,
+            });
             console.log(JSON.stringify({
-              label: counter.textContent,
+              label,
+              cachedLabel: counter.textContent,
             }));
             """
         )
@@ -98,7 +107,13 @@ class FrontendChatInputStateSourceTests(unittest.TestCase):
         )
         payload = json.loads(result.stdout)
 
-        self.assertEqual(payload, {"label": "输入 17 · 输出 5 · 总计 22"})
+        self.assertEqual(
+            payload,
+            {
+                "label": "输入 17 · 输出 5 · 总计 22",
+                "cachedLabel": "输入 120 · 缓存命中 96 · 缓存写入 16 · 输出 7 · 总计 127",
+            },
+        )
 
     def test_index_wires_chat_input_state_through_facade_registry(self) -> None:
         chat_sections_source = CONTROLLER_GRAPH_CHAT_SECTIONS_JS.read_text(encoding="utf-8")

@@ -22,11 +22,13 @@ from .asr import (
     normalize_push_to_talk_key,
     _default_asr_runtime,
 )
+from .parent_watchdog import start_parent_watchdog
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "pet_config.json"
 
 app = FastAPI(title="Desktop Pet ASR Backend", version="0.1.0")
+_PARENT_WATCHDOG_THREAD = start_parent_watchdog()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

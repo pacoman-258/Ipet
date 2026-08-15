@@ -31,6 +31,21 @@
       document: runtimeWindow.document,
     });
     controllerRegistry.proactivePresence = proactivePresenceController;
+    const gamePresenceController = runtimeWindow.IpetGamePresence.createGamePresenceController({
+      state,
+      refs: {
+        petMenuGameEl: sectionContext.refs.petMenuGameEl,
+        petMenuGameLabelEl: sectionContext.refs.petMenuGameLabelEl,
+        petMenuGameDetailEl: sectionContext.refs.petMenuGameDetailEl,
+      },
+      speechController,
+      getChatState: () => graphState.chatState,
+      isAsrBusy: () => graphState.asrController.isBusy(),
+      fetch: typeof runtimeWindow.fetch === "function" ? runtimeWindow.fetch.bind(runtimeWindow) : undefined,
+      window: runtimeWindow,
+      document: runtimeWindow.document,
+    });
+    controllerRegistry.gamePresence = gamePresenceController;
     const chatStreamController = runtimeWindow.IpetChatStream.createChatStreamController({
       state,
       normalizeChatMode: facade.normalizeChatMode,
@@ -112,7 +127,7 @@
     });
     controllerRegistry.chatSubmit = graphState.chatSubmitController;
 
-    return { speechController, proactivePresenceController, chatStreamController };
+    return { speechController, proactivePresenceController, gamePresenceController, chatStreamController };
   }
 
   function wireBootstrapSection(sectionContext, sectionControllers) {
@@ -124,6 +139,7 @@
       chatPanelController,
       shellBridgeController,
       proactivePresenceController,
+      gamePresenceController,
     } = sectionControllers;
     const {
       canvas,
@@ -137,6 +153,7 @@
       petMenuChatEl,
       petMenuTemporaryChatEl,
       petMenuHistoryEl,
+      petMenuGameEl,
       petMenuSettingsEl,
       petMenuMinimizeEl,
       petMenuCloseEl,
@@ -162,6 +179,7 @@
       chatSidebarsController,
       petSceneController,
       proactivePresenceController,
+      gamePresenceController,
       syncPetDisplayName: facade.syncPetDisplayName,
       normalizeAsrConfig: facade.normalizeAsrConfig,
       topicHistoryEnabled: facade.topicHistoryEnabled,
@@ -195,6 +213,7 @@
         petMenuChatEl,
         petMenuTemporaryChatEl,
         petMenuHistoryEl,
+        petMenuGameEl,
         petMenuSettingsEl,
         petMenuMinimizeEl,
         petMenuCloseEl,
@@ -212,6 +231,7 @@
       petSceneController,
       asrController,
       chatPanelController,
+      proactivePresenceController,
       setQtBridge: (value) => {
         graphState.qtBridge = value || null;
       },
@@ -256,6 +276,7 @@
       defaultAsrStatusText: facade.defaultAsrStatusText,
       cancelAsrSession: facade.cancelAsrSession,
       stopSpeaking: facade.stopSpeaking,
+      toggleGamePause: () => gamePresenceController.togglePause?.(),
       startPushToTalk: facade.startPushToTalk,
       stopPushToTalk: facade.stopPushToTalk,
       applyConfig: facade.applyConfig,

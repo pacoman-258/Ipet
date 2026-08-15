@@ -1,0 +1,12 @@
+{
+  "id": "IpetSts2Bridge",
+  "name": "Ipet Companion Bridge",
+  "author": "Ipet",
+  "description": "Read-only local event bridge for the Ipet desktop companion.",
+  "version": "0.1.3",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false,
+  "dependencies": [],
+  "min_game_version": "0.107.1"
+}

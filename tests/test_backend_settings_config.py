@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +11,63 @@ from fastapi.testclient import TestClient
 
 import backend.app as backend_app
 from backend import settings_config
+from backend.local_capabilities import GAME_BROWSER_CAPABILITY, GAME_BROWSER_CAPABILITY_HEADER
 
 
 class BackendSettingsConfigTests(unittest.TestCase):
+    def test_settings_payload_does_not_expose_process_api_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"IPET_LOCAL_API_TOKEN": "native-secret-value"}, clear=False):
+                payload = settings_config.settings_payload(
+                    {},
+                    config_path=Path(tmp) / "missing.json",
+                    defaults=backend_app.NEO_DEFAULTS,
+                    allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+                )
+
+        self.assertNotIn("local_api_token", payload)
+        self.assertEqual(payload["game_capability"], GAME_BROWSER_CAPABILITY)
+        self.assertNotEqual(payload["game_capability"], "native-secret-value")
+
+    def test_settings_config_route_does_not_disclose_process_api_token(self) -> None:
+        sentinel = "native-route-secret-value"
+        with mock.patch.dict(os.environ, {"IPET_LOCAL_API_TOKEN": sentinel}, clear=False):
+            with TestClient(backend_app.app) as client:
+                response = client.get("/api/settings/config")
+                vision_response = client.get(
+                    "/api/vision/context",
+                    headers={GAME_BROWSER_CAPABILITY_HEADER: GAME_BROWSER_CAPABILITY},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("local_api_token", response.json())
+        self.assertNotIn(sentinel, response.text)
+        self.assertEqual(vision_response.status_code, 403)
+
+    def test_legacy_config_receives_bounded_game_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = settings_config.normalize_private_config(
+                {
+                    "brain": {},
+                    "game": {
+                        "enabled": True,
+                        "min_reaction_interval_sec": -5,
+                        "max_reactions_per_minute": 999,
+                        "reaction_instruction": "x" * 700,
+                        "categories": {"combat": False},
+                    },
+                },
+                config_path=Path(tmp) / "missing.json",
+                defaults=backend_app.NEO_DEFAULTS,
+                allowed_keys=backend_app.ALLOWED_CONFIG_KEYS,
+            )
+
+        self.assertEqual(config["game"]["min_reaction_interval_sec"], 0)
+        self.assertEqual(config["game"]["max_reactions_per_minute"], 30)
+        self.assertEqual(len(config["game"]["reaction_instruction"]), 500)
+        self.assertFalse(config["game"]["categories"]["combat"])
+        self.assertTrue(config["game"]["categories"]["outcome"])
+
     def test_app_helpers_delegate_to_settings_config_with_current_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "pet_config.json"

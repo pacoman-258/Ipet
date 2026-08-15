@@ -24,6 +24,8 @@ from human_ops.chrome_profiles import list_chrome_profiles
 
 from .chat_topics import DEFAULT_TOPIC_TITLE, TopicStore
 from .environment import EnvironmentService
+from .game import GameService
+from .parent_watchdog import start_parent_watchdog
 from .ipet_memory_store import (
     IpetMemoryStore,
     build_memory_candidates_from_turn,
@@ -52,6 +54,7 @@ from . import app_adapters as _app_adapters
 from . import health_routes as _health_route_helpers
 from . import human_ops_decision_routes as _human_ops_decision_route_helpers
 from . import environment_routes as _environment_route_helpers
+from . import game_routes as _game_route_helpers
 from . import memory_routes as _memory_route_helpers
 from . import proactive_context as _proactive_context_helpers
 from . import app_proposal_adapters as _human_ops_proposal_flow_helpers
@@ -66,6 +69,7 @@ _app_adapters.install_app_compat_exports(globals())
 
 
 app = FastAPI(title="Ipet Neo Aspect Backend", version="0.3.0")
+_PARENT_WATCHDOG_THREAD = start_parent_watchdog()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -83,6 +87,7 @@ DESKTOP_COMMAND_PATH = ROOT_DIR / ".pet_desktop_command.json"
 TOPIC_STORE = TopicStore(CHAT_TOPICS_ROOT)
 MEMORY_STORE = IpetMemoryStore(IPET_MEMORY_ROOT)
 ENVIRONMENT_SERVICE = EnvironmentService(NEO_DEFAULTS.get("environment", {}))
+GAME_SERVICE = GameService(NEO_DEFAULTS.get("game", {}))
 VISION_SERVICE = VisionService(NEO_DEFAULTS.get("vision", {}))
 HUMAN_OPS_PENDING_PROPOSALS: dict[str, dict[str, Any]] = {}
 _AX_INDEX_REFRESH_TASK: asyncio.Task[Any] | None = None
@@ -107,13 +112,14 @@ def _app_action_adapter_deps(
     private_config = _normalize_private_config()
     human_ops_config = private_config.get("human_ops", {}) if isinstance(private_config.get("human_ops"), dict) else {}
     filesystem_config = human_ops_config.get("filesystem", {}) if isinstance(human_ops_config.get("filesystem"), dict) else {}
+    shell_config = human_ops_config.get("shell", {}) if isinstance(human_ops_config.get("shell"), dict) else {}
     configured_roots = filesystem_config.get("allowed_roots") if isinstance(filesystem_config.get("allowed_roots"), list) else []
     filesystem_enabled = filesystem_config.get("enabled", True) is not False
     filesystem_roots = [ROOT_DIR] if filesystem_enabled else []
     filesystem_roots.extend(Path(str(root)).expanduser() for root in configured_roots if str(root or "").strip())
-    def _filesystem_limit(name: str, fallback: int) -> int:
+    def _positive_limit(config: dict[str, Any], name: str, fallback: int) -> int:
         try:
-            return max(1, int(filesystem_config.get(name, fallback)))
+            return max(1, int(config.get(name, fallback)))
         except (TypeError, ValueError):
             return fallback
     return _app_action_adapter_helpers.AppActionAdapterDependencies(
@@ -122,9 +128,12 @@ def _app_action_adapter_deps(
         perform_human_ops_click=perform_human_ops_click,
         perform_human_ops_action=perform_human_ops_action,
         filesystem_roots=tuple(filesystem_roots),
-        filesystem_max_read_bytes=_filesystem_limit("max_read_bytes", 1_000_000),
-        filesystem_max_write_bytes=_filesystem_limit("max_write_bytes", 1_000_000),
-        filesystem_max_list_entries=_filesystem_limit("max_list_entries", 200),
+        filesystem_max_read_bytes=_positive_limit(filesystem_config, "max_read_bytes", 1_000_000),
+        filesystem_max_write_bytes=_positive_limit(filesystem_config, "max_write_bytes", 1_000_000),
+        filesystem_max_list_entries=_positive_limit(filesystem_config, "max_list_entries", 200),
+        shell_default_cwd=ROOT_DIR,
+        shell_max_output_bytes=_positive_limit(shell_config, "max_output_bytes", 200_000),
+        shell_enabled=shell_config.get("enabled", True) is not False,
     )
 
 
@@ -539,6 +548,15 @@ def _environment_route_deps() -> _environment_route_helpers.EnvironmentRouteDepe
     )
 
 
+def _game_route_deps() -> _game_route_helpers.GameRouteDependencies:
+    return _game_route_helpers.GameRouteDependencies(
+        game_service=GAME_SERVICE,
+        normalize_private_config=_normalize_private_config,
+        run_brain_turn=run_brain_turn,
+        decision_from_completion=_decision_from_completion,
+    )
+
+
 def _human_ops_decision_route_deps() -> _human_ops_decision_route_helpers.HumanOpsApprovalFlowDependencies:
     return _app_route_dependency_helpers.create_human_ops_decision_route_deps(_route_dependency_context())
 
@@ -547,3 +565,4 @@ _health_route_helpers.register_health_routes(app, _health_route_deps)
 _chat_stream_route_helpers.register_chat_stream_routes(app, _chat_stream_route_deps)
 _human_ops_decision_route_helpers.register_human_ops_decision_routes(app, _human_ops_decision_route_deps)
 _environment_route_helpers.register_environment_routes(app, _environment_route_deps())
+_game_route_helpers.register_game_routes(app, _game_route_deps())

@@ -7,6 +7,9 @@ from typing import Any, Iterable
 
 from human_ops.authorization import normalize_authorization_mode
 
+from .game import normalize_game_config
+from .local_capabilities import GAME_BROWSER_CAPABILITY
+
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
@@ -74,6 +77,7 @@ def normalize_private_config(
     raw_analyzer = raw_vision.get("analyzer") if isinstance(raw_vision.get("analyzer"), dict) else {}
     if raw_analyzer.get("api_key"):
         analyzer["api_key"] = str(raw_analyzer.get("api_key") or "")
+    config["game"] = normalize_game_config(config.get("game", {}))
     return config
 
 
@@ -152,7 +156,7 @@ def settings_payload(
         defaults=defaults,
         allowed_keys=allowed_keys,
     )
-    return {
+    payload = {
         "config": public_config(config),
         "defaults": public_config(
             normalize_private_config(
@@ -162,7 +166,11 @@ def settings_payload(
                 allowed_keys=allowed_keys,
             )
         ),
+        # This capability is scoped to browser game routes. Never expose the
+        # process-wide token used by native, environment, or vision routes.
+        "game_capability": GAME_BROWSER_CAPABILITY,
     }
+    return payload
 
 
 def _apply_optional_secret_update(

@@ -88,6 +88,23 @@ def _field(
 
 
 ACTION_SCHEMAS: dict[str, dict[str, Any]] = {
+    "shell": {
+        "scope": "shell",
+        "required": ("command", "model_risk", "risk_reason"),
+        "properties": {
+            "command": _field("string", "要原样交给当前平台系统 Shell 的完整命令", "pwd"),
+            "cwd": _field("string", "工作目录；相对路径按项目根目录解析", "."),
+            "timeout_sec": _field("number", "执行超时秒数，范围 0 到 300", 30),
+            "model_risk": _field(
+                "string",
+                "Brain 对完整命令副作用的判断；不确定必须标 uncertain",
+                "safe",
+                choices=("safe", "dangerous", "uncertain"),
+            ),
+            "risk_reason": _field("string", "Brain 判断风险级别的简短理由", "只读取当前目录名称"),
+            "label": _field("string", "命令目的", "检查当前目录"),
+        },
+    },
     "launch_app": {
         "scope": "desktop",
         "required": ("app",),
@@ -217,14 +234,16 @@ COMMON_ACTION_PROPERTIES = {
 
 PROFILE_ACTION_SCOPES: dict[str, tuple[str, ...]] = {
     "proactive": (),
+    "game": (),
     "chat": (),
-    "agent": ("desktop", "browser", "file"),
+    "agent": ("desktop", "browser", "file", "shell"),
     "desktop": ("desktop", "browser"),
     "file": ("file",),
 }
 
 PROFILE_DECISION_KINDS: dict[str, tuple[str, ...]] = {
     "proactive": ("say", "stop"),
+    "game": ("say", "stop"),
     "chat": ("say", "propose_remember", "stop"),
     "agent": tuple(DECISION_SCHEMAS),
     "desktop": ("say", "observe", "propose_act", "stop"),
@@ -247,6 +266,11 @@ CAPABILITY_POLICIES: dict[str, str] = {
     "file": (
         "- 文件路径必须位于项目根目录或允许根目录，不能访问 .git、.venv、__pycache__、.env 或 pet_config.json。\n"
         "- 所有文件动作包括读取和列目录都需 Human Ops；写入只允许 UTF-8 文本，覆盖必须显式 overwrite=true，复制/移动不覆盖，删除不递归。"
+    ),
+    "shell": (
+        "- shell.command 是提交给当前平台系统 Shell 的完整字符串，必须同时给出 model_risk 与 risk_reason。\n"
+        "- 任何删除、覆盖、安装、联网、提权、进程/服务控制、远端写入、持久化或不确定命令都标 dangerous/uncertain。\n"
+        "- 本地危险命令目录会独立复核且只能提升风险；不得拆分、编码或套解释器来规避审批。"
     ),
 }
 
@@ -394,7 +418,7 @@ def render_decision_contract(profile: str) -> str:
             f"{json.dumps(schema['example'], ensure_ascii=False, separators=(',', ':'))}"
             f"{choices_text}"
         )
-    if normalize_prompt_profile(profile) != "proactive":
+    if normalize_prompt_profile(profile) not in {"proactive", "game"}:
         lines.append(
             '- 可选 goal: {"objective":"目标","status":"状态","evidence":["已知证据"],'
             '"missing":["缺失证据"],"next":"下一步"}；status: '

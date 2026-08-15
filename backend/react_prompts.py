@@ -7,6 +7,7 @@ from brain.contracts import is_terminal_goal_status, validate_decision_payload
 from brain.decisions import BrainDecision, DecisionKind
 from human_ops.filesystem_actions import FILESYSTEM_ACTIONS, validate_filesystem_action
 from human_ops.playwright_actions import playwright_command
+from human_ops.shell_actions import validate_shell_action
 
 
 def _prompt_text(value: object, limit: int) -> str:
@@ -230,6 +231,8 @@ def _simple_human_action_support(decision: BrainDecision) -> tuple[bool, str]:
         except ValueError as exc:
             return False, str(exc)
         return True, ""
+    if action_type == "shell":
+        return validate_shell_action(arguments)
     if action_type in FILESYSTEM_ACTIONS:
         return validate_filesystem_action(action_type, arguments)
     return False, action_type or "unknown"

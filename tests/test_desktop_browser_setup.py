@@ -115,6 +115,7 @@ class _FakeQt:
 class _FakeWebAttribute:
     LocalContentCanAccessFileUrls = "local-file"
     LocalContentCanAccessRemoteUrls = "remote-url"
+    PlaybackRequiresUserGesture = "playback-gesture"
     WebGLEnabled = "webgl"
     Accelerated2dCanvasEnabled = "canvas"
 
@@ -236,6 +237,7 @@ class DesktopBrowserSetupTests(unittest.TestCase):
             [
                 ("local-file", True),
                 ("remote-url", True),
+                ("playback-gesture", False),
                 ("webgl", True),
                 ("canvas", False),
             ],

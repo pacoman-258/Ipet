@@ -22,6 +22,7 @@ class BodyBridge:
     extract_pet_display_name: Callable[[str], str]
     normalize_vision_config: Callable[[dict], dict]
     normalize_environment_config: Callable[[dict], dict] = lambda value: dict(value or {})
+    normalize_game_config: Callable[[dict], dict] = lambda value: dict(value or {})
     json_dumps: Callable[..., str] = json.dumps
     run_javascript: Callable[[Any, str], None] = _run_browser_javascript
     extract_lipsync_meta: Callable[[dict], dict] = _live2d_assets.extract_lipsync_meta
@@ -114,6 +115,7 @@ class BodyBridge:
             },
             "vision": self.normalize_vision_config(config.get("vision", {})),
             "environment": self.normalize_environment_config(config.get("environment", {})),
+            "game": self.normalize_game_config(config.get("game", {})),
         }
 
     def apply_config_to_web(self, owner: Any, after_script: str | None = None) -> None:

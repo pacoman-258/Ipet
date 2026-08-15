@@ -5,6 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
+integrations/sts2_ipet_bridge/**/bin/
+integrations/sts2_ipet_bridge/**/obj/
 
 # Virtual environments
 .venv

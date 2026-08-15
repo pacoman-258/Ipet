@@ -9,6 +9,8 @@
     const playMotionCompat = typeof deps.playMotionCompat === "function" ? deps.playMotionCompat : () => false;
     const openChat = typeof deps.openChat === "function" ? deps.openChat : () => {};
     const closeChat = typeof deps.closeChat === "function" ? deps.closeChat : () => {};
+    const setProactiveSuspended =
+      typeof deps.setProactiveSuspended === "function" ? deps.setProactiveSuspended : () => {};
     const streamChat = typeof deps.streamChat === "function" ? deps.streamChat : async () => {};
     const stopSpeaking = typeof deps.stopSpeaking === "function" ? deps.stopSpeaking : () => {};
     const enqueueTTSChunk = typeof deps.enqueueTTSChunk === "function" ? deps.enqueueTTSChunk : () => {};
@@ -57,6 +59,13 @@
       showContextMenuAt,
       openChat,
       closeChat,
+      prepareForDesktopHide() {
+        closeChat();
+        setProactiveSuspended(true);
+      },
+      restoreFromDesktopHide() {
+        setProactiveSuspended(false);
+      },
       async sendChat(text) {
         await streamChat(text || "");
       },

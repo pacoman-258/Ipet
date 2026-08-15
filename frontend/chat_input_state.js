@@ -28,9 +28,19 @@
         return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
       };
       const input = count(usage.input_tokens);
+      const cachedInput = count(usage.cached_input_tokens);
+      const cacheWriteInput = count(usage.cache_write_input_tokens);
       const output = count(usage.output_tokens);
       const total = count(usage.total_tokens || input + output);
-      chatTokenCountEl.textContent = `输入 ${input} · 输出 ${output} · 总计 ${total}`;
+      const parts = [`输入 ${input}`];
+      if (cachedInput > 0) {
+        parts.push(`缓存命中 ${cachedInput}`);
+      }
+      if (cacheWriteInput > 0) {
+        parts.push(`缓存写入 ${cacheWriteInput}`);
+      }
+      parts.push(`输出 ${output}`, `总计 ${total}`);
+      chatTokenCountEl.textContent = parts.join(" · ");
     }
 
     function syncChatInputAvailability() {

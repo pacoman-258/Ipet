@@ -96,6 +96,14 @@
           open_chat_on_speak: true,
           blocked_apps: [],
         },
+        game: {
+          enabled: true,
+          adapter: "slay_the_spire_2",
+          min_reaction_interval_sec: 5,
+          max_reactions_per_minute: 6,
+          reaction_instruction: "",
+          categories: { combat: true, growth: true, route: true, resources: true, outcome: true },
+        },
         memory: {
           conversation_saving: true,
           long_term_enabled: true,
@@ -136,6 +144,11 @@
           },
         },
         environment: { ...defaults.environment, ...(config.environment || {}) },
+        game: {
+          ...defaults.game,
+          ...(config.game || {}),
+          categories: { ...defaults.game.categories, ...((config.game || {}).categories || {}) },
+        },
         memory: { ...defaults.memory, ...(config.memory || {}) },
         skills: { ...defaults.skills, ...(config.skills || {}) },
       };
@@ -487,6 +500,16 @@
       setValue(els.environmentQuietHoursEnd, Number(neo.environment.quiet_hours_end ?? 8));
       setValue(els.environmentBlockedApps, textFromLines(neo.environment.blocked_apps));
 
+      setChecked(els.gameEnabled, neo.game.enabled);
+      setChecked(els.gameCategoryCombat, neo.game.categories.combat);
+      setChecked(els.gameCategoryGrowth, neo.game.categories.growth);
+      setChecked(els.gameCategoryRoute, neo.game.categories.route);
+      setChecked(els.gameCategoryResources, neo.game.categories.resources);
+      setChecked(els.gameCategoryOutcome, neo.game.categories.outcome);
+      setValue(els.gameMinReactionIntervalSec, Number(neo.game.min_reaction_interval_sec ?? 5));
+      setValue(els.gameMaxReactionsPerMinute, Number(neo.game.max_reactions_per_minute || 6));
+      setValue(els.gameReactionInstruction, neo.game.reaction_instruction || "");
+
       setChecked(els.memoryConversationSaving, neo.memory.conversation_saving);
       setChecked(els.memoryLongTermEnabled, neo.memory.long_term_enabled);
       setChecked(els.memoryPreferencesEnabled, neo.memory.preferences_enabled);
@@ -637,6 +660,22 @@
         quiet_hours_start: intValue(els.environmentQuietHoursStart, 22),
         quiet_hours_end: intValue(els.environmentQuietHoursEnd, 8),
         blocked_apps: linesValue(els.environmentBlockedApps),
+      };
+
+      next.game = {
+        ...(next.game || {}),
+        enabled: !!els.gameEnabled?.checked,
+        adapter: "slay_the_spire_2",
+        min_reaction_interval_sec: intValue(els.gameMinReactionIntervalSec, 5),
+        max_reactions_per_minute: intValue(els.gameMaxReactionsPerMinute, 6),
+        reaction_instruction: String(els.gameReactionInstruction?.value || "").trim().slice(0, 500),
+        categories: {
+          combat: !!els.gameCategoryCombat?.checked,
+          growth: !!els.gameCategoryGrowth?.checked,
+          route: !!els.gameCategoryRoute?.checked,
+          resources: !!els.gameCategoryResources?.checked,
+          outcome: !!els.gameCategoryOutcome?.checked,
+        },
       };
 
       next.memory = {

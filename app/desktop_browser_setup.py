@@ -56,6 +56,7 @@ def setup_desktop_browser(
     settings = browser.settings()
     _set_web_attribute(settings, dependencies.web_attribute, "LocalContentCanAccessFileUrls", True)
     _set_web_attribute(settings, dependencies.web_attribute, "LocalContentCanAccessRemoteUrls", True)
+    _set_web_attribute(settings, dependencies.web_attribute, "PlaybackRequiresUserGesture", False)
     _set_web_attribute(settings, dependencies.web_attribute, "WebGLEnabled", _bool_value(dependencies.webgl_enabled))
     _set_web_attribute(settings, dependencies.web_attribute, "Accelerated2dCanvasEnabled", False)
 

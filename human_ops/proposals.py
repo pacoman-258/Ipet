@@ -6,9 +6,10 @@ from typing import Any, Callable
 from brain.contracts import is_terminal_goal_status
 from brain.decisions import BrainDecision, DecisionKind
 
-from .approvals import ReviewableProposal
+from .approvals import ApprovalRequirement, ReviewableProposal
 from .filesystem_actions import filesystem_action_label
 from .playwright_actions import playwright_action_label
+from .shell_actions import assess_shell_risk, shell_action_label
 from .previews import red_dot_click_preview
 
 TerminalPredicate = Callable[[str], bool]
@@ -77,6 +78,8 @@ def proposal_tool_label(proposal: ReviewableProposal) -> str:
         operation = str(args.get("operation") or "").strip() or "browser"
         profile = str(args.get("profile") or "未选择个人资料").strip() or "未选择个人资料"
         return f"Playwright {operation}：{playwright_action_label(args)} · 个人资料：{profile}"
+    if action_type == "shell":
+        return shell_action_label(args)
     if action_type.startswith("file_"):
         return filesystem_action_label(action_type, args)
     return proposal.summary or action_type
@@ -94,7 +97,7 @@ def proposal_event_payload(proposal_id: str, proposal: ReviewableProposal) -> di
         "summary": proposal.summary,
         "tools": [{"name": tool_name, "summary": proposal_tool_label(proposal)}] if tool_name else [],
         "preview": proposal.preview.to_dict() if proposal.preview else None,
-        "requires_review": True,
+        "requires_review": proposal.requires_review,
     }
 
 
@@ -211,15 +214,28 @@ def build_human_ops_act_proposal(
     elif action_type == "playwright":
         operation = str(arguments.get("operation") or "").strip() or "browser"
         summary = f"Ipet 想用 Playwright 执行 {operation}：{playwright_action_label(arguments)}"
+    elif action_type == "shell":
+        risk = assess_shell_risk(arguments)
+        risk_text = "；".join(risk.reasons) if risk.reasons else str(arguments.get("risk_reason") or "低风险命令")
+        local_rules = ", ".join(rule for rule in risk.matched_rules if not rule.startswith("model_")) or "无"
+        summary = (
+            f"Ipet 想运行命令：{shell_action_label(arguments)}"
+            f" · 模型判断：{risk.model_risk} — {str(arguments.get('risk_reason') or '')}"
+            f" · 本地规则：{local_rules} · 风险说明：{risk_text}"
+        )
     elif action_type.startswith("file_"):
         summary = f"Ipet 想执行文件动作：{filesystem_action_label(action_type, arguments)}"
     else:
         summary = decision.summary or f"Ipet 想执行：{action_type}"
+    requirement = ApprovalRequirement.REQUIRED
+    if action_type == "shell" and not assess_shell_risk(arguments).dangerous:
+        requirement = ApprovalRequirement.NOT_REQUIRED
     return ReviewableProposal.act(
         action_type=action_type,
         summary=summary,
         payload=proposal_payload,
         preview=preview,
+        requirement=requirement,
     )
 
 

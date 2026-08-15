@@ -25,6 +25,7 @@ from app.desktop_command_wiring import (
     DesktopCommandRouterWiringDependencies,
     create_desktop_command_router,
 )
+from app.desktop_pet_visibility import DesktopPetVisibilityController
 from app.desktop_bridge_wiring import create_connected_pet_bridge
 from app.desktop_shutdown import DesktopShutdownController
 from app.desktop_web_permissions import DesktopWebPermissionsController
@@ -39,6 +40,7 @@ from app.qt_bindings import load_qt_bindings
 from app.settings_window import SettingsWindowController
 from app.window_regions import WindowRegionController
 from backend.environment import DEFAULT_ENVIRONMENT_CONFIG, normalize_environment_config
+from backend.game import normalize_game_config
 from backend.vision import DEFAULT_VISION_CONFIG, normalize_vision_config
 from body import live2d_assets as _live2d_assets
 from body import macos_accessibility as _macos_accessibility
@@ -214,6 +216,21 @@ def apply_application_identity(app) -> None:
 def configure_application_lifecycle(app) -> None:
     """Keep auxiliary windows from deciding the desktop host lifetime."""
     app.setQuitOnLastWindowClosed(False)
+
+
+class DesktopApplication(QApplication):
+    """Relay macOS Dock/application reactivation to a hidden desktop pet."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.desktop_reopen_callback = None
+
+    def event(self, event):
+        activated = event.type() == QEvent.Type.ApplicationActivate
+        result = super().event(event)
+        if activated and callable(self.desktop_reopen_callback):
+            self.desktop_reopen_callback()
+        return result
 
 
 def _build_desktop_browser_setup_dependencies() -> DesktopBrowserSetupDependencies:
@@ -457,6 +474,7 @@ def load_config() -> dict:
         normalize_model_path_func=normalize_model_path,
         normalize_vision_config_func=normalize_vision_config,
         normalize_environment_config_func=normalize_environment_config,
+        normalize_game_config_func=normalize_game_config,
     )
 
 
@@ -601,6 +619,7 @@ def _build_body_bridge() -> BodyBridge:
         extract_pet_display_name=extract_pet_display_name,
         normalize_vision_config=normalize_vision_config,
         normalize_environment_config=normalize_environment_config,
+        normalize_game_config=normalize_game_config,
         json_dumps=json.dumps,
         run_javascript=_run_body_bridge_javascript,
         extract_lipsync_meta=extract_lipsync_meta,
@@ -629,6 +648,7 @@ def _build_desktop_config_actions(owner) -> DesktopConfigActions:
         normalize_model_path=normalize_model_path,
         normalize_vision_config=normalize_vision_config,
         normalize_environment_config=normalize_environment_config,
+        normalize_game_config=normalize_game_config,
         keep_neo_config_shape=_keep_neo_config_shape,
         normalize_neo_chat_config=_normalize_neo_chat_config,
         screen_provider=QGuiApplication.primaryScreen,
@@ -790,6 +810,7 @@ class DesktopPet(QMainWindow):
         self._python_event_filters_installed = False
         self.vision_controller = ScreenVisionController(self)
         self.environment_controller = EnvironmentController(self, timer_factory=QTimer)
+        self._desktop_pet_visibility = DesktopPetVisibilityController(self)
 
         self.bridge = create_connected_pet_bridge(self, PetBridge)
         self.approval_notification_controller = NativeApprovalNotificationController(
@@ -1054,6 +1075,12 @@ class DesktopPet(QMainWindow):
     def shutdown_desktop(self) -> None:
         _desktop_shutdown_controller_for(self).shutdown_desktop()
 
+    def hide_desktop_pet(self) -> None:
+        self._desktop_pet_visibility.hide()
+
+    def restore_desktop_pet(self) -> None:
+        self._desktop_pet_visibility.restore()
+
     def _ensure_window_interaction_controller(self) -> WindowInteractionController:
         controller = getattr(self, "_window_interaction_controller", None)
         if controller is None:
@@ -1132,10 +1159,12 @@ if __name__ == "__main__":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True)
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
-    app = QApplication(sys.argv)
+    app = DesktopApplication(sys.argv)
     apply_application_identity(app)
     configure_application_lifecycle(app)
     pet = DesktopPet()
+    app.desktop_reopen_callback = pet.restore_desktop_pet
+    app.aboutToQuit.connect(pet.shutdown_desktop)
     pet.show()
 
     sys.exit(app.exec())

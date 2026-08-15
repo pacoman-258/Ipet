@@ -32,7 +32,7 @@ class DesktopDefaultConfigTests(unittest.TestCase):
 
         self.assertEqual(
             set(config),
-            {"vision", "environment", "model_path", "brain", "human_ops", "memory", "skills", "window", "pet", "chat"},
+            {"vision", "environment", "game", "model_path", "brain", "human_ops", "memory", "skills", "window", "pet", "chat"},
         )
         self.assertEqual(config["brain"]["provider"], "openai_compatible")
         self.assertEqual(config["brain"]["model_name"], "gpt-5.4")
@@ -56,6 +56,8 @@ class DesktopDefaultConfigTests(unittest.TestCase):
         self.assertEqual(config["chat"]["asr"], default_asr_config)
         self.assertEqual(config["vision"], DEFAULT_VISION_CONFIG)
         self.assertEqual(config["environment"]["mode"], "off")
+        self.assertTrue(config["game"]["enabled"])
+        self.assertEqual(config["game"]["max_reactions_per_minute"], 6)
 
     def test_create_default_config_returns_independent_nested_structures(self) -> None:
         config_one = create_default_config(

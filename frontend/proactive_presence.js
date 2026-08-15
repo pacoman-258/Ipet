@@ -26,6 +26,7 @@
     let config = normalizeConfig();
     let timerId = 0;
     let polling = false;
+    let suspended = false;
     let listenersInstalled = false;
     let lastUserActivityAt = Date.now();
 
@@ -82,6 +83,10 @@
       const id = String(delivery?.id || "");
       const text = String(delivery?.text || "").trim();
       if (!id || !text) return;
+      if (suspended) {
+        await sendFeedback(id, "deferred");
+        return;
+      }
       if (config.mode !== "active" || getMemoryMode() !== "persistent") {
         await sendFeedback(id, "dismissed");
         return;
@@ -103,7 +108,7 @@
     }
 
     async function pollNow() {
-      if (polling || config.mode !== "active" || getMemoryMode() !== "persistent") return;
+      if (suspended || polling || config.mode !== "active" || getMemoryMode() !== "persistent") return;
       if (clientBusy() || Date.now() - lastUserActivityAt < 5000) return;
       polling = true;
       try {
@@ -139,12 +144,22 @@
       state.environment = { ...config };
       stop();
       installActivityListeners();
-      if (config.mode === "active") {
+      if (!suspended && config.mode === "active") {
         timerId = runtimeWindow.setInterval(pollNow, config.poll_interval_sec * 1000);
       }
     }
 
-    return Object.freeze({ applyConfig, pollNow, stop, noteUserActivity });
+    function setSuspended(value) {
+      suspended = value === true;
+      if (suspended) {
+        stop();
+        return;
+      }
+      applyConfig(config);
+      noteUserActivity();
+    }
+
+    return Object.freeze({ applyConfig, pollNow, stop, noteUserActivity, setSuspended });
   }
 
   window.IpetProactivePresence = Object.freeze({

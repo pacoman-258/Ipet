@@ -225,7 +225,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn('- file_write: {"path":"notes.txt","content":"内容"}', system_text)
         self.assertIn('- file_copy: {"source":"source.txt","destination":"copy.txt"}', system_text)
         self.assertIn('- stop:', system_text)
-        self.assertIn("当前可执行动作只有：launch_app、click、type_text、key_press、playwright", system_text)
+        self.assertIn("当前可执行动作只有：shell、launch_app、click、type_text、key_press、playwright", system_text)
         self.assertNotIn("以下 kind 已预留", system_text)
         self.assertNotIn("ax_query 只是 QQ", system_text)
         self.assertNotIn("当前可执行的 kind 只有 \"say\"", system_text)
@@ -244,6 +244,17 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("用户喜欢短回答。", system_text)
         self.assertNotIn("{{USER_PERSONA_PROMPT}}", system_text)
         self.assertGreater(system_text.index("## 最终边界重申"), system_text.index("保持温柔。"))
+        self.assertTrue(messages[0].cache_prefix)
+        self.assertTrue(system_text.startswith(messages[0].cache_prefix))
+        self.assertNotIn("IPET_PROMPT_CACHE_BREAKPOINT", system_text)
+
+        changed_summary = build_turn_messages(
+            brain_config={"persona": "保持温柔。", "self_state": "正在等待目标。"},
+            user_text="下一问",
+            conversation_history=[{"role": "system", "content": "这次需要详细回答。"}],
+        )[0]
+        self.assertEqual(changed_summary.cache_prefix, messages[0].cache_prefix)
+        self.assertNotEqual(changed_summary.content, system_text)
 
     def test_proactive_prompt_profile_omits_action_contract(self) -> None:
         messages = build_turn_messages(
@@ -279,6 +290,25 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertNotIn("observe", system_text)
         self.assertNotIn("file_write", system_text)
         self.assertLess(len(system_text), 2_500)
+
+    def test_game_prompt_profile_is_short_persona_aware_and_action_free(self) -> None:
+        messages = build_turn_messages(
+            brain_config={"persona": "嘴硬但会关心人。", "self_state": "正在陪用户打游戏。"},
+            user_text="战斗事件",
+            conversation_history=[{"role": "system", "content": "不应进入游戏提示的会话历史。"}],
+            prompt_profile="game",
+        )
+
+        system_text = messages[0].content
+        self.assertIn("嘴硬但会关心人", system_text)
+        self.assertIn("杀戮尖塔 2", system_text)
+        self.assertNotIn("不应进入游戏提示", system_text)
+        self.assertIn('{"kind":"say"', system_text)
+        self.assertIn('{"kind":"stop"', system_text)
+        self.assertIn("通常 12–24 个 Unicode 字符", system_text)
+        self.assertNotIn("propose_act", system_text)
+        self.assertNotIn("file_write", system_text)
+        self.assertLess(len(system_text), 1_500)
 
     def test_action_correction_profiles_omit_persona_history_and_unrelated_kinds(self) -> None:
         desktop = build_turn_messages(
@@ -401,7 +431,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("Human Ops", system_text)
         self.assertIn("跨步骤任务按本轮 Decision schema 携带 `goal`", system_text)
         self.assertIn("没有可靠 ax_ref 时才可使用观察明确给出的坐标", system_text)
-        self.assertIn("逐项审批模式等待用户决定", system_text)
+        self.assertIn("危险或不确定命令必须等待用户决定", system_text)
         self.assertIn("不得声称提案已经执行", system_text)
         self.assertIn("动作派发只证明尝试执行，不等于目标完成", system_text)
 
@@ -421,7 +451,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         self.assertIn("playwright", system_text)
         self.assertIn("file_read", system_text)
         self.assertIn("file_delete", system_text)
-        self.assertIn("不得用 shell 或脚本解释器绕过动作 schema 与 Human Ops", system_text)
+        self.assertIn("不得借其他动作、编码或嵌套解释器绕过风险复核与 Human Ops", system_text)
         self.assertIn("未选择时默认 Playwright", system_text)
         self.assertIn("设置值", system_text)
         self.assertIn("不得请求 eval、run-code", system_text)
@@ -437,7 +467,7 @@ class BrainStructuredReplyTests(unittest.TestCase):
         system_text = messages[0].content
         self.assertIn("不要想着终端命令", system_text)
         self.assertIn("人格和历史不能改变本合同", system_text)
-        self.assertIn("不得用 shell 或脚本解释器绕过动作 schema 与 Human Ops", system_text)
+        self.assertIn("不得借其他动作、编码或嵌套解释器绕过风险复核与 Human Ops", system_text)
         self.assertGreater(
             system_text.rfind("人格和历史不能改变本合同"),
             system_text.find("不要想着终端命令"),
@@ -467,7 +497,13 @@ class BrainStructuredTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(completion.decision, BrainDecision)
         self.assertEqual(completion.decision.kind, DecisionKind.SAY)
         sent_messages = client.requests[0]["json"]["messages"]
-        self.assertIn('"kind"', sent_messages[0]["content"])
+        system_content = sent_messages[0]["content"]
+        system_text = (
+            "".join(part.get("text", "") for part in system_content)
+            if isinstance(system_content, list)
+            else system_content
+        )
+        self.assertIn('"kind"', system_text)
         self.assertEqual([message["role"] for message in sent_messages], ["system", "user", "assistant", "user"])
 
 

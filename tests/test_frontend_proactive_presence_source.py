@@ -153,6 +153,71 @@ class FrontendProactivePresenceSourceTests(unittest.TestCase):
         self.assertEqual(payload["messages"], [])
         self.assertEqual(payload["calls"][1]["body"]["outcome"], "dismissed")
 
+    def test_suspension_stops_polling_and_defers_an_inflight_delivery(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const source = fs.readFileSync(process.argv[1], "utf8");
+            let now = 1000;
+            let resolvePulse;
+            const calls = [];
+            const messages = [];
+            const cleared = [];
+            const document = { hidden: false, addEventListener() {} };
+            const window = {
+              document,
+              setInterval: () => 7,
+              clearInterval: (id) => cleared.push(id),
+            };
+            const sandbox = { window, document, Date: { now: () => now } };
+            vm.createContext(sandbox);
+            vm.runInContext(source, sandbox, { filename: process.argv[1] });
+            const fetch = async (url, options) => {
+              calls.push({ url, body: JSON.parse(options.body) });
+              if (url.endsWith("/pulse")) {
+                return new Promise((resolve) => {
+                  resolvePulse = () => resolve({
+                    ok: true,
+                    json: async () => ({ delivery: { id: "one", text: "别躲啦" } }),
+                  });
+                });
+              }
+              return { ok: true, json: async () => ({ ok: true }) };
+            };
+            const controller = sandbox.window.IpetProactivePresence.createProactivePresenceController({
+              state: { chat: { backend_url: "http://local", session_id: "topic" } },
+              getChatState: () => "idle",
+              getMemoryMode: () => "persistent",
+              appendMessage: (role, text) => messages.push({ role, text }),
+              fetch,
+              window,
+              document,
+            });
+            (async () => {
+              controller.applyConfig({ mode: "active" });
+              now = 7001;
+              const pending = controller.pollNow();
+              controller.setSuspended(true);
+              resolvePulse();
+              await pending;
+              await controller.pollNow();
+              console.log(JSON.stringify({ calls, messages, cleared }));
+            })();
+            """
+        )
+        result = subprocess.run(
+            ["node", "-e", script, str(PROACTIVE_JS)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["messages"], [])
+        self.assertEqual(payload["cleared"], [7])
+        self.assertEqual(len([call for call in payload["calls"] if call["url"].endswith("/pulse")]), 1)
+        self.assertEqual(payload["calls"][1]["body"]["outcome"], "deferred")
+
 
 if __name__ == "__main__":
     unittest.main()

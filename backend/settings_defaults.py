@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from .environment import DEFAULT_ENVIRONMENT_CONFIG
+from .game import DEFAULT_GAME_CONFIG
 from .tts import DEFAULT_PROVIDER as DEFAULT_TTS_PROVIDER, FISH_AUDIO_DEFAULT_MODEL
 from .vision import DEFAULT_VISION_CONFIG
 
@@ -12,6 +13,7 @@ NEO_DEFAULTS: dict[str, Any] = {
     "model_path": "",
     "vision": deepcopy(DEFAULT_VISION_CONFIG),
     "environment": deepcopy(DEFAULT_ENVIRONMENT_CONFIG),
+    "game": deepcopy(DEFAULT_GAME_CONFIG),
     "chat": {
         "backend_url": "http://127.0.0.1:8008",
         "model": "gpt-5.4",
@@ -84,6 +86,10 @@ NEO_DEFAULTS: dict[str, Any] = {
             "max_read_bytes": 1000000,
             "max_write_bytes": 1000000,
             "max_list_entries": 200,
+        },
+        "shell": {
+            "enabled": True,
+            "max_output_bytes": 200000,
         },
         "observe_model": {
             "enabled": False,

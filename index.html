@@ -75,7 +75,11 @@
         <span class="pet-menu-icon" aria-hidden="true">↶</span>
         <span><strong>对话历史</strong><small>查看与切换已有话题</small></span>
       </button>
-      <button id="pet-menu-settings" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 3">
+      <button id="pet-menu-game" class="pet-menu-tab" type="button" role="menuitem" aria-pressed="false" disabled style="--menu-order: 3">
+        <span class="pet-menu-icon" aria-hidden="true">♠</span>
+        <span><strong id="pet-menu-game-label">游戏模式 · 等待杀戮尖塔 2</strong><small id="pet-menu-game-detail">等待模组心跳</small></span>
+      </button>
+      <button id="pet-menu-settings" class="pet-menu-tab" type="button" role="menuitem" style="--menu-order: 4">
         <span class="pet-menu-icon" aria-hidden="true">◇</span>
         <span><strong>设置</strong><small>打开 WebUI 配置页</small></span>
       </button>
@@ -158,6 +162,7 @@
   <script src="./frontend/chat_submit.js"></script>
   <script src="./frontend/chat_messages.js"></script>
   <script src="./frontend/proactive_presence.js"></script>
+  <script src="./frontend/game_presence.js"></script>
   <script src="./frontend/chat_panel.js"></script>
   <script src="./frontend/pet_scene.js"></script>
   <script src="./frontend/pet_state_notify.js"></script>
