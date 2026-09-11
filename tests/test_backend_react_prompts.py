@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import ast
 import importlib
-import inspect
-import textwrap
 import unittest
 from pathlib import Path
 from typing import Any
@@ -37,9 +35,9 @@ class BackendReactPromptsTests(unittest.TestCase):
                     "backend.react_prompts must not import sibling app module",
                 )
 
-    def test_app_wrappers_stay_thin(self) -> None:
-        self._react_prompts()
-        wrapper_names = [
+    def test_app_reuses_prompt_implementations(self) -> None:
+        react_prompts = self._react_prompts()
+        names = [
             "_click_coordinate_clarification_text",
             "_click_coordinate_observe_failure_text",
             "_fallback_after_observe_brain_error",
@@ -56,20 +54,9 @@ class BackendReactPromptsTests(unittest.TestCase):
             "_unsupported_simple_action_prompt",
         ]
 
-        for name in wrapper_names:
+        for name in names:
             with self.subTest(name=name):
-                source = textwrap.dedent(inspect.getsource(getattr(backend_app, name)))
-                tree = ast.parse(source)
-                function = tree.body[0]
-                self.assertIsInstance(function, ast.FunctionDef)
-                self.assertEqual(len(function.body), 1, source)
-                self.assertIsInstance(function.body[0], ast.Return, source)
-                call = function.body[0].value
-                self.assertIsInstance(call, ast.Call, source)
-                self.assertIsInstance(call.func, ast.Attribute, source)
-                self.assertEqual(call.func.attr, name, source)
-                self.assertIsInstance(call.func.value, ast.Name, source)
-                self.assertEqual(call.func.value.id, "_react_prompt_helpers", source)
+                self.assertIs(getattr(backend_app, name), getattr(react_prompts, name))
 
     def test_coerce_decision_keeps_non_say_decision(self) -> None:
         react_prompts = self._react_prompts()

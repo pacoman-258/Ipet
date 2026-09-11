@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -28,6 +30,76 @@ class SettingsFormSourceTests(unittest.TestCase):
             "settings_form.js should own settings page form defaults and model read/write behavior.",
         )
         self.form_js = SETTINGS_FORM_JS.read_text(encoding="utf-8")
+
+    def test_desktop_follow_form_defaults_on_and_round_trips_both_values(self) -> None:
+        self.assertIn('id="window-follow-desktop"', self.html)
+        self.assertIn('windowFollowDesktop: $("window-follow-desktop")', self.settings_js)
+        script = """
+            const fs = require("fs"), vm = require("vm");
+            const sandbox = {window: {}};
+            vm.createContext(sandbox);
+            vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), sandbox);
+            const values = [{}, {follow_desktop: false}, {follow_desktop: true}].map(window => {
+              const config = {window};
+              const els = {windowFollowDesktop: {checked: false}};
+              const form = sandbox.window.IpetSettingsForm.createSettingsFormController({
+                els, getSettingsPayload: () => ({config}),
+              });
+              form.populateForm(config);
+              return [els.windowFollowDesktop.checked, form.readForm().window.follow_desktop];
+            });
+            console.log(JSON.stringify(values));
+        """
+        result = subprocess.run(
+            ["node", "-e", script, str(SETTINGS_FORM_JS)],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(json.loads(result.stdout), [[True, True], [False, False], [True, True]])
+
+    def test_authorization_form_matches_backend_for_conflicting_and_legacy_config(self) -> None:
+        from human_ops.authorization import normalize_authorization_mode
+
+        cases = [
+            {},
+            {"require_act_review": False},
+            {"authorization_mode": "review", "require_act_review": False},
+            {"authorization_mode": "full", "require_act_review": True},
+            {"authorization_mode": " FULL ", "require_act_review": True},
+            {"authorization_mode": "unknown", "require_act_review": True},
+            {"authorization_mode": "unknown", "require_act_review": False},
+        ]
+        script = """
+            const fs = require("fs");
+            const vm = require("vm");
+            const sandbox = { window: {} };
+            vm.createContext(sandbox);
+            vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), sandbox);
+            const results = JSON.parse(process.argv[2]).map(human_ops => {
+              const config = {human_ops};
+              const els = {opsAuthorizationMode: {value: ""}};
+              const form = sandbox.window.IpetSettingsForm.createSettingsFormController({
+                els, getSettingsPayload: () => ({config}),
+              });
+              form.populateForm(config);
+              return {
+                merged: form.mergedNeo(config).human_ops.authorization_mode,
+                displayed: els.opsAuthorizationMode.value,
+                saved: form.readForm().human_ops.authorization_mode,
+              };
+            });
+            console.log(JSON.stringify(results));
+        """
+        result = subprocess.run(
+            ["node", "-e", script, str(SETTINGS_FORM_JS), json.dumps(cases)],
+            capture_output=True, text=True, check=True,
+        )
+        for config, actual in zip(cases, json.loads(result.stdout), strict=True):
+            with self.subTest(config=config):
+                expected = normalize_authorization_mode(
+                    config.get("authorization_mode"),
+                    require_act_review=config.get("require_act_review", True),
+                )
+                self.assertEqual(actual, dict.fromkeys(("merged", "displayed", "saved"), expected))
 
     def test_settings_page_loads_form_before_model_picker_and_settings_controller(self) -> None:
         form_script = '<script src="/settings_form.js?v=3"></script>'

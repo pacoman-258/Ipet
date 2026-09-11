@@ -15,6 +15,22 @@ from backend.local_capabilities import GAME_BROWSER_CAPABILITY, GAME_BROWSER_CAP
 
 
 class BackendSettingsConfigTests(unittest.TestCase):
+    def test_follow_desktop_defaults_on_and_survives_save_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.json"
+            options = dict(config_path=config_path, defaults=backend_app.NEO_DEFAULTS,
+                           allowed_keys=backend_app.ALLOWED_CONFIG_KEYS)
+            current = settings_config.normalize_private_config({}, **options)
+            self.assertIs(current["window"]["follow_desktop"], True)
+            for enabled in (False, True):
+                current = settings_config.apply_settings_update(
+                    {"window": {"follow_desktop": enabled}}, current=current, **options,
+                )
+                settings_config.save_config(current, config_path=config_path)
+                current = settings_config.normalize_private_config(**options)
+                self.assertIs(current["window"]["follow_desktop"], enabled)
+                self.assertIs(settings_config.public_config(current)["window"]["follow_desktop"], enabled)
+
     def test_settings_payload_does_not_expose_process_api_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {"IPET_LOCAL_API_TOKEN": "native-secret-value"}, clear=False):

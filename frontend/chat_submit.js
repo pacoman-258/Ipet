@@ -153,8 +153,6 @@
         available_expressions: Array.isArray(state.chat.available_expressions)
           ? state.chat.available_expressions
           : [],
-        react_enabled: state.chat.react_enabled !== false,
-        react_visibility: state.chat.react_visibility || "inline",
         max_reasoning_steps: Number(state.chat.max_reasoning_steps || 10),
         chat_mode: currentChatMode,
         memory_mode: currentMemoryMode,

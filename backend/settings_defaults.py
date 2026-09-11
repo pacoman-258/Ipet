@@ -56,6 +56,7 @@ NEO_DEFAULTS: dict[str, Any] = {
         "width": 420,
         "height": 640,
         "locked": False,
+        "follow_desktop": True,
     },
     "brain": {
         "provider": "openai_compatible",

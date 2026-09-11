@@ -230,7 +230,10 @@ class DesktopConfigActionsSplitTests(unittest.TestCase):
         actions.config_mtime_token.return_value = ("mtime", 4)
         host = SimpleNamespace()
 
-        with mock.patch.object(main, "_desktop_config_actions_for", return_value=actions) as factory:
+        with (
+            mock.patch.object(main, "_desktop_config_actions_for", return_value=actions) as factory,
+            mock.patch.object(main, "apply_desktop_follow") as follow_desktop,
+        ):
             self.assertEqual(main.DesktopPet._config_mtime_token(host), ("mtime", 4))
             main.DesktopPet.reload_config_from_disk(host)
             main.DesktopPet.apply_from_panel(host)
@@ -243,6 +246,15 @@ class DesktopConfigActionsSplitTests(unittest.TestCase):
         actions.apply_from_panel.assert_called_once_with()
         actions.save_config.assert_called_once_with()
         actions.reset_to_default.assert_called_once_with()
+        self.assertEqual(follow_desktop.call_args_list, [mock.call(host), mock.call(host)])
+
+    def test_panel_preserves_disabled_desktop_follow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            owner = _FakeOwner()
+            owner.config.setdefault("window", {})["follow_desktop"] = False
+            actions = _build_actions(owner, Path(tmp) / "config.json", [])
+            actions.apply_from_panel()
+            self.assertIs(owner.config["window"]["follow_desktop"], False)
 
     def test_main_builder_resolves_patched_load_config_when_reloading(self) -> None:
         loaded = {
@@ -351,7 +363,7 @@ class DesktopConfigActionsSplitTests(unittest.TestCase):
         self.assertIsNot(owner.config["chat"]["asr"], old_asr)
         self.assertEqual(
             owner.config["window"],
-            {"x": 101, "y": 202, "width": 303, "height": 404, "locked": True},
+            {"x": 101, "y": 202, "width": 303, "height": 404, "locked": True, "follow_desktop": True},
         )
         self.assertTrue(owner.window_locked)
         self.assertEqual(owner.geometry_calls, [(101, 202, 303, 404)])

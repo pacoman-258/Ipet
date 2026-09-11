@@ -129,11 +129,18 @@
 
     function mergedNeo(config) {
       const defaults = neoDefaults();
+      const humanOps = config.human_ops || {};
+      const mode = String(humanOps.authorization_mode || "").trim().toLowerCase();
+      const authorizationMode = ["review", "full"].includes(mode)
+        ? mode
+        : humanOps.require_act_review === false ? "full" : "review";
       return {
         brain: { ...defaults.brain, ...(config.brain || {}) },
         human_ops: {
           ...defaults.human_ops,
-          ...(config.human_ops || {}),
+          ...humanOps,
+          authorization_mode: authorizationMode,
+          require_act_review: authorizationMode !== "full",
           click_preview: {
             ...defaults.human_ops.click_preview,
             ...((config.human_ops || {}).click_preview || {}),
@@ -189,7 +196,7 @@
             follow_mouse: true,
             background_enabled: false,
           },
-          window: { x: 120, y: 80, width: 420, height: 640, locked: false },
+          window: { x: 120, y: 80, width: 420, height: 640, locked: false, follow_desktop: true },
           ...neoDefaults(),
         },
       };
@@ -444,6 +451,7 @@
       setValue(els.windowWidth, Number(win.width || 420));
       setValue(els.windowHeight, Number(win.height || 640));
       setChecked(els.windowLocked, win.locked);
+      setChecked(els.windowFollowDesktop, win.follow_desktop !== false);
 
       setValue(els.brainProvider, neo.brain.provider || "openai_compatible");
       setValue(els.brainModelEndpoint, neo.brain.model_endpoint || "");
@@ -461,12 +469,7 @@
       setValue(els.opsPlaywrightProfile, neo.human_ops.playwright_profile || "");
       setChecked(els.opsObserveScreen, neo.human_ops.observe_screen);
       setChecked(els.opsAccessibility, neo.human_ops.accessibility);
-      setValue(
-        els.opsAuthorizationMode,
-        neo.human_ops.authorization_mode === "full" || neo.human_ops.require_act_review === false
-          ? "full"
-          : "review",
-      );
+      setValue(els.opsAuthorizationMode, neo.human_ops.authorization_mode);
       setChecked(els.opsRequireMemoryReview, true);
       setChecked(els.opsClipboardReview, neo.human_ops.clipboard_write_review);
       setChecked(els.opsObserveModelEnabled, neo.human_ops.observe_model.enabled);
@@ -587,6 +590,7 @@
         width: intValue(els.windowWidth, 420),
         height: intValue(els.windowHeight, 640),
         locked: !!els.windowLocked?.checked,
+        follow_desktop: els.windowFollowDesktop ? els.windowFollowDesktop.checked : true,
       };
 
       const brainProvider = stringValue(els.brainProvider, "openai_compatible");

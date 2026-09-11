@@ -12,7 +12,7 @@ from backend import app_adapters
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_PATH = ROOT_DIR / "backend" / "app.py"
 
-EXPECTED_COMPAT_EXPORTS = {
+EXPECTED_EXPORTS = {
     "_COORDINATE_X_RE",
     "_COORDINATE_Y_RE",
     "_blocked_react_decision",
@@ -70,7 +70,7 @@ EXPECTED_COMPAT_EXPORTS = {
 
 
 class BackendAppAdapterExportsTests(unittest.TestCase):
-    def test_backend_app_installs_one_explicit_compat_export_map(self) -> None:
+    def test_backend_app_explicitly_imports_existing_entrypoints(self) -> None:
         source = APP_PATH.read_text(encoding="utf-8")
         tree = ast.parse(source)
         imported_names = {
@@ -80,22 +80,10 @@ class BackendAppAdapterExportsTests(unittest.TestCase):
             for alias in node.names
         }
 
-        self.assertEqual(imported_names, set())
-        self.assertEqual(set(app_adapters.APP_COMPAT_EXPORTS), EXPECTED_COMPAT_EXPORTS)
-        for name, exported in app_adapters.APP_COMPAT_EXPORTS.items():
+        self.assertEqual(imported_names, EXPECTED_EXPORTS)
+        for name in EXPECTED_EXPORTS:
             with self.subTest(name=name):
-                self.assertIs(getattr(backend_app, name), exported)
-                self.assertIs(exported, getattr(app_adapters, name))
-
-    def test_installer_updates_only_compat_names(self) -> None:
-        namespace = {"sentinel": mock.sentinel.existing}
-
-        app_adapters.install_app_compat_exports(namespace)
-
-        self.assertIs(namespace["sentinel"], mock.sentinel.existing)
-        self.assertEqual(set(namespace) - {"sentinel"}, EXPECTED_COMPAT_EXPORTS)
-        for name, exported in app_adapters.APP_COMPAT_EXPORTS.items():
-            self.assertIs(namespace[name], exported)
+                self.assertIs(getattr(backend_app, name), getattr(app_adapters, name))
 
     def test_route_dependencies_keep_reading_patched_backend_app_globals(self) -> None:
         with mock.patch.object(

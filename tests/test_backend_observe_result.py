@@ -26,12 +26,11 @@ class BackendObserveResultSplitTests(unittest.TestCase):
         self.assertNotIn("backend.app", source)
         self.assertNotIn("from .app", source)
 
-    def test_backend_app_observation_text_entrypoint_is_thin_wrapper(self) -> None:
+    def test_backend_app_observation_text_entrypoint_uses_result_implementation(self) -> None:
         source = Path(backend_app.__file__).read_text(encoding="utf-8")
-        adapter_source = Path(app_adapters.__file__).read_text(encoding="utf-8")
 
         self.assertIs(backend_app._observation_text_from_result, app_adapters._observation_text_from_result)
-        self.assertIn("_observe_result_helpers.observation_text_from_result(result)", adapter_source)
+        self.assertIs(backend_app._observation_text_from_result, self._observe_result_module().observation_text_from_result)
         self.assertNotIn("observe_answer", source)
         self.assertNotIn("observations[:3]", source)
         self.assertNotIn("foreground_app", source)

@@ -50,6 +50,7 @@ class DesktopDefaultConfigTests(unittest.TestCase):
         self.assertEqual(config["memory"]["review_queue"], [])
         self.assertEqual(config["skills"]["recipes"], [])
         self.assertEqual(config["window"]["width"], 420)
+        self.assertIs(config["window"]["follow_desktop"], True)
         self.assertEqual(config["pet"]["background_overlay_opacity"], 0.42)
         self.assertEqual(config["chat"]["backend_url"], "http://127.0.0.1:8008")
         self.assertEqual(config["chat"]["model"], "gpt-5.4")

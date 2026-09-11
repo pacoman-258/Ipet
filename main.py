@@ -25,7 +25,7 @@ from app.desktop_command_wiring import (
     DesktopCommandRouterWiringDependencies,
     create_desktop_command_router,
 )
-from app.desktop_pet_visibility import DesktopPetVisibilityController
+from app.desktop_pet_visibility import DesktopPetVisibilityController, apply_desktop_follow
 from app.desktop_bridge_wiring import create_connected_pet_bridge
 from app.desktop_shutdown import DesktopShutdownController
 from app.desktop_web_permissions import DesktopWebPermissionsController
@@ -990,6 +990,7 @@ class DesktopPet(QMainWindow):
 
     def reload_config_from_disk(self) -> None:
         _desktop_config_actions_for(self).reload_config_from_disk()
+        apply_desktop_follow(self)
 
     def _settings_page_url(self) -> str:
         return _settings_window_controller_for(self).settings_page_url()
@@ -1126,6 +1127,11 @@ class DesktopPet(QMainWindow):
 
     def reset_to_default(self) -> None:
         _desktop_config_actions_for(self).reset_to_default()
+        apply_desktop_follow(self)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, lambda: apply_desktop_follow(self))
 
     def closeEvent(self, event) -> None:
         event.accept()

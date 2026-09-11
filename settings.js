@@ -47,6 +47,7 @@
     windowWidth: $("window-width"),
     windowHeight: $("window-height"),
     windowLocked: $("window-locked"),
+    windowFollowDesktop: $("window-follow-desktop"),
     brainProvider: $("brain-provider"),
     brainModelEndpoint: $("brain-model-endpoint"),
     brainFetchModelsBtn: $("brain-fetch-models-btn"),
@@ -296,7 +297,7 @@
         "Human Ops",
         neo.human_ops.observe_model.enabled
           ? `observe · ${neo.human_ops.observe_model.model_name || "独立模型"}`
-          : neo.human_ops.authorization_mode === "full" || neo.human_ops.require_act_review === false
+          : neo.human_ops.authorization_mode === "full"
             ? "Brain 直接观察 · 完全授权"
             : "Brain 直接观察 · 逐项审批",
       ],

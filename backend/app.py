@@ -50,7 +50,61 @@ from . import chat_stream_routes as _chat_stream_route_helpers
 from . import chat_topics_routes as _chat_topics_route_helpers
 from . import desktop_command_client as _desktop_command_client_helpers
 from . import app_action_adapters as _app_action_adapter_helpers
-from . import app_adapters as _app_adapters
+from .app_adapters import (
+    _COORDINATE_X_RE,
+    _COORDINATE_Y_RE,
+    _blocked_react_decision,
+    _candidate_location_for_app_label,
+    _candidate_matches_label,
+    _click_coordinate_clarification_text,
+    _click_coordinate_observe_failure_text,
+    _computer_use_context_text,
+    _coordinate_followup_target_from_goal,
+    _coordinate_pair_from_text,
+    _coordinate_pair_near_terms,
+    _coordinate_scale_for_frame,
+    _coerce_decision_for_human_ops,
+    _decision_goal,
+    _decision_kind,
+    _default_observe_prompt_for_request,
+    _enrich_observation_frame_with_model,
+    _fallback_after_observe_brain_error,
+    _format_coordinate_scale,
+    _frame_with_observe_prompt,
+    _goal_is_terminal,
+    _goal_requests_click_coordinate_followup,
+    _goal_status,
+    _goal_text_for_observe,
+    _has_captured_screen_frame,
+    _has_negative_visibility_evidence,
+    _has_numeric_action_argument,
+    _has_partial_coordinate_pair,
+    _image_resolution_from_frame,
+    _infer_app_label,
+    _infer_chat_context,
+    _infer_computer_use_context,
+    _infer_contact_label,
+    _infer_recent_chat_messages,
+    _label_aliases,
+    _looks_like_visual_observation_failure,
+    _observation_has_reviewable_click_affordance,
+    _observation_text_from_result,
+    _observe_click_coordinate_status,
+    _observe_coordinate_context_from_frame,
+    _normalize_observed_click_coordinates,
+    _observe_decision_requests_click,
+    _observe_model_analyzer_config,
+    _observe_prompt_from_decision,
+    _observe_target_hint_from_decision,
+    _perform_human_ops_observe,
+    _point_from_candidate,
+    _react_followup_prompt,
+    _react_missing_summary,
+    _screen_bounds_from_frame,
+    _screen_resolution_from_frame,
+    _simple_human_action_support,
+    _unsupported_simple_action_prompt,
+)
 from . import health_routes as _health_route_helpers
 from . import human_ops_decision_routes as _human_ops_decision_route_helpers
 from . import environment_routes as _environment_route_helpers
@@ -63,9 +117,6 @@ from . import app_settings_adapters as _settings_adapter_helpers
 from . import settings_live2d as _settings_live2d_helpers
 from . import settings_routes as _settings_route_helpers
 from .settings_defaults import ALLOWED_CONFIG_KEYS, NEO_DEFAULTS
-
-
-_app_adapters.install_app_compat_exports(globals())
 
 
 app = FastAPI(title="Ipet Neo Aspect Backend", version="0.3.0")

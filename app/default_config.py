@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 from typing import Any
 
 from backend.environment import DEFAULT_ENVIRONMENT_CONFIG
 from backend.game import DEFAULT_GAME_CONFIG
-
-
-def _clone_json_value(value: Any) -> Any:
-    return json.loads(json.dumps(value))
 
 
 def create_default_config(
@@ -22,9 +18,9 @@ def create_default_config(
     default_environment_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "vision": _clone_json_value(default_vision_config),
-        "environment": _clone_json_value(default_environment_config or DEFAULT_ENVIRONMENT_CONFIG),
-        "game": _clone_json_value(DEFAULT_GAME_CONFIG),
+        "vision": deepcopy(default_vision_config),
+        "environment": deepcopy(default_environment_config or DEFAULT_ENVIRONMENT_CONFIG),
+        "game": deepcopy(DEFAULT_GAME_CONFIG),
         "model_path": default_model_path,
         "brain": {
             "provider": "openai_compatible",
@@ -86,6 +82,7 @@ def create_default_config(
             "width": 420,
             "height": 640,
             "locked": False,
+            "follow_desktop": True,
         },
         "pet": {
             "scale": 0.3,
@@ -112,10 +109,8 @@ def create_default_config(
             "tts_model": "s2.1-pro-free",
             "expression_mode": True,
             "expression_output_format": "ndjson_v1",
-            "react_enabled": True,
-            "react_visibility": "inline",
             "max_reasoning_steps": 10,
-            "asr": _clone_json_value(default_asr_config),
+            "asr": deepcopy(default_asr_config),
             "system_prompt": "",
         },
     }

@@ -52,7 +52,7 @@ def _fallback_after_observe_brain_error(
 
 
 def _coerce_decision_for_human_ops(
-    _user_text: str,
+    user_text: str,
     decision: BrainDecision,
 ) -> BrainDecision:
     # Product intent belongs to Brain. This boundary may validate a proposed action later,

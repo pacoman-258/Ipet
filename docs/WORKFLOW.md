@@ -58,6 +58,8 @@ The chat worklog exposes curated events under eight categories: `planning`, `sea
 
 Token counters use provider-reported input, output, total, cache-hit, and cache-write usage. Cache fields appear only when the provider reports them; providers without usage data do not trigger character-based estimates.
 
+The Settings Console exposes `window.follow_desktop`, enabled by default. On macOS, the pet joins all desktop Spaces, including full-screen application Spaces, without activating the app or moving focus. The native pet panel uses the nonactivating panel style as well as the Space collection flags; collection flags alone do not make an activatable panel visible in another application's full-screen Space. Saving applies the choice to the running pet; showing a hidden pet reapplies it. Disabling restores the native window’s previous Space behavior and nonactivating style. Other platforms keep their existing window behavior.
+
 ## Ambient Presence And Initiative
 
 Ambient presence is a Body-owned enhancement, not a hidden autonomous task. It has three explicit modes: `off` collects nothing, `shadow` records bounded “would speak” event types without calling Brain or sending output, and `active` may deliver a proactive `say`. The default is `off`.

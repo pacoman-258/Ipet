@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy as copy_config
 from pathlib import Path
 from typing import Callable
 
@@ -33,10 +34,6 @@ CUSTOM_HTTP_TTS_PRESETS = {
         },
     },
 }
-
-
-def copy_config(config: dict) -> dict:
-    return json.loads(json.dumps(config))
 
 
 def build_custom_http_tts_preset(key: str) -> str:

@@ -1,11 +1,78 @@
 from __future__ import annotations
 
 import ctypes
+import logging
+import platform
 import sys
 
 
 _PREPARE_HIDE_SCRIPT = "window.PET_APP?.prepareForDesktopHide?.();"
 _RESTORE_SCRIPT = "window.PET_APP?.restoreFromDesktopHide?.();"
+_NONACTIVATING_PANEL = 1 << 7  # NSWindowStyleMaskNonactivatingPanel
+
+
+def _desktop_space_behavior(current: int, original: int, *, enabled: bool, modern_macos: bool) -> int:
+    # NSWindowCollectionBehavior: Spaces and full-screen modes are mutually exclusive.
+    mask = (1 << 0) | (1 << 1) | (1 << 7) | (1 << 8) | (1 << 9)
+    follow = (1 << 0) | (1 << 8)  # CanJoinAllSpaces, FullScreenAuxiliary
+    if modern_macos:
+        mask |= (1 << 16) | (1 << 17) | (1 << 18)
+        follow |= 1 << 18  # CanJoinAllApplications (macOS 13+)
+    return (current & ~mask) | (follow if enabled else original & mask)
+
+
+def apply_desktop_follow(owner) -> bool:
+    """Apply on the Qt GUI thread after the native window exists."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+        selector = objc.sel_registerName
+        selector.restype = ctypes.c_void_p
+        selector.argtypes = (ctypes.c_char_p,)
+        # Separate signatures avoid changing objc_msgSend shared with other native helpers.
+        get_pointer = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(
+            ("objc_msgSend", objc)
+        )
+        get_behavior = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p)(
+            ("objc_msgSend", objc)
+        )
+        set_behavior = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)(
+            ("objc_msgSend", objc)
+        )
+        # Qt's macOS WId is an NSView*, not an NSWindow*.
+        native_window = get_pointer(int(owner.winId()), selector(b"window"))
+        if not native_window:
+            return False
+        current = get_behavior(native_window, selector(b"collectionBehavior"))
+        current_style = get_behavior(native_window, selector(b"styleMask"))
+        saved = getattr(owner, "_desktop_space_behavior", None)
+        if saved is None or saved[0] != native_window:
+            saved = (native_window, current, current_style)
+            owner._desktop_space_behavior = saved
+        enabled = owner.config.get("window", {}).get("follow_desktop", True) is not False
+        desired = _desktop_space_behavior(
+            current, saved[1], enabled=enabled,
+            modern_macos=int(platform.mac_ver()[0].split(".")[0]) >= 13,
+        )
+        desired_style = (current_style & ~_NONACTIVATING_PANEL) | (
+            _NONACTIVATING_PANEL if enabled else saved[2] & _NONACTIVATING_PANEL
+        )
+        if desired_style != current_style:
+            set_behavior(native_window, selector(b"setStyleMask:"), desired_style)
+        # AppKit's Space tags can be stale even when collectionBehavior reads back
+        # correctly. Register them after style changes, through the neutral mode.
+        # Reapply on show as Qt can update the native style during that lifecycle.
+        if enabled or desired != current or desired_style != current_style:
+            set_behavior(native_window, selector(b"setCollectionBehavior:"), 0)
+            set_behavior(native_window, selector(b"setCollectionBehavior:"), desired)
+        return (
+            get_behavior(native_window, selector(b"collectionBehavior")) == desired
+            and get_behavior(native_window, selector(b"styleMask")) == desired_style
+        )
+    except (AttributeError, OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("无法应用桌宠跟随桌面设置: %s", exc)
+        return False
 
 
 def deactivate_macos_application(platform_name: str | None = None) -> bool:

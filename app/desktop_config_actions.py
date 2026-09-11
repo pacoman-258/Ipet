@@ -93,6 +93,7 @@ class DesktopConfigActions:
         self.normalize_neo_chat_config(config)
 
         config["window"] = {
+            "follow_desktop": config.get("window", {}).get("follow_desktop", True),
             "x": int(panel.win_x_spin.value()),
             "y": int(panel.win_y_spin.value()),
             "width": int(panel.win_w_spin.value()),
